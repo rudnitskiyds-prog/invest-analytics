@@ -100,7 +100,10 @@ def asset_label(k: str) -> str:
 def fmt_pct(x, digits=1):
     if x is None or (isinstance(x, float) and np.isnan(x)):
         return "—"
-    return f"{x * 100:.{digits}f}%".replace(".", ",")
+    out = f"{x * 100:.{digits}f}"
+    if float(out) == 0:
+        out = out.lstrip("-")
+    return f"{out}%".replace(".", ",")
 
 
 def fmt_rub(x):
@@ -175,6 +178,7 @@ def heatmap_returns(r: pd.DataFrame, height: int = 360) -> go.Figure:
         text=[[fmt_pct(v, 0) for v in row] for row in z], texttemplate="%{text}",
         hovertemplate="%{y}, %{x}: %{text}<extra></extra>", showscale=False))
     fig.update_layout(height=height, margin=dict(l=10, r=10, t=10, b=10))
+    fig.update_xaxes(type="category")
     return fig
 
 
