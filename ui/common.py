@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import os
 from typing import Optional
 
 import numpy as np
@@ -72,6 +73,11 @@ def sidebar_settings():
         ss["freq"] = st.selectbox("Частота доходностей для метрик", list(FREQ_LABELS),
                                   list(FREQ_LABELS).index(ss["freq"]), format_func=FREQ_LABELS.get)
         st.caption("Данные: ISS Московской биржи (задержка 15 мин), Банк России.")
+        if os.environ.get("IP_OFFLINE") == "1":
+            st.info("Демо-режим: месячные ряды 2010–2025 без подключения к бирже.")
+        elif universe.FALLBACK_USED:
+            st.warning("Источник данных не ответил — для " + ", ".join(sorted(universe.FALLBACK_USED)) +
+                       " использованы демо-ряды (месячные, по 2025 г.).")
 
 
 # ------------------------------------------------------------------ cached loaders

@@ -61,7 +61,25 @@ def chain(old: pd.Series, new: pd.Series, switch: str) -> pd.Series:
     scaled_new = new.loc[anchor:] * (old_at / new.loc[anchor])
     return pd.concat([old.loc[:anchor].iloc[:-1], scaled_new])
 
+# Ключи, для которых живой источник не ответил и использованы демо-данные
+FALLBACK_USED: set[str] = set()
+_HOST_STATE: dict[str, tuple[float, bool]] = {}
 
+
+def host_available(url: str, ttl: float = 600) -> bool:
+    """Быстрая проверка доступности источника (результат кэшируется на 10 мин)."""
+    import time
+    import requests
+    host = url.split("/")[2]
+    t, ok = _HOST_STATE.get(host, (0.0, True))
+    if time.time() - t < ttl:
+        return ok
+    try:
+        ok = requests.get(url, timeout=6).status_code < 500
+    except Exception:  # noqa: BLE001
+        ok = False
+    _HOST_STATE[host] = (time.time(), ok)
+    return ok
 
 
 @lru_cache(maxsize=1)
@@ -77,15 +95,35 @@ def _offline_frame() -> pd.DataFrame:
     return df
 
 
+def _offline_series(key: str, start: str, end: Optional[str]) -> pd.Series:
+    df = _offline_frame()
+    if key not in df:
+        raise KeyError(f"{key}: нет в демо-данных")
+    s = df[key].loc[start:end].dropna()
+    s.name = key
+    return s
+
+
 def load_series(key: str, start: str = "2008-01-01", end: Optional[str] = None,
                 total_return: bool = False) -> pd.Series:
+    """Живые данные ISS / ЦБ; если источник недоступен — демо-ряд (месячный), если он есть."""
     if os.environ.get("IP_OFFLINE") == "1":
-        df = _offline_frame()
-        if key not in df:
-            raise KeyError(f"{key}: нет в демо-данных (режим IP_OFFLINE=1)")
-        s = df[key].loc[start:end].dropna()
-        s.name = key
-        return s
+        return _offline_series(key, start, end)
+    try:
+        return _load_live(key, start, end, total_return)
+    except Exception:
+        if key in _offline_frame():
+            FALLBACK_USED.add(key)
+            return _offline_series(key, start, end)
+        raise
+
+
+def _load_live(key: str, start: str, end: Optional[str], total_return: bool) -> pd.Series:
+    spec = CATALOG.get(key)
+    probe = (cbr.CBR_BASE + "/scripts/XML_daily.asp") if spec is not None and spec.source == "cbr" \
+        else iss.ISS_BASE + "/index.json?iss.only=engines"
+    if not host_available(probe):
+        raise ConnectionError(f"источник недоступен: {probe.split('/')[2]}")
     spec = CATALOG.get(key)
     if spec is not None and spec.source == "cbr":
         s = cbr.gold_price(start, end) if key == "GOLD_CBR" else cbr.ruonia_index(start, end)

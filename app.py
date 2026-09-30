@@ -2,7 +2,18 @@
 ИнвестАналитика — информационно-аналитическая платформа оценки эффективности инвестиций.
 Запуск:  streamlit run app.py
 """
+import os
+
 import streamlit as st
+
+# Streamlit Cloud: режим задаётся в Secrets (IP_OFFLINE = "1")
+try:
+    if "IP_OFFLINE" in st.secrets:
+        os.environ["IP_OFFLINE"] = str(st.secrets["IP_OFFLINE"])
+except Exception:  # noqa: BLE001 — secrets.toml отсутствует
+    pass
+
+st.set_page_config(page_title="ИнвестАналитика", page_icon="📈", layout="wide")
 
 pages = {
     "Рынок": [

@@ -45,7 +45,19 @@ IP_OFFLINE=1 streamlit run app.py   # демо без интернета (мес
 ```
 
 Или двойной клик по `run.command` / `run_demo.command` (при первом запуске сам создаст окружение).
-Тесты: `pytest -q` (30 тестов, сеть не нужна).
+Тесты: `pip install -r requirements-dev.txt && pytest -q` (30 тестов, сеть не нужна).
+
+## Онлайн-версия (Streamlit Community Cloud)
+
+1. [share.streamlit.io](https://share.streamlit.io) → **Continue with GitHub**.
+2. **Create app** → **Deploy a public app from GitHub**: репозиторий `rudnitskiyds-prog/invest-analytics`,
+   ветка `main`, файл `app.py` → **Deploy**.
+3. Демо без обращения к бирже: **Settings → Secrets** → `IP_OFFLINE = "1"`.
+
+Если ISS или сайт ЦБ недоступны с серверов Streamlit, базовые ряды (индексы, золото, RUONIA) автоматически
+берутся из демо-данных, о чём предупреждает боковая панель. Учёт портфеля в облаке хранится во временной
+SQLite: он общий для всех, у кого есть доступ к приложению, и сбрасывается при перезапуске — для
+личных портфелей нужен полноценный бэкенд с авторизацией.
 
 ## Что умеет
 
