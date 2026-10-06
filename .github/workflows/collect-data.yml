@@ -1,0 +1,52 @@
+name: Сбор данных ЦБ
+
+on:
+  schedule:
+    - cron: "13 3 * * *"   # ежедневно в 06:13 по Москве
+  workflow_dispatch:        # ручной запуск: Actions → «Сбор данных ЦБ» → Run workflow
+
+permissions:
+  contents: write
+
+concurrency:
+  group: collect-data
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Зависимости
+        run: pip install pandas numpy requests
+
+      - name: Проверка доступа к источникам
+        continue-on-error: true
+        run: |
+          for u in https://www.cbr.ru/scripts/XML_daily.asp https://iss.moex.com/iss/index.json; do
+            code=$(curl -s -o /dev/null -m 20 -w "%{http_code}" "$u" || echo "ERR")
+            echo "$u -> $code"
+          done
+
+      - name: Сбор
+        run: python -m scripts.collect_data
+
+      - name: Сохранить изменения
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/data
+          if git diff --cached --quiet; then
+            echo "Данные не изменились"
+          else
+            git commit -m "Данные ЦБ на $(date -u +%Y-%m-%d)"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
