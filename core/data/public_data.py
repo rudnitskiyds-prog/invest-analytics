@@ -73,9 +73,11 @@ def share_sectors() -> pd.Series:
 
 
 def etf_commissions() -> pd.Series:
-    """Тикер -> fixed_commission из tinvest_etfs.json, % годовых (как отдаёт T-Invest API)."""
+    """Тикер -> fixed_commission из tinvest_etfs.json, % годовых (как отдаёт T-Invest API).
+    0 -> NaN: proto3 не передаёт нулевые поля, 0 неотличим от «нет данных»."""
     data = load("tinvest_etfs")
     if not isinstance(data, list):
         return pd.Series(dtype=float)
     s = {r["ticker"]: r.get("fixed_commission") for r in data if r.get("ticker")}
-    return pd.Series(s, dtype=float)
+    s = pd.Series(s, dtype=float)
+    return s.where(s != 0)

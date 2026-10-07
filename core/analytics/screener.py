@@ -54,15 +54,19 @@ def multiples(cap_bln: pd.Series, fund: pd.DataFrame) -> pd.DataFrame:
 TINVEST_MULTIPLES = {"pe": "P/E", "pb": "P/B", "ps": "P/S", "ev_ebitda": "EV/EBITDA",
                      "nd_ebitda": "ND/EBITDA", "roe": "ROE"}
 MULT_COLUMNS = list(TINVEST_MULTIPLES.values())
+POSITIVE_ONLY = ["P/E", "P/B", "P/S", "EV/EBITDA"]
 
 
 def tinvest_multiples(fund: pd.DataFrame) -> pd.DataFrame:
     """Мультипликаторы T-Invest API по тикерам (индекс fund — тикер). Источник: поля
     pe_ratio_ttm, price_to_book_ttm, price_to_sales_ttm, ev_to_ebitda_mrq, net_debt_to_ebitda,
-    roe (StatisticResponse, instruments.proto); пересчёта нет, кроме ROE: % -> доля."""
+    roe (StatisticResponse, instruments.proto); пересчёта нет, кроме ROE: % -> доля.
+    P/E, P/B, P/S, EV/EBITDA ≤ 0 -> NaN (как в multiples() для отрицательной прибыли/капитала)."""
     out = pd.DataFrame(index=fund.index)
     for src, col in TINVEST_MULTIPLES.items():
         v = pd.to_numeric(fund[src], errors="coerce") if src in fund else pd.Series(np.nan, index=fund.index)
+        if col in POSITIVE_ONLY:
+            v = v.where(v > 0)
         out[col] = v / 100 if src == "roe" else v
     return out
 
@@ -110,8 +114,9 @@ def dividend_yield_12m(secid: str, price: float) -> float:
 
 
 def _multiples_for(cap_bln: pd.Series) -> Optional[pd.DataFrame]:
-    """Мультипликаторы по бумаге целиком из одного источника: если тикер есть
-    в fundamentals.json (T-Invest) — его строка, иначе расчёт по data/fundamentals.csv.
+    """Мультипликаторы по бумаге целиком из одного источника: если в fundamentals.json
+    (T-Invest) у тикера есть хотя бы один из P/E, P/B, P/S, EV/EBITDA, ND/EBITDA, ROE
+    (после отбрасывания значений ≤ 0) — его строка, иначе расчёт по data/fundamentals.csv.
     Ячейки двух источников не смешиваются (разные даты и методики отчётности)."""
     tf = public_data.fundamentals()
     fund = load_fundamentals()
@@ -122,6 +127,7 @@ def _multiples_for(cap_bln: pd.Series) -> Optional[pd.DataFrame]:
         out = multiples(cap_bln, fund)[MULT_COLUMNS]
     if not tf.empty:
         tm = tinvest_multiples(tf)
+        tm = tm[tm[MULT_COLUMNS].notna().any(axis=1)]
         has = cap_bln.index[cap_bln.index.isin(tm.index)]
         out.loc[has, MULT_COLUMNS] = tm.loc[has, MULT_COLUMNS].to_numpy()
     return out[MULT_COLUMNS]

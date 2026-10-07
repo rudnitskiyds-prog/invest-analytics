@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import re
 import threading
 import time
 from typing import Any, Iterable, Optional
@@ -36,7 +37,18 @@ MSK = dt.timezone(dt.timedelta(hours=3))
 
 
 class TInvestError(RuntimeError):
-    pass
+    """Ошибка T-Invest API. transient=True — сбой сервиса или сети (429/5xx/таймаут после всех
+    повторов, исчерпан бюджет времени), а не ответ про конкретную бумагу (прочие 4xx);
+    budget=True — исчерпан бюджет времени клиента (deadline)."""
+
+    def __init__(self, msg: str, transient: bool = False, budget: bool = False):
+        super().__init__(msg)
+        self.transient = transient or budget
+        self.budget = budget
+
+
+_TOKEN_RE = re.compile(r"^[\x21-\x7e]+$")
+_BEARER_RE = re.compile(r"Bearer\s+\S+")
 
 
 class TInvestClient:
@@ -46,6 +58,9 @@ class TInvestClient:
     base         — адрес REST-шлюза;
     session      — requests.Session (или совместимый объект с .post) — для тестов и мок-сессий;
     max_per_min  — верхняя граница частоты запросов (равномерно: не чаще 60/max_per_min сек.).
+
+    Атрибут deadline (по часам клиента _clock, по умолчанию None) — бюджет времени: после него
+    новые попытки не делаются и паузы повторов не превышают остаток (TInvestError, budget=True).
     """
 
     def __init__(self, token: Optional[str] = None, base: str = TINVEST_BASE,
@@ -54,6 +69,8 @@ class TInvestClient:
         tok = (token or os.environ.get("TINVEST_TOKEN") or "").strip()
         if not tok:
             raise TInvestError("нет токена TINVEST_TOKEN")
+        if not _TOKEN_RE.match(tok):
+            raise TInvestError("токен содержит недопустимые символы")
         self.__token = tok
         self.base = base.rstrip("/")
         self.session = session or requests.Session()
@@ -65,6 +82,7 @@ class TInvestClient:
         self._next_at = 0.0
         self._sleep = time.sleep          # подменяются в тестах
         self._clock = time.monotonic
+        self.deadline: Optional[float] = None
 
     def __repr__(self) -> str:  # токен не показываем
         return f"TInvestClient(base={self.base!r}, max_per_min={round(60 / self.min_interval)})"
@@ -80,8 +98,9 @@ class TInvestClient:
             self._next_at = now + self.min_interval
 
     def _clean(self, text: str) -> str:
-        """Текст для исключения: без токена и не длиннее 300 символов."""
-        return str(text).replace(self.__token, "***")[:300]
+        """Текст для исключения: без токена (в т.ч. в repr-форме и после Bearer), ≤ 300 символов."""
+        t = str(text).replace(self.__token, "***").replace(repr(self.__token), "***")
+        return _BEARER_RE.sub("Bearer ***", t)[:300]
 
     def _url(self, method: str) -> str:
         service, _, name = method.rpartition("/")
@@ -101,22 +120,31 @@ class TInvestClient:
         return min(60.0, self.backoff * 2 ** attempt)
 
     # ----------------------------------------------------------------- API
-    def call(self, method: str, body: Optional[dict] = None) -> dict:
+    def _left(self) -> Optional[float]:
+        return None if self.deadline is None else self.deadline - self._clock()
+
+    def call(self, method: str, body: Optional[dict] = None, retries: Optional[int] = None) -> dict:
         """POST метода (по умолчанию сервиса инструментов: "Shares", "GetDividends", …;
         другой сервис — "MarketDataService/GetCandles"). Повторы с экспоненциальной паузой
-        на 429 / 5xx / сетевые ошибки; прочие 4xx — сразу TInvestError."""
+        на 429 / 5xx / сетевые ошибки (retries — число повторов, по умолчанию self.retries);
+        прочие 4xx — сразу TInvestError."""
         url = self._url(method)
+        n_retries = self.retries if retries is None else max(0, int(retries))
         headers = {"Authorization": f"Bearer {self.__token}", "Content-Type": "application/json",
                    "Accept": "application/json"}
         last = ""
-        for attempt in range(self.retries + 1):
+        for attempt in range(n_retries + 1):
+            left = self._left()
+            if left is not None and left <= 0:
+                raise TInvestError(f"{method}: исчерпан бюджет времени ({last or 'запрос не начат'})",
+                                   budget=True)
             self._throttle()
             try:
                 r = self.session.post(url, json=body or {}, headers=headers, timeout=self.timeout)
             except requests.RequestException as e:
                 last = f"{type(e).__name__}: {self._clean(e)}"
-                if attempt < self.retries:
-                    self._sleep(self._retry_wait(attempt))
+                if attempt < n_retries:
+                    self._pause(self._retry_wait(attempt))
                     continue
                 break
             code = r.status_code
@@ -124,16 +152,21 @@ class TInvestClient:
                 try:
                     return r.json()
                 except ValueError:
-                    raise TInvestError(f"{method}: ответ не JSON") from None
+                    raise TInvestError(f"{method}: ответ не JSON", transient=True) from None
             msg = self._clean(_error_text(r))
             last = f"HTTP {code}: {msg}"
             if code == 429 or code >= 500:
-                if attempt < self.retries:
-                    self._sleep(self._retry_wait(attempt, r))
+                if attempt < n_retries:
+                    self._pause(self._retry_wait(attempt, r))
                     continue
                 break
             raise TInvestError(f"{method}: {last}")
-        raise TInvestError(f"{method}: не удалось после {self.retries + 1} попыток ({last})")
+        raise TInvestError(f"{method}: не удалось после {n_retries + 1} попыток ({last})", transient=True)
+
+    def _pause(self, wait: float) -> None:
+        """Пауза перед повтором, но не дальше deadline (дальше call сам прервётся)."""
+        left = self._left()
+        self._sleep(wait if left is None else max(0.0, min(wait, left)))
 
 
 def _error_text(r) -> str:
@@ -211,7 +244,7 @@ def shares(client: TInvestClient) -> list[dict]:
     resp = client.call("Shares", {"instrumentStatus": "INSTRUMENT_STATUS_BASE"})
     out = []
     for x in resp.get("instruments", []):
-        if _get(x, "class_code") != "TQBR":
+        if _get(x, "class_code") != "TQBR" or not _get(x, "ticker"):
             continue
         out.append({
             "ticker": _get(x, "ticker"), "class_code": "TQBR", "isin": _get(x, "isin"),
@@ -222,7 +255,17 @@ def shares(client: TInvestClient) -> list[dict]:
             "for_qual_investor_flag": bool(_get(x, "for_qual_investor_flag", False)),
             "liquidity_flag": bool(_get(x, "liquidity_flag", False)),
         })
-    return out
+    return _one_per_ticker(out)
+
+
+def _one_per_ticker(rows: list[dict]) -> list[dict]:
+    """Один инструмент на тикер: предпочтительно liquidity_flag = True, иначе первый."""
+    best: dict[str, dict] = {}
+    for r in rows:
+        t = r["ticker"]
+        if t not in best or (r.get("liquidity_flag") and not best[t].get("liquidity_flag")):
+            best[t] = r
+    return list(best.values())
 
 
 def etfs(client: TInvestClient) -> list[dict]:
@@ -246,12 +289,15 @@ def etfs(client: TInvestClient) -> list[dict]:
     return out
 
 
-def dividends(client: TInvestClient, instrument_id: str, date_from: Any, date_to: Any) -> list[dict]:
+def dividends(client: TInvestClient, instrument_id: str, date_from: Any, date_to: Any,
+              retries: Optional[int] = None) -> list[dict]:
     """Выплаты по бумаге (метод GetDividends, фильтр API — по record_date), по возрастанию
     record_date. value — на 1 бумагу (dividend_net), yield_value — в процентах, как отдаёт API.
-    Отменённые (dividend_type == "Cancelled") остаются с cancelled = True."""
+    Отменённые (dividend_type == "Cancelled") остаются с cancelled = True.
+    Дубли по (record_date, value, currency) схлопываются (действующая выплата важнее отменённой).
+    retries — число повторов для этого вызова (сборщик ставит 2: вызовов много)."""
     resp = client.call("GetDividends", {"instrumentId": instrument_id,
-                                        "from": _ts(date_from), "to": _ts(date_to)})
+                                        "from": _ts(date_from), "to": _ts(date_to)}, retries=retries)
     out = []
     for x in resp.get("dividends", []):
         net = _get(x, "dividend_net")
@@ -267,7 +313,19 @@ def dividends(client: TInvestClient, instrument_id: str, date_from: Any, date_to
             "close_price": money(_get(x, "close_price")),
             "cancelled": dtype == "Cancelled",
         })
-    out.sort(key=lambda r: (r["record_date"] is None, r["record_date"] or ""))
+    return dedup_dividends(out)
+
+
+def dedup_dividends(rows: list[dict]) -> list[dict]:
+    """Одна запись на (record_date, value, currency); при дубле действующая выплата важнее
+    отменённой, иначе — первая. Результат — по возрастанию record_date."""
+    seen: dict[tuple, dict] = {}
+    for r in rows:
+        k = (r.get("record_date"), r.get("value"), r.get("currency"))
+        if k not in seen or (seen[k].get("cancelled") and not r.get("cancelled")):
+            seen[k] = r
+    out = list(seen.values())
+    out.sort(key=lambda r: (r.get("record_date") is None, r.get("record_date") or ""))
     return out
 
 

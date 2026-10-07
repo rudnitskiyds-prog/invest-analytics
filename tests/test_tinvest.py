@@ -423,10 +423,14 @@ class FakeTInvestAPI:
     """Фейковый REST T-Invest для сборщика: n_shares акций TQBR (пары с общим asset_uid),
     n_etfs фондов, дивиденды из фикстуры, фундаментальные показатели по шаблону."""
 
-    def __init__(self, n_shares=160, n_etfs=60, bad_div=(), fail_fund=False):
+    def __init__(self, n_shares=160, n_etfs=60, bad_div=(), fail_fund=False, div_mode=None,
+                 fail_methods=None, hook=None):
         self.n_shares, self.n_etfs = n_shares, n_etfs
         self.bad_div = set(bad_div)
         self.fail_fund = fail_fund
+        self.div_mode = dict(div_mode or {})        # uid -> 400 / 503 / "net"
+        self.fail_methods = dict(fail_methods or {})  # метод -> HTTP-код (на все вызовы)
+        self.hook = hook                             # hook(method) перед ответом
         self.share_tmpl = fixture("shares.json")["instruments"][0]
         self.etf_tmpl = fixture("etfs.json")["instruments"][0]
         self.divs = fixture("dividends.json")
@@ -434,6 +438,15 @@ class FakeTInvestAPI:
 
     def __call__(self, method, body):
         name = method.split("/")[-1]
+        if self.hook:
+            self.hook(name)
+        if name in self.fail_methods:
+            return FakeResp(self.fail_methods[name], {"code": 14, "message": "unavailable"})
+        if name == "GetDividends" and body["instrumentId"] in self.div_mode:
+            mode = self.div_mode[body["instrumentId"]]
+            if mode == "net":
+                return requests.ConnectionError("connection reset")
+            return FakeResp(mode, {"code": 3 if mode < 500 else 14, "message": f"HTTP {mode}"})
         if name == "Shares":
             ins = [{**self.share_tmpl, "ticker": f"T{i:03d}", "uid": f"uid-{i}", "assetUid": f"asset-{i // 2}",
                     "sector": ["financial", "energy"][i % 2]} for i in range(self.n_shares)]
@@ -461,7 +474,7 @@ def collector(tmp_path, monkeypatch):
     """Сборщик пишет в tmp_path; клиент T-Invest получает фейковую сессию и виртуальные часы."""
     monkeypatch.setattr(cd, "OUT", tmp_path)
     monkeypatch.setenv("TINVEST_TOKEN", TOKEN)
-    state = {"api": FakeTInvestAPI(), "sessions": []}
+    state = {"api": FakeTInvestAPI(), "sessions": [], "clients": []}
     orig = tinvest.TInvestClient
 
     def factory(*a, **k):
@@ -470,6 +483,7 @@ def collector(tmp_path, monkeypatch):
         c = orig(*a, session=s, **k)
         clock = Clock()
         c._clock, c._sleep = clock, clock.sleep
+        state["clients"].append(c)
         return c
     monkeypatch.setattr(tinvest, "TInvestClient", factory)
     state["out"] = tmp_path
@@ -875,3 +889,400 @@ def test_tinvest_multiples_missing_columns():
     out = screener.tinvest_multiples(pd.DataFrame({"pe": [5.0, None]}, index=["A", "B"]))
     assert list(out.columns) == screener.MULT_COLUMNS
     assert out.loc["A", "P/E"] == 5.0 and np.isnan(out.loc["B", "P/E"]) and out["ROE"].isna().all()
+
+
+# ======================================================================= после замечаний критика
+def _methods(state) -> list[str]:
+    return [c["method"].split("/")[-1] for s in state["sessions"] for c in s.calls]
+
+
+def _cbr_good():
+    return pd.Series(range(3500), index=pd.bdate_range("2010-01-01", periods=3500), dtype=float)
+
+
+# ----------------------------------------------------------------------- клиент: бюджет и токен
+def test_client_deadline_stops_without_request():
+    s = FakeSession(default=lambda m, b: ok({}))
+    c, clock = make_client(s)
+    c.deadline = clock.t                                  # бюджет уже исчерпан
+    with pytest.raises(tinvest.TInvestError) as ei:
+        c.call("Shares")
+    assert ei.value.budget is True and ei.value.transient is True
+    assert s.calls == []
+
+
+def test_client_retry_pause_clipped_to_deadline():
+    s = FakeSession(default=lambda m, b: FakeResp(503, {"code": 14, "message": "unavailable"}))
+    c, clock = make_client(s, retries=5, backoff=1.0)
+    c.deadline = clock.t + 2.5
+    with pytest.raises(tinvest.TInvestError) as ei:
+        c.call("Shares")
+    # попытка 1 -> пауза 1; попытка 2 -> пауза min(2, 1.5) = 1.5; остаток 0 -> прерывание
+    assert len(s.calls) == 2
+    assert clock.sleeps == pytest.approx([1.0, 1.5])
+    assert ei.value.budget is True
+
+
+def test_client_error_kinds():
+    c, _ = make_client(FakeSession(default=lambda m, b: FakeResp(400, {"code": 3, "message": "bad"})))
+    with pytest.raises(tinvest.TInvestError) as ei:
+        c.call("Shares")
+    assert ei.value.transient is False and ei.value.budget is False
+    c, _ = make_client(FakeSession(default=lambda m, b: FakeResp(503, {"code": 14})), retries=1)
+    with pytest.raises(tinvest.TInvestError) as ei:
+        c.call("Shares")
+    assert ei.value.transient is True and ei.value.budget is False
+
+
+def test_per_call_retries_override():
+    s = FakeSession(default=lambda m, b: FakeResp(503, {"code": 14}))
+    c, _ = make_client(s, retries=5)
+    with pytest.raises(tinvest.TInvestError):
+        tinvest.dividends(c, "uid-x", "2008-01-01", "2026-01-01", retries=2)
+    assert len(s.calls) == 3
+
+
+@pytest.mark.parametrize("bad", ["t.FAKE\nX-Injected: 1", "t.FAKE\rX", "t.FAKE token", "t.FAKE\tX",
+                                 "t.ФЕЙК-токен"])
+def test_token_with_invalid_chars_rejected(bad, monkeypatch):
+    with pytest.raises(tinvest.TInvestError) as ei:
+        tinvest.TInvestClient(token=bad, session=FakeSession())
+    text = _chain_text(ei.value)
+    for part in bad.split():
+        assert part not in text
+    monkeypatch.setenv("TINVEST_TOKEN", bad)
+    with pytest.raises(tinvest.TInvestError) as ei:
+        tinvest.TInvestClient(session=FakeSession())
+    assert bad not in _chain_text(ei.value)
+
+
+def test_masking_bearer_and_repr_form():
+    tok = "t.FAKE\\back"                                  # обратная косая: repr отличается от токена
+    assert repr(tok) != f"'{tok}'"
+    s = FakeSession(default=lambda m, b: requests.ConnectionError(str({"Authorization": tok})))
+    c = tinvest.TInvestClient(token=tok, session=s, retries=0)
+    c._sleep = lambda _: None
+    with pytest.raises(tinvest.TInvestError) as ei:
+        c.call("Shares")
+    text = _chain_text(ei.value)
+    assert tok not in text and repr(tok) not in text and "back" not in text
+
+    # сервер возвращает чужой/искажённый Bearer — тоже маскируется
+    s = FakeSession(default=lambda m, b: FakeResp(401, {"code": 16, "message": "got Bearer SOMEthing-else-123"}))
+    c, _ = make_client(s)
+    with pytest.raises(tinvest.TInvestError) as ei:
+        c.call("Shares")
+    assert "SOMEthing-else-123" not in str(ei.value) and "Bearer ***" in str(ei.value)
+
+
+# ----------------------------------------------------------------------- дедупликация
+def test_shares_one_per_ticker_prefers_liquid():
+    body = {"instruments": [
+        {"ticker": "DUP", "classCode": "TQBR", "uid": "u-illiquid", "liquidityFlag": False},
+        {"ticker": "DUP", "classCode": "TQBR", "uid": "u-liquid", "liquidityFlag": True},
+        {"ticker": "DUP", "classCode": "TQBR", "uid": "u-liquid-2", "liquidityFlag": True},
+        {"ticker": "TWO", "classCode": "TQBR", "uid": "u-first"},
+        {"ticker": "TWO", "classCode": "TQBR", "uid": "u-second"},
+        {"ticker": "", "classCode": "TQBR", "uid": "u-noticker"},
+        {"classCode": "TQBR", "uid": "u-noticker-2"},
+    ]}
+    c, _ = make_client(FakeSession(default=lambda m, b: ok(body)))
+    rows = tinvest.shares(c)
+    assert [(r["ticker"], r["uid"]) for r in rows] == [("DUP", "u-liquid"), ("TWO", "u-first")]
+
+
+def test_dividends_dedup_active_beats_cancelled():
+    def div(rd, units, dtype):
+        return {"dividendNet": {"currency": "rub", "units": units, "nano": 0}, "recordDate": rd,
+                "dividendType": dtype}
+    body = {"dividends": [
+        div("2024-07-10T21:00:00Z", "10", "Cancelled"), div("2024-07-10T21:00:00Z", "10", "Regular Cash"),
+        div("2023-07-10T21:00:00Z", "8", "Regular Cash"), div("2023-07-10T21:00:00Z", "8", "Cancelled"),
+        div("2022-07-10T21:00:00Z", "5", "Regular Cash"), div("2022-07-10T21:00:00Z", "6", "Regular Cash"),
+        div("2021-07-10T21:00:00Z", "4", "Cancelled"), div("2021-07-10T21:00:00Z", "4", "Cancelled"),
+    ]}
+    c, _ = make_client(FakeSession(default=lambda m, b: ok(body)))
+    rows = tinvest.dividends(c, "uid", "2008-01-01", "2026-01-01")
+    got = [(r["record_date"], r["value"], r["cancelled"]) for r in rows]
+    assert got == [("2021-07-11", 4.0, True), ("2022-07-11", 5.0, False), ("2022-07-11", 6.0, False),
+                   ("2023-07-11", 8.0, False), ("2024-07-11", 10.0, False)]
+
+
+def test_dedup_dividends_directly():
+    rows = [{"record_date": "2024-01-01", "value": 1.0, "currency": "RUB", "cancelled": True, "n": 1},
+            {"record_date": None, "value": 2.0, "currency": "RUB", "cancelled": False, "n": 2},
+            {"record_date": "2024-01-01", "value": 1.0, "currency": "RUB", "cancelled": False, "n": 3},
+            {"record_date": "2024-01-01", "value": 1.0, "currency": "RUB", "cancelled": False, "n": 4},
+            {"record_date": "2024-01-01", "value": 1.0, "currency": "USD", "cancelled": False, "n": 5}]
+    assert [r["n"] for r in tinvest.dedup_dividends(rows)] == [3, 5, 2]
+    assert tinvest.dedup_dividends([]) == []
+
+
+# ----------------------------------------------------------------------- сборщик: бюджет времени
+def test_collector_default_budget(collector):
+    assert cd.main(["--only", "tinvest_shares"]) == 0
+    c = collector["clients"][0]
+    assert c.deadline - 1000.0 == pytest.approx(cd.TINVEST_BUDGET_MIN * 60)
+
+
+def test_collector_budget_interrupts(collector):
+    out = collector["out"]
+    (out / "dividends.json").write_text('{"data": "old-div"}', encoding="utf-8")
+    (out / "fundamentals.json").write_text('{"data": "old-fund"}', encoding="utf-8")
+    # 0.5 мин = 30 вирт. с; каждый запрос — 0.4 с (150/мин): дивиденды прервутся на середине
+    rc = cd.main(["--only", *TINVEST_SOURCES, "--tinvest-budget", "0.5"])
+    st = _status(out)
+    assert st["tinvest_shares"]["ok"] and st["tinvest_etfs"]["ok"]
+    assert not st["dividends"]["ok"] and "бюджет" in st["dividends"]["error"]
+    assert not st["fundamentals"]["ok"] and "бюджет" in st["fundamentals"]["error"]
+    m = _methods(collector)
+    assert 50 < m.count("GetDividends") < 160
+    assert m.count("GetAssetFundamentals") == 0               # источник не запускался
+    assert (out / "dividends.json").read_text(encoding="utf-8") == '{"data": "old-div"}'
+    assert (out / "fundamentals.json").read_text(encoding="utf-8") == '{"data": "old-fund"}'
+    assert rc == 0                                            # часть T-Invest собрана
+    assert collector["clients"][0]._clock() - 1000.0 <= 30 + 1
+
+
+def test_collector_budget_argument_validation(tmp_path, monkeypatch):
+    monkeypatch.setattr(cd, "OUT", tmp_path)
+    with pytest.raises(SystemExit) as ei:
+        cd.main(["--only", "tinvest_shares", "--tinvest-budget", "abc"])
+    assert ei.value.code == 2
+
+
+# ----------------------------------------------------------------------- сборщик: серия сбоев
+@pytest.mark.parametrize("mode", [503, 429, "net"])
+def test_collector_10_consecutive_service_failures_abort(collector, mode):
+    collector["api"] = FakeTInvestAPI(div_mode={f"uid-{i}": mode for i in range(160)})
+    assert cd.main(["--only", "dividends"]) == 1
+    st = _status(collector["out"])
+    assert not st["dividends"]["ok"] and "10 сбоев сервиса подряд" in st["dividends"]["error"]
+    # 10 бумаг × (1 + DIVIDEND_RETRIES) попыток, дальше не идём
+    assert _methods(collector).count("GetDividends") == 10 * (1 + cd.DIVIDEND_RETRIES)
+
+
+def test_collector_4xx_resets_failure_streak(collector):
+    mode = {f"uid-{i}": 503 for i in range(9)}
+    mode["uid-9"] = 400                                        # ответ по бумаге, не сбой сервиса
+    mode.update({f"uid-{i}": 503 for i in range(10, 19)})
+    collector["api"] = FakeTInvestAPI(div_mode=mode)
+    assert cd.main(["--only", "dividends"]) == 0               # серия не дошла до 10; 19/160 < 20 %
+    st = _status(collector["out"])
+    assert st["dividends"]["ok"] and st["dividends"]["missing"] == 19
+
+
+def test_collector_4xx_only_no_abort_by_streak(collector):
+    # 12 подряд «бумага не найдена» — серия сбоев сервиса не растёт, прерывания нет
+    collector["api"] = FakeTInvestAPI(div_mode={f"uid-{i}": 404 for i in range(12)})
+    assert cd.main(["--only", "dividends"]) == 0
+    assert _methods(collector).count("GetDividends") == 160
+
+
+def test_collector_shares_failure_not_repeated(collector):
+    collector["api"] = FakeTInvestAPI(fail_methods={"Shares": 503})
+    cd.main(["--only", *TINVEST_SOURCES])
+    st = _status(collector["out"])
+    m = _methods(collector)
+    retries = collector["clients"][0].retries
+    assert m.count("Shares") == retries + 1                    # только в tinvest_shares
+    assert "GetDividends" not in m and "GetAssetFundamentals" not in m
+    assert not st["dividends"]["ok"] and not st["fundamentals"]["ok"]
+    assert st["tinvest_etfs"]["ok"]
+
+
+# ----------------------------------------------------------------------- сборщик: порядок и status
+def test_collector_cbr_first_and_status_after_each(collector, monkeypatch):
+    out = collector["out"]
+    sources = {k: v for k, v in cd.SOURCES.items() if v.get("kind") == "tinvest"}
+    sources["cbr_x"] = {**cd.SOURCES["cbr_gold"], "load": _cbr_good}
+    monkeypatch.setattr(cd, "SOURCES", sources)
+    snapshots = {}
+
+    def hook(name):
+        if name not in snapshots:
+            p = out / "status.json"
+            snapshots[name] = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    collector["api"] = FakeTInvestAPI(fail_methods={"Etfs": 503, "GetDividends": 503,
+                                                    "GetAssetFundamentals": 503}, hook=hook)
+    # ЦБ в конце списка --only — всё равно собирается первым
+    rc = cd.main(["--only", *TINVEST_SOURCES, "cbr_x"])
+    assert snapshots["Shares"]["cbr_x"]["ok"] is True           # ЦБ сохранён до первого запроса T-Invest
+    assert (out / "cbr_x.json").exists()
+    assert snapshots["Etfs"]["tinvest_shares"]["ok"] is True    # status записан после Shares
+    assert "tinvest_etfs" in snapshots["GetDividends"]
+    st = _status(out)
+    assert st["cbr_x"]["ok"] and st["tinvest_shares"]["ok"]
+    assert not st["tinvest_etfs"]["ok"] and not st["dividends"]["ok"] and not st["fundamentals"]["ok"]
+    assert (out / "tinvest_shares.json").exists()
+    assert rc == 0
+
+
+def test_collector_status_survives_kill(collector, monkeypatch):
+    """Job убили посреди T-Invest: уже собранное и status.json на диске."""
+    out = collector["out"]
+    sources = {k: v for k, v in cd.SOURCES.items() if v.get("kind") == "tinvest"}
+    sources["cbr_x"] = {**cd.SOURCES["cbr_gold"], "load": _cbr_good}
+    monkeypatch.setattr(cd, "SOURCES", sources)
+
+    def kill(name):
+        if name == "GetDividends":
+            raise KeyboardInterrupt
+    collector["api"] = FakeTInvestAPI(hook=kill)
+    with pytest.raises(KeyboardInterrupt):
+        cd.main([])
+    st = _status(out)
+    assert st["cbr_x"]["ok"] and st["tinvest_shares"]["ok"] and st["tinvest_etfs"]["ok"]
+    assert "dividends" not in st
+    assert not [p for p in out.iterdir() if p.name.endswith(".tmp")]
+
+
+def test_collector_broken_status_json(collector):
+    (collector["out"] / "status.json").write_text("{обрыв", encoding="utf-8")
+    assert cd.main(["--only", "tinvest_shares"]) == 0
+    assert _status(collector["out"])["tinvest_shares"]["ok"]
+
+
+# ----------------------------------------------------------------------- сборщик: пропуски и прежние данные
+def test_collector_missing_tickers_reuse_previous(collector):
+    out = collector["out"]
+    prev_rows = [{"record_date": "2020-07-10", "value": 9.0, "currency": "RUB", "cancelled": False,
+                  "close_price": 123.0}]
+    (out / "dividends.json").write_text(json.dumps({"updated": "2026-01-01T00:00:00+00:00",
+                                                    "source": "T-Invest API",
+                                                    "data": {"T000": prev_rows, "T001": prev_rows}}),
+                                        encoding="utf-8")
+    collector["api"] = FakeTInvestAPI(div_mode={"uid-0": 400, "uid-1": 503, "uid-2": 400})
+    assert cd.main(["--only", "dividends"]) == 0
+    st = _status(out)["dividends"]
+    assert st["missing"] == 3 and st["missing_tickers"] == ["T000", "T001", "T002"]
+    assert st["reused_previous"] == 2
+    data = _read(out, "dividends")["data"]
+    assert data["T000"] == [{"record_date": "2020-07-10", "value": 9.0, "currency": "RUB", "cancelled": False}]
+    assert data["T001"] == data["T000"]
+    assert "T002" not in data                                  # прежних данных не было
+    assert len(data) == 159
+
+
+def test_collector_missing_tickers_capped(collector):
+    collector["api"] = FakeTInvestAPI(div_mode={f"uid-{i}": 404 for i in range(25)})
+    assert cd.main(["--only", "dividends"]) == 0
+    st = _status(collector["out"])["dividends"]
+    assert st["missing"] == 25 and len(st["missing_tickers"]) == 20 and st["reused_previous"] == 0
+    assert st["missing_tickers"] == sorted(st["missing_tickers"])
+
+
+def test_collector_no_missing_keys_when_all_ok(collector):
+    assert cd.main(["--only", "dividends"]) == 0
+    st = _status(collector["out"])["dividends"]
+    assert "missing" not in st and "reused_previous" not in st
+
+
+def test_dividends_json_has_no_close_price(collector):
+    assert cd.main(["--only", "dividends"]) == 0
+    data = _read(collector["out"], "dividends")["data"]
+    rows = [r for v in data.values() for r in v]
+    assert rows and all("close_price" not in r for r in rows)
+    assert "close_price" not in (collector["out"] / "dividends.json").read_text(encoding="utf-8")
+
+
+def test_collector_updated_kept_when_data_unchanged(collector):
+    out = collector["out"]
+    assert cd.main(["--only", "tinvest_shares", "dividends"]) == 0
+    for n in ("tinvest_shares", "dividends"):
+        p = _read(out, n)
+        p["updated"] = "2000-01-01T00:00:00+00:00"
+        (out / f"{n}.json").write_text(json.dumps(p, ensure_ascii=False), encoding="utf-8")
+    collector["sessions"].clear()
+    assert cd.main(["--only", "tinvest_shares", "dividends"]) == 0
+    assert _read(out, "tinvest_shares")["updated"] == "2000-01-01T00:00:00+00:00"
+    assert _read(out, "dividends")["updated"] == "2000-01-01T00:00:00+00:00"
+    # данные изменились -> updated новый
+    collector["api"] = FakeTInvestAPI(n_shares=161)
+    assert cd.main(["--only", "tinvest_shares"]) == 0
+    assert _read(out, "tinvest_shares")["updated"] != "2000-01-01T00:00:00+00:00"
+
+
+# ----------------------------------------------------------------------- сборщик: код возврата
+def test_collector_all_tinvest_failed_exit_1_and_warning(collector, monkeypatch, capsys):
+    sources = {k: v for k, v in cd.SOURCES.items() if v.get("kind") == "tinvest"}
+    sources["cbr_x"] = {**cd.SOURCES["cbr_gold"], "load": _cbr_good}
+    monkeypatch.setattr(cd, "SOURCES", sources)
+    collector["api"] = FakeTInvestAPI(fail_methods={"Shares": 401, "Etfs": 401})   # плохой токен
+    assert cd.main([]) == 1                                    # ЦБ собран, но T-Invest весь упал
+    outerr = capsys.readouterr()
+    assert "::warning::" in outerr.out
+    assert TOKEN not in outerr.out and TOKEN not in outerr.err
+    assert _status(collector["out"])["cbr_x"]["ok"]
+
+
+def test_collector_partial_tinvest_no_warning(collector, monkeypatch, capsys):
+    collector["api"] = FakeTInvestAPI(fail_methods={"Etfs": 401})
+    assert cd.main(["--only", *TINVEST_SOURCES]) == 0
+    assert "::warning::" not in capsys.readouterr().out
+
+
+def test_collector_no_token_no_warning(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cd, "OUT", tmp_path)
+    monkeypatch.delenv("TINVEST_TOKEN", raising=False)
+    assert cd.main(["--only", *TINVEST_SOURCES]) == 0
+    assert "::warning::" not in capsys.readouterr().out
+
+
+# ----------------------------------------------------------------------- витрина: мультипликаторы и комиссия
+def test_tinvest_multiples_non_positive_to_nan():
+    f = pd.DataFrame({"pe": [-7.5, 0.0, 4.0], "pb": [1.6, -1.0, 0.5], "ps": [0.0, 2.0, 1.0],
+                      "ev_ebitda": [-3.0, 3.0, 2.0], "nd_ebitda": [-0.5, 1.0, 0.0], "roe": [-4.0, 10.0, 0.0]},
+                     index=["NEG", "ZERO", "OK"])
+    out = screener.tinvest_multiples(f)
+    assert np.isnan(out.loc["NEG", "P/E"]) and np.isnan(out.loc["ZERO", "P/E"]) and out.loc["OK", "P/E"] == 4.0
+    assert np.isnan(out.loc["ZERO", "P/B"]) and np.isnan(out.loc["NEG", "P/S"]) and np.isnan(out.loc["NEG", "EV/EBITDA"])
+    # ND/EBITDA и ROE могут быть отрицательными (чистая денежная позиция, убыток)
+    assert out.loc["NEG", "ND/EBITDA"] == -0.5 and out.loc["NEG", "ROE"] == pytest.approx(-0.04)
+
+
+def test_showcase_tinvest_row_without_valid_multiples_falls_back_to_csv(pub, tmp_path, monkeypatch):
+    _fake_market(monkeypatch, tmp_path)
+    csv = tmp_path / "fundamentals.csv"
+    csv.write_text("secid,period,net_income,revenue,ebitda,equity,net_debt,shares_out,source\n"
+                   "BBBB,2025,10,100,20,50,10,1,test\n"
+                   "AAAA,2025,50,250,100,500,0,1,test\n", encoding="utf-8")
+    monkeypatch.setattr(screener, "FUNDAMENTALS_CSV", csv)
+    pub("fundamentals", {
+        # только P/E ≤ 0, остальное пусто -> валидных мультипликаторов нет -> вся строка из CSV
+        "BBBB": {"pe": -3.0, "pb": None, "ps": None, "ev_ebitda": None, "nd_ebitda": None, "roe": None},
+        # P/E ≤ 0, но P/B есть -> строка T-Invest целиком, P/E = NaN (не из CSV)
+        "AAAA": {"pe": -1.0, "pb": 0.9, "ps": None, "ev_ebitda": None, "nd_ebitda": None, "roe": None},
+    })
+    df = screener.shares_showcase(with_dividends=False).set_index("SECID")
+    b = df.loc["BBBB"]
+    assert (b["P/E"], b["P/B"], b["P/S"], b["EV/EBITDA"], b["ND/EBITDA"], b["ROE"]) == pytest.approx(
+        (10.0, 2.0, 1.0, 5.5, 0.5, 0.2))
+    a = df.loc["AAAA"]
+    assert np.isnan(a["P/E"]) and a["P/B"] == pytest.approx(0.9)
+    assert np.isnan(a["P/S"]) and np.isnan(a["ROE"])          # ячейки CSV не подмешиваются
+
+
+def test_etf_commission_zero_is_nan(pub, tmp_path, monkeypatch):
+    pub("tinvest_etfs", [{"ticker": "FNDA", "fixed_commission": 0.0}, {"ticker": "FNDX", "fixed_commission": 0.7}])
+    fees = public_data.etf_commissions()
+    assert np.isnan(fees["FNDA"]) and fees["FNDX"] == 0.7
+    _fake_market(monkeypatch, tmp_path)
+    et = screener.etf_showcase().set_index("SECID")
+    assert np.isnan(et.loc["FNDA", "Комиссия, %"]) and et.loc["FNDX", "Комиссия, %"] == pytest.approx(0.7)
+
+
+def test_collector_invalid_token_env(tmp_path, monkeypatch, capsys):
+    """Токен в секрете с переносом строки внутри: все источники T-Invest — сбой (не пропуск),
+    код 1, ::warning::, токен не попадает ни в вывод, ни в status.json."""
+    monkeypatch.setattr(cd, "OUT", tmp_path)
+    bad = "t.FAKE-part1\nFAKE-part2"
+    monkeypatch.setenv("TINVEST_TOKEN", bad)
+    assert cd.main(["--only", *TINVEST_SOURCES]) == 1
+    outerr = capsys.readouterr()
+    status_text = (tmp_path / "status.json").read_text(encoding="utf-8")
+    st = json.loads(status_text)
+    assert all(not st[n]["ok"] and not st[n].get("skipped") for n in TINVEST_SOURCES)
+    assert "::warning::" in outerr.out
+    for part in ("FAKE-part1", "FAKE-part2"):
+        assert part not in outerr.out and part not in outerr.err and part not in status_text

@@ -31,7 +31,7 @@ pip install -r requirements.txt -r requirements-dev.txt
 python -m pytest -q                # все тесты (вкл. JS через node), сеть не нужна
 python -m scripts.reproduce_nir    # сверка бэктеста с табл. 4 НИР
 IP_OFFLINE=1 streamlit run app.py  # интерфейс на демо-данных
-python -m scripts.collect_data     # сбор данных ЦБ в public/data/ (нужна сеть)
+python -m scripts.collect_data     # сбор ЦБ и T-Invest в public/data/ (нужна сеть; T-Invest — при TINVEST_TOKEN)
 python -m http.server 8000         # из корня репозитория; веб-версия: http://localhost:8000/web/ (демо: ?demo=1)
 node --test "tests/web/*.test.mjs" # тесты JS-движка (также запускаются из pytest)
 python -m tests.web.make_reference # перегенерировать эталоны Python для JS-тестов

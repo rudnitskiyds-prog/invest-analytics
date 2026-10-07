@@ -106,6 +106,11 @@ FUNDAMENTAL_FIELDS = {
 }
 
 
+TINVEST_BUDGET_MIN = 12.0      # общий бюджет времени на все источники T-Invest, мин
+MAX_CONSECUTIVE_FAILS = 10     # подряд сбоев сервиса (5xx/429/сеть) — источник прерывается
+DIVIDEND_RETRIES = 2           # повторов на один GetDividends (вызовов сотни)
+
+
 class Skipped(Exception):
     """Источник пропущен (нет токена) — не сбой."""
 
@@ -114,33 +119,53 @@ def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
 
 
-def _write(name: str, payload: dict) -> None:
-    """Атомарная запись: при сбое посреди записи прежний файл не портится."""
+def _write(name: str, payload: dict, indent: int | None = None) -> None:
+    """Атомарная запись: при сбое посреди записи прежний файл не портится, .tmp удаляется."""
     tmp = OUT / f".{name}.json.tmp"
+    text = (json.dumps(payload, ensure_ascii=False, indent=indent) if indent is not None
+            else json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
     try:
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        tmp.write_text(text, encoding="utf-8")
         tmp.replace(OUT / f"{name}.json")
     except BaseException:
         tmp.unlink(missing_ok=True)      # не оставлять мусор: workflow делает git add public/data
         raise
 
 
+def _previous(name: str) -> dict:
+    """Прежний файл источника (или {}), для сравнения data и подстановки пропусков."""
+    try:
+        prev = json.loads((OUT / f"{name}.json").read_text(encoding="utf-8"))
+        return prev if isinstance(prev, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def _client(ctx: dict) -> "tinvest.TInvestClient":
     if "client" not in ctx:
         if not os.environ.get("TINVEST_TOKEN", "").strip():
             raise Skipped("нет токена")
-        ctx["client"] = tinvest.TInvestClient()
+        c = tinvest.TInvestClient()
+        # бюджет времени — по часам клиента (в тестах они виртуальные)
+        c.deadline = c._clock() + ctx.get("budget_min", TINVEST_BUDGET_MIN) * 60
+        ctx["client"] = c
     return ctx["client"]
 
 
 def _shares(ctx: dict) -> list[dict]:
     """Акции TQBR: из текущего прогона (источник tinvest_shares) или свежим запросом.
-    Список, не прошедший проверку здравости, не используется и зависимыми источниками
-    (dividends, fundamentals): они тоже получают сбой, прежние файлы остаются."""
+    Если Shares упал или список не прошёл проверку здравости, зависимые источники
+    (dividends, fundamentals) тоже получают сбой без повторного запроса Shares;
+    их прежние файлы остаются."""
     if "shares_error" in ctx:
         raise RuntimeError(f"список акций не прошёл проверку ({ctx['shares_error']})")
     if "shares" not in ctx:
-        rows = tinvest.shares(_client(ctx))
+        client = _client(ctx)
+        try:
+            rows = tinvest.shares(client)
+        except Exception as e:  # noqa: BLE001
+            ctx["shares_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+            raise
         need = SOURCES.get("tinvest_shares", {}).get("min_rows", 150)
         if len(rows) < need:
             ctx["shares_error"] = f"акций {len(rows)} < {need}"
@@ -154,53 +179,81 @@ def _check(what: str, n: int, need: int) -> None:
         raise ValueError(f"слишком мало {what}: {n} < {need} — ответ похож на ошибку")
 
 
-def _tolerant(items: list, fn: Callable, label: Callable, what: str) -> list:
-    """fn(item) по каждому элементу; ошибка элемента — лог и пропуск,
-    но при доле сбоев > MAX_FAIL_SHARE источник считается сбойным."""
-    res, errors = [], 0
+def _tolerant(items: list, fn: Callable, label: Callable, what: str) -> tuple[list, list]:
+    """fn(item) по каждому элементу; ошибка элемента — лог и пропуск. Источник — сбой, если:
+    доля сбоев > MAX_FAIL_SHARE; MAX_CONSECUTIVE_FAILS сбоев сервиса подряд (5xx/429/сеть —
+    TInvestError.transient; 4xx по конкретной бумаге в серию не входят); исчерпан бюджет времени.
+    Возвращает ([(item, результат)], [item со сбоем])."""
+    res, failed, streak = [], [], 0
     for it in items:
         try:
             res.append((it, fn(it)))
+            streak = 0
         except Exception as e:  # noqa: BLE001
-            errors += 1
-            if errors <= 20:             # не засоряем лог Actions при массовом сбое
+            if getattr(e, "budget", False):
+                raise RuntimeError(f"исчерпан бюджет времени T-Invest ({what}: обработано "
+                                   f"{len(res) + len(failed)} из {len(items)})") from None
+            failed.append(it)
+            streak = streak + 1 if getattr(e, "transient", True) else 0
+            if len(failed) <= 20:        # не засоряем лог Actions при массовом сбое
                 print(f"  пропуск {what} {label(it)}: {type(e).__name__}: {str(e)[:200]}", file=sys.stderr)
-    if errors > 20:
-        print(f"  … всего пропусков {what}: {errors}", file=sys.stderr)
-    if items and errors / len(items) > MAX_FAIL_SHARE:
-        raise RuntimeError(f"сбоев {errors} из {len(items)} ({what}) — больше {MAX_FAIL_SHARE:.0%}")
-    return res
+            if streak >= MAX_CONSECUTIVE_FAILS:
+                raise RuntimeError(f"{streak} сбоев сервиса подряд ({what}) — источник прерван; "
+                                   f"последний: {type(e).__name__}: {str(e)[:200]}") from None
+    if len(failed) > 20:
+        print(f"  … всего пропусков {what}: {len(failed)}", file=sys.stderr)
+    if items and len(failed) / len(items) > MAX_FAIL_SHARE:
+        raise RuntimeError(f"сбоев {len(failed)} из {len(items)} ({what}) — больше {MAX_FAIL_SHARE:.0%}")
+    return res, failed
 
 
-def tinvest_shares(ctx: dict, spec: dict) -> tuple[object, int]:
+def tinvest_shares(ctx: dict, spec: dict) -> tuple:
     rows = sorted(_shares(ctx), key=lambda r: r["ticker"] or "")
     _check("акций", len(rows), spec["min_rows"])          # порог _shares задан SOURCES
     return rows, len(rows)
 
 
-def tinvest_etfs(ctx: dict, spec: dict) -> tuple[object, int]:
+def tinvest_etfs(ctx: dict, spec: dict) -> tuple:
     rows = sorted(tinvest.etfs(_client(ctx)), key=lambda r: r["ticker"] or "")
     _check("фондов", len(rows), spec["min_rows"])
     return rows, len(rows)
 
 
-def tinvest_dividends(ctx: dict, spec: dict) -> tuple[object, int]:
+# поля выплаты, которые не сохраняем: close_price — котировка Мосбиржи (в git их не храним)
+DIVIDEND_DROP = ("close_price",)
+
+
+def tinvest_dividends(ctx: dict, spec: dict) -> tuple:
+    """Выплаты по всем акциям из tinvest_shares. Для тикеров со сбоем запроса подставляются
+    записи из прежнего dividends.json; в статус — число и список (до 20) таких тикеров."""
     client = _client(ctx)
     till = (dt.date.today() + dt.timedelta(days=365)).isoformat()
     items = [r for r in _shares(ctx) if r.get("uid") and r.get("ticker")]
-    got = _tolerant(items, lambda r: tinvest.dividends(client, r["uid"], START, till),
-                    lambda r: r["ticker"], "дивидендов")
+    got, failed = _tolerant(
+        items, lambda r: tinvest.dividends(client, r["uid"], START, till, retries=DIVIDEND_RETRIES),
+        lambda r: r["ticker"], "дивидендов")
     data: dict[str, list] = {}
     for share, rows in got:
         if rows:
-            data.setdefault(share["ticker"], []).extend(rows)
-    for t in data:
-        data[t].sort(key=lambda r: (r["record_date"] is None, r["record_date"] or ""))
+            data.setdefault(share["ticker"], []).extend(
+                {k: v for k, v in r.items() if k not in DIVIDEND_DROP} for r in rows)
+    prev = _previous("dividends").get("data")
+    prev = prev if isinstance(prev, dict) else {}
+    missing = sorted({r["ticker"] for r in failed})
+    reused = 0
+    for t in missing:
+        if isinstance(prev.get(t), list) and prev[t] and t not in data:
+            data[t] = [{k: v for k, v in r.items() if k not in DIVIDEND_DROP}
+                       for r in prev[t] if isinstance(r, dict)]
+            reused += 1
+    data = {t: tinvest.dedup_dividends(rows) for t, rows in sorted(data.items())}
     _check("тикеров с дивидендами", len(data), spec["min_rows"])
-    return dict(sorted(data.items())), len(data)
+    extra = {"missing": len(missing), "missing_tickers": missing[:20], "reused_previous": reused} \
+        if missing else {}
+    return data, len(data), extra
 
 
-def tinvest_fundamentals(ctx: dict, spec: dict) -> tuple[object, int]:
+def tinvest_fundamentals(ctx: dict, spec: dict) -> tuple:
     client = _client(ctx)
     by_asset: dict[str, list[str]] = {}
     for r in _shares(ctx):
@@ -209,8 +262,8 @@ def tinvest_fundamentals(ctx: dict, spec: dict) -> tuple[object, int]:
     uids = list(by_asset)
     n = tinvest.FUNDAMENTALS_BATCH
     batches = [uids[i:i + n] for i in range(0, len(uids), n)]
-    got = _tolerant(batches, lambda b: tinvest.fundamentals(client, b),
-                    lambda b: f"пачка из {len(b)}", "фундаментальных показателей")
+    got, _ = _tolerant(batches, lambda b: tinvest.fundamentals(client, b),
+                       lambda b: f"пачка из {len(b)}", "фундаментальных показателей")
     data: dict[str, dict] = {}
     for _, recs in got:
         for uid, rec in recs.items():
@@ -224,9 +277,15 @@ def tinvest_fundamentals(ctx: dict, spec: dict) -> tuple[object, int]:
 
 
 def collect_tinvest(name: str, spec: dict, ctx: dict) -> dict:
-    data, n = spec["collect"](ctx, spec)
-    _write(name, {"updated": _now(), "source": TINVEST_SOURCE, "data": data})
-    return {"ok": True, "rows": n, "last": dt.date.today().isoformat()}
+    left = ctx["client"]._left() if "client" in ctx else None
+    if left is not None and left <= 0:
+        raise RuntimeError("исчерпан бюджет времени T-Invest — источник не запускался")
+    data, n, *extra = spec["collect"](ctx, spec)
+    prev = _previous(name)
+    # updated меняется только при изменении данных: не перекоммичивать большие файлы ежедневно
+    updated = prev.get("updated") if prev.get("data") == data and prev.get("updated") else _now()
+    _write(name, {"updated": updated, "source": TINVEST_SOURCE, "data": data})
+    return {"ok": True, "rows": n, "last": dt.date.today().isoformat(), **(extra[0] if extra else {})}
 
 
 # порядок важен: акции -> фонды -> дивиденды -> фундаментальные показатели
@@ -260,21 +319,31 @@ def collect(name: str, spec: dict) -> dict:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", nargs="*", help="собрать только указанные источники")
+    ap.add_argument("--tinvest-budget", type=float, default=TINVEST_BUDGET_MIN, metavar="МИН",
+                    help=f"бюджет времени на все источники T-Invest, мин (по умолчанию {TINVEST_BUDGET_MIN:g})")
     args = ap.parse_args(argv)
+    if not args.tinvest_budget > 0:
+        ap.error("--tinvest-budget должен быть положительным числом минут")
     OUT.mkdir(parents=True, exist_ok=True)
 
     status_path = OUT / "status.json"
-    status = json.loads(status_path.read_text(encoding="utf-8")) if status_path.exists() else {}
+    try:
+        status = json.loads(status_path.read_text(encoding="utf-8")) if status_path.exists() else {}
+    except ValueError:
+        status = {}
     names = args.only or list(SOURCES)
     unknown = [n for n in names if n not in SOURCES]
     if unknown:
         ap.error(f"неизвестные источники: {', '.join(unknown)}; есть: {', '.join(SOURCES)}")
-    failed = skipped = 0
-    ctx: dict = {}                       # общий клиент T-Invest и список акций на один прогон
+    # ЦБ — первым: долгий или упавший T-Invest не должен помешать сохранить ряды ЦБ
+    is_ti = lambda n: SOURCES[n].get("kind") == "tinvest"   # noqa: E731
+    names = [n for n in names if not is_ti(n)] + [n for n in names if is_ti(n)]
+    failed = skipped = ti_tried = ti_failed = 0
+    ctx: dict = {"budget_min": args.tinvest_budget}   # общий клиент T-Invest и список акций на прогон
     for name in names:
         spec = SOURCES[name]
         try:
-            if spec.get("kind") == "tinvest":
+            if is_ti(name):
                 res = collect_tinvest(name, spec, ctx)
             else:
                 res = collect(name, spec)
@@ -285,19 +354,24 @@ def main(argv: list[str] | None = None) -> int:
             print(f"SKIP {name}: {e}")
         except Exception as e:  # noqa: BLE001
             failed += 1
+            ti_failed += is_ti(name)
             res = {"ok": False, "error": f"{type(e).__name__}: {e}"[:500]}
             print(f"FAIL {name}: {res['error']}", file=sys.stderr)
             traceback.print_exc(limit=2)
-        res["checked"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+        ti_tried += is_ti(name) and not res.get("skipped")
+        res["checked"] = _now()
         prev = status.get(name, {})
         if not res["ok"] and prev.get("last"):
             res["last"] = prev["last"]          # последние успешные данные остаются на сайте
         status[name] = res
-    status_path.write_text(json.dumps(status, ensure_ascii=False, indent=1), encoding="utf-8")
-    # код 1 только если не удалось собрать ничего из того, что пытались собрать, —
-    # тогда GitHub пришлёт уведомление об ошибке; пропуск без токена сбоем не считается
+        # после каждого источника: если job убьют по таймауту, уже собранное попадёт в коммит
+        _write("status", status, indent=1)
+    if ti_tried and ti_failed == ti_tried:
+        print("::warning::T-Invest: все источники недоступны (проверьте токен)")
+    # код 1, если не удалось собрать ничего из того, что пытались собрать, или токен задан,
+    # но упали все источники T-Invest (GitHub пришлёт уведомление); пропуск без токена — не сбой
     attempted = len(names) - skipped
-    return 1 if attempted and failed == attempted else 0
+    return 1 if (attempted and failed == attempted) or (ti_tried and ti_failed == ti_tried) else 0
 
 
 if __name__ == "__main__":

@@ -36,15 +36,20 @@ jobs:
           done
 
       - name: Сбор
+        # ЦБ собирается первым, status.json пишется после каждого источника; T-Invest ограничен
+        # бюджетом времени сборщика (12 мин), шаг — 25 мин, чтобы успеть сохранить собранное
+        timeout-minutes: 25
         # токен T-Invest API (только чтение) — секрет репозитория; без него источники T-Invest пропускаются
         env:
           TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
         run: python -m scripts.collect_data
 
       - name: Сохранить изменения
+        if: always()          # уже записанные файлы (ЦБ, status.json) коммитим и при сбое/таймауте сбора
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f public/data/*.tmp public/data/.*.tmp
           git add public/data
           if git diff --cached --quiet; then
             echo "Данные не изменились"
