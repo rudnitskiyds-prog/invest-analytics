@@ -42,9 +42,10 @@ jobs:
         # Источник — официальный адрес из инструкции Госуслуг (gosuslugi.ru/crt).
         continue-on-error: true
         env:
-          # SHA-256 отпечатки, закреплённые после первой загрузки (пусто — только сверка структуры)
-          RU_ROOT_SHA256: ""
-          RU_SUB_SHA256: ""
+          # SHA-256 отпечатки, закреплённые при первой загрузке 07.10.2026 (сверить: gosuslugi.ru/crt).
+          # При плановой смене сертификатов Минцифры шаг упадёт — обновить отпечатки (пусто — без сверки)
+          RU_ROOT_SHA256: "D26D2D0231B7C39F92CC738512BA54103519E4405D68B5BD703E9788CA8ECF31"
+          RU_SUB_SHA256: "BBBDE2103E790B999EC62BD03CF625A5A2E7C316E10AFE6A490EEDEAD8B3FD9B"
         run: |
           set -euo pipefail
           d="$RUNNER_TEMP/ru-ca"; mkdir -p "$d"
