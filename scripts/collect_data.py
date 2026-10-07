@@ -20,6 +20,12 @@ TINVEST_TOKEN (только чтение). Их файлы — {"updated", "sour
     fundamentals.json    — {"TICKER": {pe, pb, …}} (соответствие полям proto — FUNDAMENTAL_FIELDS).
 Без токена эти источники получают статус {"ok": false, "skipped": true} и сбоем не считаются.
 
+Источник RusETFs (kind = "rusetfs", токен не нужен) — JSON-API скринера rusetfs.com:
+    rusetfs_funds.json   — {"updated", "source": "RusETFs (rusetfs.com)", "source_url",
+                            "data": [записи core.data.rusetfs.normalize: ticker, УК, комиссия
+                            commission_pct (% год.), СЧА aum_rub (руб.), класс активов, …]}.
+Порядок сбора: ряды ЦБ -> RusETFs -> T-Invest.
+
 Если источник не ответил, прежний файл остаётся нетронутым, а в status.json
 записывается ошибка — сайт продолжает работать на последних успешных данных.
 """
@@ -35,9 +41,10 @@ from pathlib import Path
 from typing import Callable
 
 import pandas as pd
+import requests
 
-from core.config import ROOT
-from core.data import cbr, tinvest
+from core.config import ROOT, RUSETFS_URL
+from core.data import cbr, rusetfs, tinvest
 
 OUT = ROOT / "public" / "data"
 START = "2008-01-01"
@@ -289,6 +296,7 @@ def collect_tinvest(name: str, spec: dict, ctx: dict) -> dict:
 
 
 # порядок важен: акции -> фонды -> дивиденды -> фундаментальные показатели
+# (RusETFs добавляется в SOURCES ниже, но main() всё равно собирает его до T-Invest)
 SOURCES.update({
     "tinvest_shares": {"kind": "tinvest", "title": "Акции TQBR (справочник T-Invest)",
                        "collect": tinvest_shares, "min_rows": 150},
@@ -299,6 +307,43 @@ SOURCES.update({
     "fundamentals": {"kind": "tinvest", "title": "Фундаментальные показатели (T-Invest)",
                      "collect": tinvest_fundamentals, "min_rows": 100},
 })
+
+
+# ------------------------------------------------------------------ RusETFs
+RUSETFS_SOURCE = "RusETFs (rusetfs.com)"
+RUSETFS_MIN_COMMISSION_SHARE = 0.80   # доля фондов с комиссией, ниже — ответ похож на ошибку
+
+
+def _rusetfs_session():
+    """Сессия HTTP для RusETFs (в тестах подменяется фейковой)."""
+    return requests.Session()
+
+
+def rusetfs_funds(spec: dict) -> tuple:
+    """Справочник фондов RusETFs; проверка здравости: ≥ min_rows фондов и ≥ 80 % с комиссией > 0."""
+    rows = rusetfs.normalize(rusetfs.fetch_screener(session=_rusetfs_session()))
+    _check("фондов RusETFs", len(rows), spec["min_rows"])
+    # нулевая комиссия в санити не засчитывается: в живых данных минимум ~0,2 %, массовые нули — сбой
+    with_fee = sum((r["commission_pct"] or 0) > 0 for r in rows)
+    if with_fee < RUSETFS_MIN_COMMISSION_SHARE * len(rows):
+        raise ValueError(f"комиссия > 0 есть у {with_fee} из {len(rows)} фондов — меньше "
+                         f"{RUSETFS_MIN_COMMISSION_SHARE:.0%}, ответ похож на ошибку")
+    return rows, len(rows), {"with_commission": with_fee}
+
+
+def collect_rusetfs(name: str, spec: dict) -> dict:
+    """Как collect_tinvest: атомарная запись, updated меняется только при изменении data;
+    при сбое (исключение до _write) прежний файл не трогается."""
+    data, n, extra = spec["collect"](spec)
+    prev = _previous(name)
+    updated = prev.get("updated") if prev.get("data") == data and prev.get("updated") else _now()
+    _write(name, {"updated": updated, "source": RUSETFS_SOURCE, "source_url": spec["source_url"],
+                  "data": data})
+    return {"ok": True, "rows": n, "last": dt.date.today().isoformat(), **extra}
+
+
+SOURCES["rusetfs_funds"] = {"kind": "rusetfs", "title": "Фонды: комиссии, УК, СЧА (RusETFs)",
+                            "source_url": RUSETFS_URL, "collect": rusetfs_funds, "min_rows": 150}
 
 
 # ------------------------------------------------------------------ ряды ЦБ
@@ -335,9 +380,11 @@ def main(argv: list[str] | None = None) -> int:
     unknown = [n for n in names if n not in SOURCES]
     if unknown:
         ap.error(f"неизвестные источники: {', '.join(unknown)}; есть: {', '.join(SOURCES)}")
-    # ЦБ — первым: долгий или упавший T-Invest не должен помешать сохранить ряды ЦБ
+    # ЦБ — первым, затем RusETFs, T-Invest — последним: долгий или упавший T-Invest
+    # не должен помешать сохранить остальное (сортировка устойчивая — порядок внутри группы прежний)
     is_ti = lambda n: SOURCES[n].get("kind") == "tinvest"   # noqa: E731
-    names = [n for n in names if not is_ti(n)] + [n for n in names if is_ti(n)]
+    order = {"rusetfs": 1, "tinvest": 2}
+    names = sorted(names, key=lambda n: order.get(SOURCES[n].get("kind"), 0))
     failed = skipped = ti_tried = ti_failed = 0
     ctx: dict = {"budget_min": args.tinvest_budget}   # общий клиент T-Invest и список акций на прогон
     for name in names:
@@ -345,6 +392,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if is_ti(name):
                 res = collect_tinvest(name, spec, ctx)
+            elif spec.get("kind") == "rusetfs":
+                res = collect_rusetfs(name, spec)
             else:
                 res = collect(name, spec)
             print(f"OK   {name}: {res['rows']} строк, до {res['last']}")
@@ -366,12 +415,25 @@ def main(argv: list[str] | None = None) -> int:
         status[name] = res
         # после каждого источника: если job убьют по таймауту, уже собранное попадёт в коммит
         _write("status", status, indent=1)
+    rus = status.get("rusetfs_funds") if "rusetfs_funds" in names else None
+    if rus is not None and not rus.get("ok"):
+        # отдельного правила для RusETFs в коде выхода нет: его сбой — обычный сбой источника.
+        # Если собран хотя бы один другой источник (напр. ЦБ) — код 0, сайт работает на прежнем
+        # rusetfs_funds.json; если RusETFs — единственный реально собиравшийся (--only rusetfs_funds,
+        # или ЦБ тоже упал, а T-Invest пропущен без токена) — код 1 по общему правилу ниже
+        print("::warning::RusETFs: справочник фондов не обновлён — " + _short(rus.get("error", "")))
     if ti_tried and ti_failed == ti_tried:
         print("::warning::T-Invest: все источники недоступны — " + _ti_reason(status))
     # код 1, если не удалось собрать ничего из того, что пытались собрать, или токен задан,
     # но упали все источники T-Invest (GitHub пришлёт уведомление); пропуск без токена — не сбой
     attempted = len(names) - skipped
     return 1 if (attempted and failed == attempted) or (ti_tried and ti_failed == ti_tried) else 0
+
+
+def _short(err: str, n: int = 200) -> str:
+    """Краткая причина для ::warning:: — первая строка текста ошибки, не длиннее n символов."""
+    line = (str(err).strip().splitlines() or ["причина неизвестна"])[0]
+    return line[:n] or "причина неизвестна"
 
 
 def _ti_reason(status: dict) -> str:

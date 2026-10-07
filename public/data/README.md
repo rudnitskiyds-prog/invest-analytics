@@ -13,10 +13,12 @@
 | `tinvest_etfs.json` | Фонды TQBR/TQTF: тип активов, комиссия (`fixed_commission`, % годовых), ребалансировка |
 | `dividends.json` | Дивиденды по тикерам (T-Invest `GetDividends`), с 2008 г. и объявленные на год вперёд |
 | `fundamentals.json` | Фундаментальные показатели и мультипликаторы (T-Invest `GetAssetFundamentals`) |
+| `rusetfs_funds.json` | Фонды по данным [RusETFs](https://rusetfs.com) (JSON-API скринера `https://rusetfs.com/api/v1/screener`): УК, комиссия (`commission_pct`, % годовых), СЧА (`aum_rub`, руб.), класс активов, статус торгов |
 | `status.json` | Результат последнего сбора по каждому источнику |
 
 Файлы T-Invest собираются только при заданном секрете `TINVEST_TOKEN` (токен только на чтение);
-без него в `status.json` у этих источников `"skipped": true`.
+без него в `status.json` у этих источников `"skipped": true`. Справочник RusETFs токена не требует;
+метрики сайта RusETFs (Шарп, Сортино, VaR) не сохраняются — коэффициенты платформа считает сама.
 
 Ряды котировок Мосбиржи сюда не попадают: браузер получает их напрямую из ISS. В `fundamentals.json`
 есть отдельные рыночные показатели из T-Invest (капитализация, максимум и минимум за 52 недели).

@@ -10,7 +10,8 @@
 значения берутся как есть, без пересчёта). Для бумаг, которых там нет, — расчёт
 по файлу data/fundamentals.csv (финансовые показатели эмитента: чистая прибыль, выручка,
 EBITDA, капитал, чистый долг — млрд руб., МСФО LTM).
-Сектор акций и комиссия фондов — из tinvest_shares.json / tinvest_etfs.json.
+Сектор акций — из tinvest_shares.json. Комиссия фондов — из rusetfs_funds.json (RusETFs),
+недостающие — из tinvest_etfs.json; УК, СЧА и класс активов фондов — из rusetfs_funds.json.
 Отсутствие файлов не ошибка: соответствующие колонки просто не появляются.
 """
 from __future__ import annotations
@@ -178,8 +179,18 @@ def etf_showcase(benchmark: str = "IMOEX", rf: float = 0.16) -> pd.DataFrame:
         .merge(st, on="SECID", how="left")
     fees = public_data.etf_commissions()
     if not fees.empty:
-        # % годовых, как отдаёт T-Invest API (Etf.fixed_commission)
+        # % годовых: RusETFs (commisionPercent × 100), недостающие — T-Invest (Etf.fixed_commission)
         df.insert(df.columns.get_loc("FUNDTYPE") + 1, "Комиссия, %", df["SECID"].map(fees))
+    info = public_data.fund_info()
+    if not info.empty:
+        # справа от «Комиссия, %» (нет комиссий — справа от «Тип»); СЧА: руб. -> млрд руб.
+        pos = df.columns.get_loc("Комиссия, %" if "Комиссия, %" in df else "FUNDTYPE") + 1
+        sec = df["SECID"]
+        extra = {"УК": sec.map(info["issuer"]),
+                 "СЧА, млрд руб.": (sec.map(info["aum_rub"]).astype(float) / 1e9).round(2),
+                 "Класс активов": sec.map(info["asset_class"])}
+        for i, (col, v) in enumerate(extra.items()):
+            df.insert(pos + i, col, v)
     return df.rename(columns={"SHORTNAME": "Название", "FUNDTYPE": "Тип", "PRICE": "Цена",
                               "LASTTOPREVPRICE": "Изм. день, %", "VALTODAY_RUR": "Оборот, руб."})
 

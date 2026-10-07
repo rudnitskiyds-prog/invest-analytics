@@ -13,6 +13,7 @@ PUBLIC_DATA_DIR = Path(os.environ.get("IP_PUBLIC_DATA_DIR", ROOT / "public" / "d
 ISS_BASE = "https://iss.moex.com/iss"
 CBR_BASE = "https://www.cbr.ru"
 TINVEST_BASE = "https://invest-public-api.tbank.ru/rest"
+RUSETFS_URL = "https://rusetfs.com/api/v1/screener"   # JSON-API скринера фондов RusETFs
 
 # TTL кэша (сек.)
 TTL_MARKET = 15 * 60          # текущие котировки / витрина
