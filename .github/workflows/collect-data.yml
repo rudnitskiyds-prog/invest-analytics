@@ -1,9 +1,9 @@
-name: Сбор данных (ЦБ, T-Invest)
+name: Сбор данных (ЦБ, T-Invest, RusETFs)
 
 on:
   schedule:
     - cron: "13 3 * * *"   # ежедневно в 06:13 по Москве
-  workflow_dispatch:        # ручной запуск: Actions → «Сбор данных (ЦБ, T-Invest)» → Run workflow
+  workflow_dispatch:        # ручной запуск: Actions → «Сбор данных (ЦБ, T-Invest, RusETFs)» → Run workflow
 
 permissions:
   contents: write
@@ -30,7 +30,7 @@ jobs:
       - name: Проверка доступа к источникам
         continue-on-error: true
         run: |
-          for u in https://www.cbr.ru/scripts/XML_daily.asp https://iss.moex.com/iss/index.json https://invest-public-api.tbank.ru; do
+          for u in https://www.cbr.ru/scripts/XML_daily.asp https://iss.moex.com/iss/index.json https://invest-public-api.tbank.ru https://rusetfs.com/api/v1/screener; do
             code=$(curl -s -o /dev/null -m 20 -w "%{http_code}" "$u" || echo "ERR")
             echo "$u -> $code"
           done
@@ -71,7 +71,7 @@ jobs:
           echo "TINVEST_CA_BUNDLE=$d/bundle.pem" >> "$GITHUB_ENV"
 
       - name: Сбор
-        # ЦБ собирается первым, status.json пишется после каждого источника; T-Invest ограничен
+        # ЦБ собирается первым, затем RusETFs (без токена), status.json пишется после каждого источника; T-Invest ограничен
         # бюджетом времени сборщика (12 мин), шаг — 25 мин, чтобы успеть сохранить собранное
         timeout-minutes: 25
         # токен T-Invest API (только чтение) — секрет репозитория; без него источники T-Invest пропускаются
@@ -89,7 +89,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "Данные не изменились"
           else
-            git commit -m "Данные ЦБ и T-Invest на $(date -u +%Y-%m-%d)"
+            git commit -m "Данные ЦБ, T-Invest и RusETFs на $(date -u +%Y-%m-%d)"
             git pull --rebase origin "${GITHUB_REF_NAME}"
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi

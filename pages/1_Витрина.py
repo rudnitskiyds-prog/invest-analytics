@@ -44,12 +44,17 @@ def pct_config(df):
             cfg[c] = st.column_config.NumberColumn(c, format="localized")
     if "Комиссия, %" in df.columns:
         # значение уже в процентах годовых (0.95 = 0,95 %), без пересчёта
-        cfg["Комиссия, %"] = st.column_config.NumberColumn("Комиссия, %", format="%.2f %%",
-                                                          help="Комиссия фонда, % годовых (T-Invest API)")
+        cfg["Комиссия, %"] = st.column_config.NumberColumn(
+            "Комиссия, %", format="%.2f %%",
+            help="Комиссия фонда (TER), % годовых. Источник: RusETFs, при отсутствии — T-Invest API")
+    if "СЧА, млрд руб." in df.columns:
+        cfg["СЧА, млрд руб."] = st.column_config.NumberColumn(
+            "СЧА, млрд руб.", format="%.2f", help="Стоимость чистых активов фонда, RusETFs")
     return cfg
 
 
-SOURCES = "Источники: ISS Московской биржи; дивиденды, мультипликаторы, сектора и комиссии фондов — T-Invest API."
+SOURCES = ("Источники: ISS Московской биржи; дивиденды, мультипликаторы и сектора — T-Invest API; "
+           "комиссии, УК и СЧА фондов — RusETFs (rusetfs.com).")
 
 
 tab_sh, tab_etf, tab_bd, tab_mt, tab_ix = st.tabs(["Акции", "Фонды (паи)", "Облигации", "Металлы", "Индексы"])
@@ -86,17 +91,31 @@ with tab_sh:
 with tab_etf:
     try:
         df = _etfs(rf, "IMOEX")
-        if "Комиссия, %" in df.columns:
-            c1, c2, _ = st.columns([1, 1, 2])
-            fee_max = c1.number_input("Комиссия до, %", min_value=0.0, max_value=10.0, value=None,
-                                      step=0.05, format="%.2f", placeholder="без ограничения",
-                                      key="etf_fee_max")
-            if c2.toggle("Сначала дешёвые", key="etf_fee_sort"):
-                df = df.sort_values("Комиссия, %", na_position="last")
-            if fee_max is not None:
-                df = df[df["Комиссия, %"] <= fee_max]
-                st.caption("При фильтре по комиссии фонды без данных о комиссии скрыты.")
+        has_fee = "Комиссия, %" in df.columns
+        # колонки RusETFs появляются, только если данные есть
+        cat_filters = [(c, k) for c, k in [("УК", "etf_uk"), ("Класс активов", "etf_class")] if c in df.columns]
+        if has_fee or cat_filters:
+            widths = ([1, 1] if has_fee else []) + [1.5] * len(cat_filters)
+            cols = st.columns(widths + [max(0.5, 5 - sum(widths))])
+            picks = {}
+            for (c, k), col in zip(cat_filters, cols[2 if has_fee else 0:]):
+                opts = sorted(df[c].dropna().astype(str).unique())
+                picks[c] = col.multiselect(c, opts, placeholder="Все", key=k)
+            for c, chosen in picks.items():
+                if chosen:
+                    df = df[df[c].astype(str).isin(chosen)]
+            if has_fee:
+                fee_max = cols[0].number_input("Комиссия до, %", min_value=0.0, max_value=10.0, value=None,
+                                               step=0.05, format="%.2f", placeholder="без ограничения",
+                                               key="etf_fee_max")
+                if cols[1].toggle("Сначала дешёвые", key="etf_fee_sort"):
+                    df = df.sort_values("Комиссия, %", na_position="last")
+                if fee_max is not None:
+                    df = df[df["Комиссия, %"] <= fee_max]
+                    st.caption("При фильтре по комиссии фонды без данных о комиссии скрыты.")
         st.dataframe(df, width="stretch", height=620, hide_index=True, column_config=pct_config(df))
+        if {"УК", "СЧА, млрд руб."} & set(df.columns):
+            st.caption("Данные о комиссиях, УК и СЧА — [RusETFs](https://rusetfs.com)")
         st.download_button("Скачать Excel", to_excel({"Фонды": df}), "etf.xlsx")
     except Exception as e:  # noqa: BLE001
         st.error(f"Ошибка загрузки: {e}")
