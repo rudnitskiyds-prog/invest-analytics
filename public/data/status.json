@@ -1,26 +1,46 @@
 {
  "cbr_gold": {
   "ok": true,
-  "rows": 4639,
-  "last": "2026-10-06",
-  "checked": "2026-10-06T13:20:25+00:00"
+  "rows": 4640,
+  "last": "2026-10-07",
+  "checked": "2026-10-07T14:10:06+00:00"
  },
  "ruonia_rate": {
   "ok": true,
-  "rows": 4123,
-  "last": "2026-10-05",
-  "checked": "2026-10-06T13:20:25+00:00"
+  "rows": 4124,
+  "last": "2026-10-06",
+  "checked": "2026-10-07T14:10:07+00:00"
  },
  "ruonia_index": {
   "ok": true,
-  "rows": 4123,
-  "last": "2026-10-05",
-  "checked": "2026-10-06T13:20:25+00:00"
+  "rows": 4124,
+  "last": "2026-10-06",
+  "checked": "2026-10-07T14:10:07+00:00"
  },
  "key_rate": {
   "ok": true,
-  "rows": 3273,
-  "last": "2026-10-06",
-  "checked": "2026-10-06T13:20:26+00:00"
+  "rows": 3274,
+  "last": "2026-10-07",
+  "checked": "2026-10-07T14:10:08+00:00"
+ },
+ "tinvest_shares": {
+  "ok": false,
+  "error": "TInvestError: Shares: не удалось после 6 попыток (SSLError: HTTPSConnectionPool(host='invest-public-api.tbank.ru', port=443): Max retries exceeded with url: /rest/tinkoff.public.invest.api.contract.v1.InstrumentsService/Shares (Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate )",
+  "checked": "2026-10-07T14:10:43+00:00"
+ },
+ "tinvest_etfs": {
+  "ok": false,
+  "error": "TInvestError: Etfs: не удалось после 6 попыток (SSLError: HTTPSConnectionPool(host='invest-public-api.tbank.ru', port=443): Max retries exceeded with url: /rest/tinkoff.public.invest.api.contract.v1.InstrumentsService/Etfs (Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in)",
+  "checked": "2026-10-07T14:11:17+00:00"
+ },
+ "dividends": {
+  "ok": false,
+  "error": "RuntimeError: список акций не прошёл проверку (TInvestError: Shares: не удалось после 6 попыток (SSLError: HTTPSConnectionPool(host='invest-public-api.tbank.ru', port=443): Max retries exceeded with url: /rest/tinkoff.public.invest.api.contract.v1.InstrumentsSe)",
+  "checked": "2026-10-07T14:11:17+00:00"
+ },
+ "fundamentals": {
+  "ok": false,
+  "error": "RuntimeError: список акций не прошёл проверку (TInvestError: Shares: не удалось после 6 попыток (SSLError: HTTPSConnectionPool(host='invest-public-api.tbank.ru', port=443): Max retries exceeded with url: /rest/tinkoff.public.invest.api.contract.v1.InstrumentsSe)",
+  "checked": "2026-10-07T14:11:17+00:00"
  }
 }
