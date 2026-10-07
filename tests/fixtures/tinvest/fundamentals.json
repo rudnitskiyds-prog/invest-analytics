@@ -1,0 +1,13 @@
+{
+ "fundamentals": [
+  {"assetUid": "asset-a", "currency": "RUB", "marketCapitalization": 500000000000,
+   "highPriceLast52Weeks": 180.5, "lowPriceLast52Weeks": 120.25, "beta": 0.85, "freeFloat": 0.48,
+   "peRatioTtm": 4.2, "priceToBookTtm": 0.9, "priceToSalesTtm": 0, "evToEbitdaMrq": 3.3,
+   "netDebtToEbitda": 1.1, "roe": 22.5, "roa": 3.1, "netMarginMrq": 21.0,
+   "dividendPayoutRatioFy": 50, "domicileIndicatorCode": "RUS",
+   "exDividendDate": "2025-07-16T00:00:00Z", "fiscalPeriodStartDate": "2025-01-01T00:00:00Z",
+   "fiscalPeriodEndDate": "2025-12-30T21:00:00Z"},
+  {"assetUid": "asset-b", "currency": "RUB", "marketCapitalization": 0, "peRatioTtm": -7.5,
+   "priceToBookTtm": 1.6, "roe": -4.0, "exDividendDate": "1970-01-01T00:00:00Z"}
+ ]
+}

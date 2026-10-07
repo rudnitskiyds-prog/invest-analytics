@@ -8,7 +8,8 @@
 Язык интерфейса, сообщений коммитов и отчётов — русский.
 
 Целевая структура сайта, статусы разделов и этапы — `docs/STRUCTURE.md` (сверяйтесь перед новой задачей).
-Данные на сайте — только российские (ISS Мосбиржи, Банк России).
+Данные на сайте — только российские: ISS Мосбиржи, Банк России, T-Invest API (дивиденды, мультипликаторы,
+сектора, комиссии фондов; используется с разрешения Т-Банка в рамках студенческого проекта).
 
 ## Структура
 
@@ -30,7 +31,7 @@ pip install -r requirements.txt -r requirements-dev.txt
 python -m pytest -q                # все тесты (вкл. JS через node), сеть не нужна
 python -m scripts.reproduce_nir    # сверка бэктеста с табл. 4 НИР
 IP_OFFLINE=1 streamlit run app.py  # интерфейс на демо-данных
-python -m scripts.collect_data     # сбор данных ЦБ в public/data/ (нужна сеть)
+python -m scripts.collect_data     # сбор ЦБ и T-Invest в public/data/ (нужна сеть; T-Invest — при TINVEST_TOKEN)
 python -m http.server 8000         # из корня репозитория; веб-версия: http://localhost:8000/web/ (демо: ?demo=1)
 node --test "tests/web/*.test.mjs" # тесты JS-движка (также запускаются из pytest)
 python -m tests.web.make_reference # перегенерировать эталоны Python для JS-тестов
@@ -46,7 +47,8 @@ python -m tests.web.make_reference # перегенерировать этало
    (после правки — `python -m tests.web.make_reference`).
 4. `core/` не импортирует Streamlit. Интерфейс не считает финансы сам — только вызывает `core/`
    (в веб-версии — `web/lib/`). Формулы в `web/lib/metrics.js` совпадают с `core/analytics/metrics.py`.
-5. Данные: ISS и ЦБ — через официальные выгрузки (JSON ISS, XML/SOAP ЦБ), не парсинг HTML.
+5. Данные: ISS, ЦБ и T-Invest API — через официальные выгрузки (JSON ISS, XML/SOAP ЦБ, REST T-Invest
+   только на чтение, токен `TINVEST_TOKEN` — в GitHub Secrets), не парсинг HTML сторонних сайтов.
    Котировки Мосбиржи в репозиторий не коммитим, кроме эталонных фикстур и `public/data/` от сборщика.
 6. Секреты и токены не попадают в код и коммиты.
 7. Агенты не сливают изменения в `main`. Результат — ветка и Pull Request; слияние делает человек.

@@ -1,0 +1,25 @@
+{
+ "instruments": [
+  {"figi": "TEST00000001", "ticker": "AAAA", "classCode": "TQBR", "isin": "RU000TEST001", "lot": 10,
+   "currency": "rub", "name": "Тестовая компания", "sector": "financial", "shareType": "SHARE_TYPE_COMMON",
+   "divYieldFlag": true, "liquidityFlag": true, "forQualInvestorFlag": false,
+   "uid": "uid-aaaa", "positionUid": "pos-aaaa", "assetUid": "asset-a",
+   "nominal": {"currency": "rub", "units": "3", "nano": 0}},
+  {"figi": "TEST00000002", "ticker": "AAAAP", "classCode": "TQBR", "isin": "RU000TEST002", "lot": 10,
+   "currency": "rub", "name": "Тестовая компания ап", "sector": "financial", "shareType": "SHARE_TYPE_PREFERRED",
+   "divYieldFlag": true, "liquidityFlag": true,
+   "uid": "uid-aaaap", "positionUid": "pos-aaaap", "assetUid": "asset-a"},
+  {"figi": "TEST00000003", "ticker": "BBBB", "classCode": "TQBR", "isin": "RU000TEST003", "lot": 1,
+   "currency": "rub", "name": "Вторая тестовая", "sector": "energy", "shareType": "SHARE_TYPE_COMMON",
+   "uid": "uid-bbbb", "positionUid": "pos-bbbb", "assetUid": "asset-b"},
+  {"figi": "TEST00000004", "ticker": "CCCC", "classCode": "TQBR", "isin": "RU000TEST004", "lot": 0,
+   "currency": "", "name": "Без сектора", "sector": "",
+   "uid": "uid-cccc", "positionUid": "pos-cccc", "assetUid": "asset-c", "forQualInvestorFlag": true},
+  {"figi": "TEST00000005", "ticker": "ZZZZ", "classCode": "SPBXM", "isin": "US000TEST005", "lot": 1,
+   "currency": "usd", "name": "Иностранная (не TQBR)", "sector": "it",
+   "uid": "uid-zzzz", "assetUid": "asset-z"},
+  {"figi": "TEST00000006", "ticker": "AAAA", "classCode": "SMAL", "isin": "RU000TEST001", "lot": 1,
+   "currency": "rub", "name": "Тестовая компания (неполные лоты)", "sector": "financial",
+   "uid": "uid-aaaa-smal", "assetUid": "asset-a"}
+ ]
+}
