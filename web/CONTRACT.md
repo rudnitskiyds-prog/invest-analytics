@@ -84,6 +84,8 @@ export function computeAll(series, benchmark|null, rf, freq='M') -> MetricsRepor
        // positive_share, best_period, worst_period, days_to_recover, beta, alpha, treynor, m2,
        // tracking_error, information_ratio, correlation  (без бенчмарка последние — NaN)
 export const LABELS_RU, PERCENT_FIELDS     // как в Python, порядок строк таблицы = порядок LABELS_RU
+export function annualReturns(seriesOrFrame) -> {years, values} | {years, cols}  // по календарным годам, база 1-го года — первая точка (ui/common.annual_returns)
+export function rebase(seriesOrFrame, base=100) -> same type  // / первое конечное значение × base; ведущие NaN остаются NaN
 ```
 Ряды разных активов выравниваются по общим датам (inner join), как `pd.concat(join='inner')`.
 

@@ -24,12 +24,13 @@
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
-pytest -q                          # все тесты, сеть не нужна
+python -m pytest -q                # все тесты (вкл. JS через node), сеть не нужна
 python -m scripts.reproduce_nir    # сверка бэктеста с табл. 4 НИР
 IP_OFFLINE=1 streamlit run app.py  # интерфейс на демо-данных
 python -m scripts.collect_data     # сбор данных ЦБ в public/data/ (нужна сеть)
 python -m http.server 8000         # из корня репозитория; веб-версия: http://localhost:8000/web/ (демо: ?demo=1)
-node --test tests/web/             # тесты JS-движка (также запускаются из pytest)
+node --test "tests/web/*.test.mjs" # тесты JS-движка (также запускаются из pytest)
+python -m tests.web.make_reference # перегенерировать эталоны Python для JS-тестов
 ```
 
 ## Инварианты — нарушать нельзя
@@ -37,7 +38,9 @@ node --test tests/web/             # тесты JS-движка (также за
 1. `pytest -q` проходит полностью. Тесты не ходят в сеть (сетевые вызовы — через monkeypatch / фикстуры).
 2. `tests/test_nir_reproduction.py` — эталон методики. Если правка меняет цифры сверки с табл. 4 НИР,
    это не «починка теста», а изменение методики: остановиться и спросить пользователя.
-3. Формулы коэффициентов — в `core/analytics/metrics.py` и в странице «Методика»; меняются только вместе.
+3. Формулы коэффициентов живут в четырёх местах и меняются только вместе: `core/analytics/metrics.py`,
+   `web/lib/metrics.js`, `pages/7_Методика.py`, вкладка «Методика» в `web/index.html`
+   (после правки — `python -m tests.web.make_reference`).
 4. `core/` не импортирует Streamlit. Интерфейс не считает финансы сам — только вызывает `core/`
    (в веб-версии — `web/lib/`). Формулы в `web/lib/metrics.js` совпадают с `core/analytics/metrics.py`.
 5. Данные: ISS и ЦБ — через официальные выгрузки (JSON ISS, XML/SOAP ЦБ), не парсинг HTML.

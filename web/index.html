@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="ИнвестАналитика — оценка эффективности инвестиций на российском рынке: бэктест пассивных стратегий, граница Марковица, коэффициенты эффективности.">
+  <title>ИнвестАналитика — оценка эффективности инвестиций</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Cpath d='M7 22l6-7 5 4 7-9' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="vendor/chart.umd.min.js" defer></script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">К содержимому</a>
+
+<header class="app-header">
+  <div class="wrap header-row">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8"/><path d="M7 22l6-7 5 4 7-9"/></svg>
+      <div>
+        <h1 class="brand-title">ИнвестАналитика</h1>
+        <p class="brand-sub">Оценка эффективности инвестиций на российском рынке</p>
+      </div>
+    </div>
+    <form class="global-params" id="global-form" aria-label="Общие параметры расчёта" onsubmit="return false">
+      <div class="field field-compact">
+        <label for="g-rf">Безрисковая ставка, % год.</label>
+        <input id="g-rf" name="rf" type="text" inputmode="decimal" autocomplete="off"
+               aria-describedby="g-rf-hint" title="15-летняя КБД на 11.01.2011, как в НИР">
+        <small id="g-rf-hint" class="hint">15-летняя КБД на 11.01.2011, как в НИР</small>
+      </div>
+      <div class="field field-compact">
+        <label for="g-bench">Бенчмарк</label>
+        <select id="g-bench" name="bench"></select>
+      </div>
+      <div class="field field-compact">
+        <label for="g-freq">Частота метрик</label>
+        <select id="g-freq" name="freq">
+          <option value="D">Дневная</option>
+          <option value="W">Недельная</option>
+          <option value="M">Месячная (как в НИР)</option>
+        </select>
+      </div>
+    </form>
+  </div>
+</header>
+
+<div class="wrap" id="banners">
+  <div id="demo-banner" class="demo-banner" hidden>
+    <strong>Демо-данные: месячные ряды 2010–2025</strong>
+    <span>Исторические ряды ISS Мосбиржи и Банка России из эталонных фикстур, без обращения к сети.</span>
+    <a id="live-link" href="./">Перейти к живым данным</a>
+  </div>
+  <div id="engine-banner"></div>
+</div>
+
+<nav class="wrap tabs" role="tablist" aria-label="Разделы">
+  <button class="tab" role="tab" id="tab-backtest" aria-controls="panel-backtest" data-tab="backtest">Бэктест</button>
+  <button class="tab" role="tab" id="tab-frontier" aria-controls="panel-frontier" data-tab="frontier">Граница Марковица</button>
+  <button class="tab" role="tab" id="tab-security" aria-controls="panel-security" data-tab="security">Коэффициенты бумаги</button>
+  <button class="tab" role="tab" id="tab-method" aria-controls="panel-method" data-tab="method">Методика</button>
+</nav>
+<div class="progress" aria-hidden="true"><span></span></div>
+
+<main id="main" class="wrap">
+
+<!-- ============================================================ БЭКТЕСТ -->
+<section class="panel" id="panel-backtest" role="tabpanel" aria-labelledby="tab-backtest" hidden>
+  <div class="panel-head">
+    <h2>Бэктест портфелей и стратегий</h2>
+    <p class="lead">По умолчанию — методика НИР: 1&nbsp;000&nbsp;000&nbsp;₽, 2011–2025, ежегодная ребалансировка
+      в последний торговый день декабря, без комиссий и налогов, бенчмарк — MCFTR.</p>
+  </div>
+  <form id="bt-form" class="card form-card" novalidate>
+    <div class="form-grid-2">
+      <fieldset class="group">
+        <legend>Стратегии НИР</legend>
+        <div id="bt-strategies" class="check-list"><p class="muted">Загрузка списка стратегий…</p></div>
+      </fieldset>
+      <fieldset class="group">
+        <legend>Свой портфель</legend>
+        <label class="switch"><input type="checkbox" id="bt-pf-on"> <span>Включить в бэктест</span></label>
+        <p class="hint">Ключ из каталога (MCFTR, CORP_CHAIN, GOLD_CBR…) или любой тикер ISS (SBER, EQMX,
+          GLDRUB_TOM). Доли в %, при расчёте нормируются к 100.</p>
+        <div class="table-wrap">
+          <table class="pf-table" id="bt-pf-table">
+            <thead><tr><th scope="col">Актив</th><th scope="col" class="num">Доля, %</th><th scope="col"><span class="sr-only">Удалить</span></th></tr></thead>
+            <tbody></tbody>
+            <tfoot><tr><td><button type="button" class="btn btn-ghost btn-sm" id="bt-pf-add">+ Добавить актив</button></td>
+              <td class="num"><span id="bt-pf-sum"></span></td><td></td></tr></tfoot>
+          </table>
+        </div>
+      </fieldset>
+    </div>
+    <fieldset class="group">
+      <legend>Параметры</legend>
+      <div class="form-grid">
+        <div class="field"><label for="bt-from">Начало</label><input id="bt-from" type="date" min="2003-01-01"></div>
+        <div class="field"><label for="bt-till">Конец</label><input id="bt-till" type="date" min="2003-01-01"></div>
+        <div class="field"><label for="bt-cap">Начальный капитал, ₽</label><input id="bt-cap" type="text" inputmode="numeric" autocomplete="off"></div>
+        <div class="field"><label for="bt-rebal">Ребалансировка</label><select id="bt-rebal"></select></div>
+        <div class="field"><label for="bt-band">Коридор, п.&nbsp;п. (0 — нет)</label><input id="bt-band" type="text" inputmode="decimal" autocomplete="off"></div>
+        <div class="field"><label for="bt-comm">Комиссия, % от сделки</label><input id="bt-comm" type="text" inputmode="decimal" autocomplete="off"></div>
+        <div class="field"><label for="bt-contrib">Пополнение, ₽</label><input id="bt-contrib" type="text" inputmode="numeric" autocomplete="off"></div>
+        <div class="field"><label for="bt-cfreq">Периодичность пополнения</label>
+          <select id="bt-cfreq"><option value="M">Ежемесячно</option><option value="Q">Ежеквартально</option><option value="A">Ежегодно</option></select></div>
+        <div class="field"><label for="bt-tax">НДФЛ при ребалансировке, %</label><input id="bt-tax" type="text" inputmode="decimal" autocomplete="off"></div>
+      </div>
+    </fieldset>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary" id="bt-run">Запустить бэктест</button>
+      <span class="status" id="bt-status" role="status" aria-live="polite"></span>
+    </div>
+  </form>
+  <div id="bt-out" class="out"></div>
+</section>
+
+<!-- ============================================================ ГРАНИЦА -->
+<section class="panel" id="panel-frontier" role="tabpanel" aria-labelledby="tab-frontier" hidden>
+  <div class="panel-head">
+    <h2>Граница эффективности Марковица</h2>
+    <p class="lead">Облако случайных портфелей, эффективная граница, линия рынка капитала (CML) и
+      касательный портфель для выбранных базовых активов.</p>
+  </div>
+  <form id="fr-form" class="card form-card" novalidate>
+    <fieldset class="group">
+      <legend>Базовые активы (индексы-аналоги ПИФов)</legend>
+      <div id="fr-assets" class="chip-list"><p class="muted">Загрузка каталога…</p></div>
+      <p class="hint" id="fr-ruonia-hint"><strong>Почему RUONIA лучше не включать:</strong> денежный рынок почти
+        безрисков, поэтому граница вырождается в «всё в RUONIA»; его роль играет линия CML от безрисковой ставки.</p>
+      <div class="field field-wide">
+        <label for="fr-extra">Дополнительно тикеры ISS через запятую</label>
+        <input id="fr-extra" type="text" placeholder="SBER, LKOH, EQMX, GLDRUB_TOM" autocomplete="off" spellcheck="false">
+      </div>
+    </fieldset>
+    <fieldset class="group">
+      <legend>Параметры</legend>
+      <div class="form-grid">
+        <div class="field"><label for="fr-from">Начало</label><input id="fr-from" type="date" min="2003-01-01"></div>
+        <div class="field"><label for="fr-till">Конец</label><input id="fr-till" type="date" min="2003-01-01"></div>
+        <div class="field"><label for="fr-freq">Частота доходностей</label>
+          <select id="fr-freq"><option value="M">Месяц</option><option value="W">Неделя</option><option value="D">День</option></select></div>
+        <div class="field"><label for="fr-mu">Ожидаемая доходность</label>
+          <select id="fr-mu"><option value="arith">Среднее арифм. × n</option><option value="cagr">CAGR</option></select></div>
+        <div class="field"><label for="fr-wmin">Мин. доля актива, %</label><input id="fr-wmin" type="text" inputmode="decimal" autocomplete="off"></div>
+        <div class="field"><label for="fr-wmax">Макс. доля актива, %</label><input id="fr-wmax" type="text" inputmode="decimal" autocomplete="off"></div>
+        <div class="field"><label for="fr-nr">Случайных портфелей</label><input id="fr-nr" type="text" inputmode="numeric" autocomplete="off"></div>
+      </div>
+    </fieldset>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary" id="fr-run">Построить границу</button>
+      <span class="status" id="fr-status" role="status" aria-live="polite"></span>
+    </div>
+  </form>
+  <div id="fr-out" class="out"></div>
+</section>
+
+<!-- ============================================================ БУМАГА -->
+<section class="panel" id="panel-security" role="tabpanel" aria-labelledby="tab-security" hidden>
+  <div class="panel-head">
+    <h2>Коэффициенты бумаги</h2>
+    <p class="lead">Цена тикера или индекса против бенчмарка (база = 100), просадки и полная таблица
+      показателей эффективности.</p>
+  </div>
+  <form id="sec-form" class="card form-card" novalidate>
+    <div class="form-grid">
+      <div class="field"><label for="sec-key">Тикер или индекс</label>
+        <input id="sec-key" type="text" list="catalog-list" autocomplete="off" spellcheck="false" placeholder="MCFTR, SBER, GLDRUB_TOM"></div>
+      <div class="field"><label for="sec-from">Начало</label><input id="sec-from" type="date" min="2003-01-01"></div>
+      <div class="field"><label for="sec-till">Конец</label><input id="sec-till" type="date" min="2003-01-01"></div>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary" id="sec-run">Рассчитать</button>
+      <span class="status" id="sec-status" role="status" aria-live="polite"></span>
+    </div>
+  </form>
+  <div id="sec-out" class="out"></div>
+</section>
+
+<!-- ============================================================ МЕТОДИКА -->
+<section class="panel" id="panel-method" role="tabpanel" aria-labelledby="tab-method" hidden>
+  <div class="panel-head">
+    <h2>Методика расчёта</h2>
+    <p class="lead">Показатели и допущения — по НИР «Сравнительный анализ пассивных стратегий управления
+      инвестиционным портфелем на российском финансовом рынке» (п.&nbsp;1.3, табл.&nbsp;2; п.&nbsp;2.1).</p>
+  </div>
+
+  <div class="card prose">
+    <p><strong>Обозначения:</strong>
+      <math><msub><mi>R</mi><mi>p</mi></msub></math> — доходность портфеля,
+      <math><msub><mi>R</mi><mi>f</mi></msub></math> — безрисковая ставка,
+      <math><msub><mi>R</mi><mi>m</mi></msub></math> — доходность рынка (бенчмарка),
+      <math><msub><mi>σ</mi><mi>p</mi></msub></math> — стандартное отклонение доходностей портфеля,
+      <math><msub><mi>σ</mi><mi>d</mi></msub></math> — стандартное отклонение отрицательных доходностей,
+      <math><msub><mi>σ</mi><mi>m</mi></msub></math> — стандартное отклонение рынка,
+      <math><mi>n</mi></math> — число периодов в году (252 / 52 / 12),
+      <math><msub><mi>V</mi><mi>t</mi></msub></math> — стоимость портфеля в момент <math><mi>t</mi></math>.</p>
+  </div>
+
+  <h3 class="section-title">Коэффициенты</h3>
+  <div class="formula-list" id="formula-list">
+    <div class="formula"><div class="f-name">Накопленная доходность</div>
+      <math display="block"><mi>TR</mi><mo>=</mo><mfrac><msub><mi>V</mi><mi>T</mi></msub><msub><mi>V</mi><mn>0</mn></msub></mfrac><mo>−</mo><mn>1</mn></math></div>
+
+    <div class="formula"><div class="f-name">CAGR (среднегодовая доходность)</div>
+      <math display="block"><mi>CAGR</mi><mo>=</mo><msup><mrow><mo>(</mo><mfrac><msub><mi>V</mi><mi>T</mi></msub><msub><mi>V</mi><mn>0</mn></msub></mfrac><mo>)</mo></mrow><mrow><mn>365,25</mn><mo>/</mo><mtext>дней</mtext></mrow></msup><mo>−</mo><mn>1</mn></math></div>
+
+    <div class="formula"><div class="f-name">Волатильность</div>
+      <math display="block"><mi>σ</mi><mo>=</mo><mi>s</mi><mo>(</mo><msub><mi>r</mi><mi>t</mi></msub><mo>)</mo><mo>·</mo><msqrt><mi>n</mi></msqrt></math></div>
+
+    <div class="formula"><div class="f-name">Максимальная просадка</div>
+      <math display="block"><mi>MaxDD</mi><mo>=</mo><munder><mo movablelimits="false">min</mo><mi>t</mi></munder><mrow><mo>(</mo><mfrac><msub><mi>V</mi><mi>t</mi></msub><mrow><msub><mo movablelimits="false">max</mo><mrow><mi>τ</mi><mo>≤</mo><mi>t</mi></mrow></msub><msub><mi>V</mi><mi>τ</mi></msub></mrow></mfrac><mo>−</mo><mn>1</mn><mo>)</mo></mrow></math></div>
+
+    <div class="formula"><div class="f-name">Бета<small>Мера систематического риска</small></div>
+      <math display="block"><mi>β</mi><mo>=</mo><mfrac><mrow><mi>Cov</mi><mo>(</mo><msub><mi>R</mi><mi>p</mi></msub><mo>,</mo><msub><mi>R</mi><mi>m</mi></msub><mo>)</mo></mrow><mrow><mi>Var</mi><mo>(</mo><msub><mi>R</mi><mi>m</mi></msub><mo>)</mo></mrow></mfrac></math></div>
+
+    <div class="formula"><div class="f-name">Коэффициент Шарпа<small>Числитель — среднее превышение над R<sub>f</sub> × n (или CAGR − R<sub>f</sub> в «геометрическом» режиме)</small></div>
+      <math display="block"><mi>S</mi><mo>=</mo><mfrac><mrow><msub><mi>R</mi><mi>p</mi></msub><mo>−</mo><msub><mi>R</mi><mi>f</mi></msub></mrow><msub><mi>σ</mi><mi>p</mi></msub></mfrac></math></div>
+
+    <div class="formula"><div class="f-name">Коэффициент Трейнора</div>
+      <math display="block"><mi>T</mi><mo>=</mo><mfrac><mrow><msub><mi>R</mi><mi>p</mi></msub><mo>−</mo><msub><mi>R</mi><mi>f</mi></msub></mrow><msub><mi>β</mi><mi>p</mi></msub></mfrac></math></div>
+
+    <div class="formula"><div class="f-name">Коэффициент Сортино</div>
+      <math display="block"><mi>So</mi><mo>=</mo><mfrac><mrow><msub><mi>R</mi><mi>p</mi></msub><mo>−</mo><msub><mi>R</mi><mi>f</mi></msub></mrow><msub><mi>σ</mi><mi>d</mi></msub></mfrac><mo>,</mo><mspace width="1em"></mspace><msub><mi>σ</mi><mi>d</mi></msub><mo>=</mo><msqrt><mrow><mfrac><mn>1</mn><mi>N</mi></mfrac><mo>∑</mo><mi>min</mi><msup><mrow><mo>(</mo><msub><mi>r</mi><mi>t</mi></msub><mo>−</mo><msub><mi>r</mi><mi>f</mi></msub><mo>,</mo><mn>0</mn><mo>)</mo></mrow><mn>2</mn></msup></mrow></msqrt><mo>·</mo><msqrt><mi>n</mi></msqrt></math></div>
+
+    <div class="formula"><div class="f-name">M² Модильяни</div>
+      <math display="block"><msup><mi>M</mi><mn>2</mn></msup><mo>=</mo><msub><mi>S</mi><mi>p</mi></msub><mo>·</mo><msub><mi>σ</mi><mi>m</mi></msub><mo>+</mo><msub><mi>R</mi><mi>f</mi></msub></math></div>
+
+    <div class="formula"><div class="f-name">Альфа Дженсена</div>
+      <math display="block"><mi>α</mi><mo>=</mo><msub><mi>R</mi><mi>p</mi></msub><mo>−</mo><mrow><mo>[</mo><msub><mi>R</mi><mi>f</mi></msub><mo>+</mo><mi>β</mi><mo>(</mo><msub><mi>R</mi><mi>m</mi></msub><mo>−</mo><msub><mi>R</mi><mi>f</mi></msub><mo>)</mo><mo>]</mo></mrow></math></div>
+
+    <div class="formula"><div class="f-name">Коэффициент Кальмара</div>
+      <math display="block"><mi>K</mi><mo>=</mo><mfrac><mi>CAGR</mi><mrow><mo>|</mo><mi>MaxDD</mi><mo>|</mo></mrow></mfrac></math></div>
+
+    <div class="formula"><div class="f-name">Коэффициент Швагера<small>По доходностям периодов</small></div>
+      <math display="block"><mi>Sw</mi><mo>=</mo><mfrac><mrow><mo>∑</mo><mi>Profit</mi></mrow><mrow><mo>∑</mo><mo>|</mo><mi>Loss</mi><mo>|</mo></mrow></mfrac></math></div>
+
+    <div class="formula"><div class="f-name">Коэффициент Омега<small>Порог L = R<sub>f</sub></small></div>
+      <math display="block"><mi>Ω</mi><mo>=</mo><mfrac><mrow><msubsup><mo>∫</mo><mi>L</mi><mi>∞</mi></msubsup><mo>[</mo><mn>1</mn><mo>−</mo><mi>F</mi><mo>(</mo><mi>r</mi><mo>)</mo><mo>]</mo><mi>d</mi><mi>r</mi></mrow><mrow><msubsup><mo>∫</mo><mrow><mo>−</mo><mi>∞</mi></mrow><mi>L</mi></msubsup><mi>F</mi><mo>(</mo><mi>r</mi><mo>)</mo><mi>d</mi><mi>r</mi></mrow></mfrac><mo>≈</mo><mfrac><mrow><mo>∑</mo><mi>max</mi><mo>(</mo><msub><mi>r</mi><mi>t</mi></msub><mo>−</mo><mi>L</mi><mo>,</mo><mn>0</mn><mo>)</mo></mrow><mrow><mo>∑</mo><mi>max</mi><mo>(</mo><mi>L</mi><mo>−</mo><msub><mi>r</mi><mi>t</mi></msub><mo>,</mo><mn>0</mn><mo>)</mo></mrow></mfrac></math></div>
+
+    <div class="formula"><div class="f-name">Ошибка слежения</div>
+      <math display="block"><mi>TE</mi><mo>=</mo><mi>s</mi><mo>(</mo><msub><mi>R</mi><mi>p</mi></msub><mo>−</mo><msub><mi>R</mi><mi>m</mi></msub><mo>)</mo><mo>·</mo><msqrt><mi>n</mi></msqrt></math></div>
+
+    <div class="formula"><div class="f-name">Информационный коэффициент</div>
+      <math display="block"><mi>IR</mi><mo>=</mo><mfrac><mrow><mover><mrow><msub><mi>R</mi><mi>p</mi></msub><mo>−</mo><msub><mi>R</mi><mi>m</mi></msub></mrow><mo>‾</mo></mover><mo>·</mo><mi>n</mi></mrow><mi>TE</mi></mfrac></math></div>
+
+    <div class="formula"><div class="f-name">VaR / CVaR 95&nbsp;%<small>Исторический метод</small></div>
+      <math display="block"><mi>VaR</mi><mo>=</mo><mo>−</mo><msub><mi>q</mi><mrow><mn>5</mn><mo>%</mo></mrow></msub><mo>(</mo><msub><mi>r</mi><mi>t</mi></msub><mo>)</mo><mo>,</mo><mspace width="1em"></mspace><mi>CVaR</mi><mo>=</mo><mo>−</mo><mi>E</mi><mo>[</mo><msub><mi>r</mi><mi>t</mi></msub><mo>∣</mo><msub><mi>r</mi><mi>t</mi></msub><mo>≤</mo><msub><mi>q</mi><mrow><mn>5</mn><mo>%</mo></mrow></msub><mo>]</mo></math></div>
+
+    <div class="formula"><div class="f-name">TWR портфеля<small>F — внешние потоки (пополнения/выводы)</small></div>
+      <math display="block"><mn>1</mn><mo>+</mo><mi>TWR</mi><mo>=</mo><munder><mo>∏</mo><mi>t</mi></munder><mfrac><mrow><msub><mi>V</mi><mi>t</mi></msub><mo>−</mo><msub><mi>F</mi><mi>t</mi></msub></mrow><msub><mi>V</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub></mfrac></math></div>
+
+    <div class="formula"><div class="f-name">XIRR<small>Денежно-взвешенная доходность инвестора</small></div>
+      <math display="block"><munder><mo>∑</mo><mi>i</mi></munder><mfrac><mrow><mi>C</mi><msub><mi>F</mi><mi>i</mi></msub></mrow><msup><mrow><mo>(</mo><mn>1</mn><mo>+</mo><mi>r</mi><mo>)</mo></mrow><mrow><mo>(</mo><msub><mi>t</mi><mi>i</mi></msub><mo>−</mo><msub><mi>t</mi><mn>0</mn></msub><mo>)</mo><mo>/</mo><mn>365,25</mn></mrow></msup></mfrac><mo>=</mo><mn>0</mn></math></div>
+  </div>
+  <p class="hint">Прочие строки таблицы: асимметрия и эксцесс — выборочные (с поправкой на смещение, эксцесс
+    избыточный); доля положительных периодов, лучший и худший период — по доходностям выбранной частоты;
+    дней до восстановления — календарные дни от пика перед максимальной просадкой до возврата к нему.</p>
+
+  <h3 class="section-title">Граница Марковица</h3>
+  <div class="card prose">
+    <math display="block"><munder><mi>min</mi><mi>w</mi></munder><mspace width="0.3em"></mspace><msup><mi>w</mi><mo>⊤</mo></msup><mi>Σ</mi><mi>w</mi><mspace width="1em"></mspace><mtext>при</mtext><mspace width="0.5em"></mspace><msup><mi>w</mi><mo>⊤</mo></msup><mi>μ</mi><mo>=</mo><msup><mi>r</mi><mo>*</mo></msup><mo>,</mo><mspace width="0.5em"></mspace><mo>∑</mo><msub><mi>w</mi><mi>i</mi></msub><mo>=</mo><mn>1</mn><mo>,</mo><mspace width="0.5em"></mspace><msub><mi>w</mi><mi>min</mi></msub><mo>≤</mo><msub><mi>w</mi><mi>i</mi></msub><mo>≤</mo><msub><mi>w</mi><mi>max</mi></msub></math>
+    <p>Касательный портфель —
+      <math><munder><mi>max</mi><mi>w</mi></munder><mfrac><mrow><msup><mi>w</mi><mo>⊤</mo></msup><mi>μ</mi><mo>−</mo><msub><mi>R</mi><mi>f</mi></msub></mrow><msqrt><mrow><msup><mi>w</mi><mo>⊤</mo></msup><mi>Σ</mi><mi>w</mi></mrow></msqrt></mfrac></math>.
+      <math><mi>μ</mi></math> и <math><mi>Σ</mi></math> — годовые оценки по историческим доходностям выбранной
+      частоты. В веб-версии оптимизация выполняется в браузере; веса портфелей минимальной дисперсии
+      и максимального Шарпа совпадают с серверной версией с точностью до 0,1&nbsp;п.&nbsp;п.</p>
+  </div>
+
+  <h3 class="section-title">Допущения бэктеста (НИР, п.&nbsp;2.1)</h3>
+  <div class="card prose">
+    <ul>
+      <li>Начальный капитал 1&nbsp;000&nbsp;000&nbsp;₽, без довнесений (опционально — пополнения).</li>
+      <li>Ребалансировка раз в год в последний торговый день декабря (опционально — месяц / квартал / полгода, коридор).</li>
+      <li>Индексы-аналоги ПИФов вместо котировок фондов: комиссии УК, спред слежения и налоги не учитываются
+        (опционально — комиссия сделки и НДФЛ на реализованную прибыль).</li>
+      <li>Безрисковая ставка 7,86&nbsp;% — ставка КБД Мосбиржи на 15 лет на 11.01.2011; бенчмарк — MCFTR.</li>
+    </ul>
+  </div>
+
+  <div id="method-dynamic"></div>
+</section>
+</main>
+
+<datalist id="catalog-list"></datalist>
+
+<footer class="app-footer">
+  <div class="wrap footer-row">
+    <p>Источники данных: <a href="https://iss.moex.com/iss/reference/" rel="noopener">ISS Московской биржи</a>,
+      <a href="https://www.cbr.ru/" rel="noopener">Банк России</a>. Расчёты выполняются в вашем браузере.</p>
+    <p class="disclaimer">Не является инвестиционной рекомендацией. Результаты в прошлом не гарантируют доходность в будущем.</p>
+  </div>
+</footer>
+</body>
+</html>
