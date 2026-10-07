@@ -1286,3 +1286,73 @@ def test_collector_invalid_token_env(tmp_path, monkeypatch, capsys):
     assert "::warning::" in outerr.out
     for part in ("FAKE-part1", "FAKE-part2"):
         assert part not in outerr.out and part not in outerr.err and part not in status_text
+
+
+# ======================================================================= TLS
+@pytest.fixture(autouse=True)
+def _no_ca_bundle_env(monkeypatch):
+    """Набор сертификатов из окружения (workflow) не должен влиять на остальные тесты."""
+    monkeypatch.delenv("TINVEST_CA_BUNDLE", raising=False)
+
+
+class VerifySession(FakeSession):
+    """Фейк, принимающий verify= (как requests.Session.post)."""
+
+    def post(self, url, json=None, headers=None, timeout=None, **kw):
+        self.verify_seen = kw.get("verify", "нет")
+        return super().post(url, json=json, headers=headers, timeout=timeout)
+
+
+def test_tls_error_fails_fast_without_retries():
+    s = FakeSession(default=lambda m, b: requests.exceptions.SSLError(
+        "certificate verify failed: self-signed certificate in certificate chain"))
+    c, clock = make_client(s, retries=5)
+    with pytest.raises(tinvest.TInvestError) as ei:
+        c.call("Shares", {})
+    assert len(s.calls) == 1                      # повтором не лечится
+    assert ei.value.transient                     # сбой сервиса, а не бумаги
+    assert "TLS" in str(ei.value) and "TINVEST_CA_BUNDLE" in str(ei.value)
+
+
+def test_tls_error_text_masks_token():
+    s = FakeSession(default=lambda m, b: requests.exceptions.SSLError(f"bad cert Bearer {TOKEN}"))
+    c, _ = make_client(s)
+    with pytest.raises(tinvest.TInvestError) as ei:
+        c.call("Shares", {})
+    assert TOKEN not in str(ei.value)
+
+
+def test_ca_bundle_from_env_passed_as_verify(tmp_path, monkeypatch):
+    bundle = tmp_path / "bundle.pem"
+    bundle.write_text("-----BEGIN CERTIFICATE-----\n")
+    monkeypatch.setenv("TINVEST_CA_BUNDLE", str(bundle))
+    s = VerifySession(default=lambda m, b: ok({"instruments": []}))
+    c, _ = make_client(s)
+    c.call("Shares", {})
+    assert s.verify_seen == str(bundle)
+
+
+def test_ca_bundle_default_uses_certifi():
+    s = VerifySession(default=lambda m, b: ok({"instruments": []}))
+    c, _ = make_client(s)
+    c.call("Shares", {})
+    assert c.verify is True and s.verify_seen == "нет"   # verify не передаётся — по умолчанию certifi
+
+
+def test_ca_bundle_missing_file_and_false_rejected(tmp_path):
+    with pytest.raises(tinvest.TInvestError, match="не найден"):
+        make_client(FakeSession(), ca_bundle=str(tmp_path / "nope.pem"))
+    with pytest.raises(tinvest.TInvestError, match="отключать нельзя"):
+        make_client(FakeSession(), ca_bundle=False)
+
+
+def test_warning_reason_distinguishes_tls_and_token():
+    tls = {k: {"ok": False, "error": "TInvestError: Shares: TLS — нет доверия"} for k in TINVEST_SOURCES}
+    assert "сертификат" in cd._ti_reason(tls)
+    tok = {k: {"ok": False, "error": "TInvestError: Shares: HTTP 401: 40003 Authentication token is missing or invalid"}
+           for k in TINVEST_SOURCES}
+    assert "токен" in cd._ti_reason(tok)
+    other = {k: {"ok": False, "error": "TInvestError: HTTP 503"} for k in TINVEST_SOURCES}
+    assert "status.json" in cd._ti_reason(other)
+    cbr_tls = {"cbr_gold": {"ok": False, "error": "SSLError"}, **other}
+    assert "status.json" in cd._ti_reason(cbr_tls)        # ошибки ЦБ не учитываются

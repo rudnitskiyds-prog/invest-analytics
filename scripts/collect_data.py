@@ -367,11 +367,22 @@ def main(argv: list[str] | None = None) -> int:
         # после каждого источника: если job убьют по таймауту, уже собранное попадёт в коммит
         _write("status", status, indent=1)
     if ti_tried and ti_failed == ti_tried:
-        print("::warning::T-Invest: все источники недоступны (проверьте токен)")
+        print("::warning::T-Invest: все источники недоступны — " + _ti_reason(status))
     # код 1, если не удалось собрать ничего из того, что пытались собрать, или токен задан,
     # но упали все источники T-Invest (GitHub пришлёт уведомление); пропуск без токена — не сбой
     attempted = len(names) - skipped
     return 1 if (attempted and failed == attempted) or (ti_tried and ti_failed == ti_tried) else 0
+
+
+def _ti_reason(status: dict) -> str:
+    """Причина сбоя всех источников T-Invest для предупреждения в GitHub (по текстам ошибок)."""
+    errs = " ".join(str(v.get("error", "")) for k, v in status.items()
+                    if SOURCES.get(k, {}).get("kind") == "tinvest" and isinstance(v, dict))
+    if "TLS" in errs or "SSL" in errs or "CERTIFICATE" in errs.upper():
+        return "нет доверия к TLS-сертификату (корневой сертификат Минцифры, TINVEST_CA_BUNDLE)"
+    if "HTTP 401" in errs or "HTTP 403" in errs or "UNAUTHENTICATED" in errs.upper():
+        return "токен отклонён (проверьте секрет TINVEST_TOKEN)"
+    return "сеть или сервис (подробности в public/data/status.json)"
 
 
 if __name__ == "__main__":

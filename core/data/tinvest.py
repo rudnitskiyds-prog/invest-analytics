@@ -16,6 +16,11 @@ JSON в camelCase (контракты — instruments.proto, описание �
 
 Токен берётся из аргумента или переменной окружения TINVEST_TOKEN и никогда не попадает
 в логи, repr и тексты исключений.
+
+TLS: сертификат invest-public-api.tbank.ru выпущен удостоверяющим центром Минцифры
+(Russian Trusted Root CA), которого нет в стандартном наборе certifi. Путь к набору корневых
+сертификатов (certifi + сертификаты Минцифры) задаётся переменной TINVEST_CA_BUNDLE — его
+собирает workflow сборщика. Проверку сертификата клиент не отключает никогда.
 """
 from __future__ import annotations
 
@@ -61,11 +66,12 @@ class TInvestClient:
 
     Атрибут deadline (по часам клиента _clock, по умолчанию None) — бюджет времени: после него
     новые попытки не делаются и паузы повторов не превышают остаток (TInvestError, budget=True).
+    ca_bundle    — путь к набору корневых сертификатов (по умолчанию TINVEST_CA_BUNDLE; нет — certifi).
     """
 
     def __init__(self, token: Optional[str] = None, base: str = TINVEST_BASE,
                  session: Any = None, max_per_min: int = 150, timeout: float = 30.0,
-                 retries: int = 5, backoff: float = 1.0):
+                 retries: int = 5, backoff: float = 1.0, ca_bundle: Optional[str] = None):
         tok = (token or os.environ.get("TINVEST_TOKEN") or "").strip()
         if not tok:
             raise TInvestError("нет токена TINVEST_TOKEN")
@@ -74,6 +80,7 @@ class TInvestClient:
         self.__token = tok
         self.base = base.rstrip("/")
         self.session = session or requests.Session()
+        self.verify = _ca_bundle(ca_bundle)
         self.min_interval = 60.0 / max(1, int(max_per_min))
         self.timeout = timeout
         self.retries = retries
@@ -140,7 +147,12 @@ class TInvestClient:
                                    budget=True)
             self._throttle()
             try:
-                r = self.session.post(url, json=body or {}, headers=headers, timeout=self.timeout)
+                extra = {} if self.verify is True else {"verify": self.verify}
+                r = self.session.post(url, json=body or {}, headers=headers, timeout=self.timeout, **extra)
+            except requests.exceptions.SSLError as e:
+                # недоверенный сертификат повтором не лечится — сразу ошибка сервиса (не бумаги)
+                raise TInvestError(f"{method}: TLS — {TLS_HINT} ({type(e).__name__}: {self._clean(e)})",
+                                   transient=True) from None
             except requests.RequestException as e:
                 last = f"{type(e).__name__}: {self._clean(e)}"
                 if attempt < n_retries:
@@ -167,6 +179,22 @@ class TInvestClient:
         """Пауза перед повтором, но не дальше deadline (дальше call сам прервётся)."""
         left = self._left()
         self._sleep(wait if left is None else max(0.0, min(wait, left)))
+
+
+TLS_HINT = ("нет доверия к сертификату сервера; нужен набор с корневым сертификатом Минцифры "
+            "(переменная TINVEST_CA_BUNDLE)")
+
+
+def _ca_bundle(path: Optional[str]) -> Any:
+    """Значение verify для requests: путь к набору сертификатов или True (certifi)."""
+    if path is False:
+        raise TInvestError("проверку TLS-сертификата отключать нельзя")
+    p = (path or os.environ.get("TINVEST_CA_BUNDLE") or "").strip()
+    if not p:
+        return True
+    if not os.path.isfile(p):
+        raise TInvestError(f"TINVEST_CA_BUNDLE: файл не найден ({p})")
+    return p
 
 
 def _error_text(r) -> str:

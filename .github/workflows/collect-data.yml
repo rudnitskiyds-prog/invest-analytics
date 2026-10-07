@@ -30,10 +30,44 @@ jobs:
       - name: Проверка доступа к источникам
         continue-on-error: true
         run: |
-          for u in https://www.cbr.ru/scripts/XML_daily.asp https://iss.moex.com/iss/index.json; do
+          for u in https://www.cbr.ru/scripts/XML_daily.asp https://iss.moex.com/iss/index.json https://invest-public-api.tbank.ru; do
             code=$(curl -s -o /dev/null -m 20 -w "%{http_code}" "$u" || echo "ERR")
             echo "$u -> $code"
           done
+
+      - name: Сертификаты Минцифры для T-Invest API
+        # invest-public-api.tbank.ru подписан Russian Trusted Root CA (Минцифры), которого нет в certifi.
+        # Набор certifi + сертификаты Минцифры подключается только клиенту T-Invest (TINVEST_CA_BUNDLE);
+        # ISS и ЦБ работают со стандартным набором. Проверка TLS не отключается.
+        # Источник — официальный адрес из инструкции Госуслуг (gosuslugi.ru/crt).
+        continue-on-error: true
+        env:
+          # SHA-256 отпечатки, закреплённые после первой загрузки (пусто — только сверка структуры)
+          RU_ROOT_SHA256: ""
+          RU_SUB_SHA256: ""
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/ru-ca"; mkdir -p "$d"
+          get() {   # $1 — имя, $2 — URL; файл может быть PEM или DER
+            curl -fsS -m 30 --retry 2 -o "$d/$1.raw" "$2"
+            openssl x509 -in "$d/$1.raw" -out "$d/$1.pem" 2>/dev/null \
+              || openssl x509 -inform DER -in "$d/$1.raw" -out "$d/$1.pem"
+          }
+          get root https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt
+          get sub  https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt
+          openssl x509 -in "$d/root.pem" -noout -subject -issuer -dates
+          openssl x509 -in "$d/root.pem" -noout -subject | grep -q "Russian Trusted Root CA"
+          openssl verify -CAfile "$d/root.pem" "$d/root.pem" "$d/sub.pem"   # root самоподписан, sub выпущен root
+          for f in root sub; do
+            fp=$(openssl x509 -in "$d/$f.pem" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d :)
+            echo "::notice title=Сертификат Минцифры ($f)::SHA-256 $fp"
+            want=$([ "$f" = root ] && echo "$RU_ROOT_SHA256" || echo "$RU_SUB_SHA256")
+            if [ -n "$want" ] && [ "$want" != "$fp" ]; then
+              echo "::error::Отпечаток сертификата $f не совпадает с закреплённым"; exit 1
+            fi
+          done
+          cat "$(python -c 'import certifi; print(certifi.where())')" "$d/root.pem" "$d/sub.pem" > "$d/bundle.pem"
+          echo "TINVEST_CA_BUNDLE=$d/bundle.pem" >> "$GITHUB_ENV"
 
       - name: Сбор
         # ЦБ собирается первым, status.json пишется после каждого источника; T-Invest ограничен
