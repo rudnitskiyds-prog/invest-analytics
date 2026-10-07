@@ -27,8 +27,8 @@
       <div class="field field-compact">
         <label for="g-rf">Безрисковая ставка, % год.</label>
         <input id="g-rf" name="rf" type="text" inputmode="decimal" autocomplete="off"
-               aria-describedby="g-rf-hint" title="15-летняя КБД на 11.01.2011, как в НИР">
-        <small id="g-rf-hint" class="hint">15-летняя КБД на 11.01.2011, как в НИР</small>
+               aria-describedby="g-rf-hint" title="По умолчанию — 15-летняя ставка КБД Мосбиржи на начало периода (11.01.2011)">
+        <small id="g-rf-hint" class="hint">По умолчанию — 15-летняя ставка КБД Мосбиржи на начало периода (11.01.2011)</small>
       </div>
       <div class="field field-compact">
         <label for="g-bench">Бенчмарк</label>
@@ -39,7 +39,7 @@
         <select id="g-freq" name="freq">
           <option value="D">Дневная</option>
           <option value="W">Недельная</option>
-          <option value="M">Месячная (как в НИР)</option>
+          <option value="M">Месячная</option>
         </select>
       </div>
     </form>
@@ -69,13 +69,13 @@
 <section class="panel" id="panel-backtest" role="tabpanel" aria-labelledby="tab-backtest" hidden>
   <div class="panel-head">
     <h2>Бэктест портфелей и стратегий</h2>
-    <p class="lead">По умолчанию — методика НИР: 1&nbsp;000&nbsp;000&nbsp;₽, 2011–2025, ежегодная ребалансировка
+    <p class="lead">По умолчанию: 1&nbsp;000&nbsp;000&nbsp;₽, 2011–2025, ежегодная ребалансировка
       в последний торговый день декабря, без комиссий и налогов, бенчмарк — MCFTR.</p>
   </div>
   <form id="bt-form" class="card form-card" novalidate>
     <div class="form-grid-2">
       <fieldset class="group">
-        <legend>Стратегии НИР</legend>
+        <legend>Классические пассивные стратегии</legend>
         <div id="bt-strategies" class="check-list"><p class="muted">Загрузка списка стратегий…</p></div>
       </fieldset>
       <fieldset class="group">
@@ -182,8 +182,8 @@
 <section class="panel" id="panel-method" role="tabpanel" aria-labelledby="tab-method" hidden>
   <div class="panel-head">
     <h2>Методика расчёта</h2>
-    <p class="lead">Показатели и допущения — по НИР «Сравнительный анализ пассивных стратегий управления
-      инвестиционным портфелем на российском финансовом рынке» (п.&nbsp;1.3, табл.&nbsp;2; п.&nbsp;2.1).</p>
+    <p class="lead">Формулы показателей эффективности — классические определения; ниже — обозначения,
+      формулы и допущения бэктеста.</p>
   </div>
 
   <div class="card prose">
@@ -268,7 +268,7 @@
       и максимального Шарпа совпадают с серверной версией с точностью до 0,1&nbsp;п.&nbsp;п.</p>
   </div>
 
-  <h3 class="section-title">Допущения бэктеста (НИР, п.&nbsp;2.1)</h3>
+  <h3 class="section-title">Допущения бэктеста</h3>
   <div class="card prose">
     <ul>
       <li>Начальный капитал 1&nbsp;000&nbsp;000&nbsp;₽, без довнесений (опционально — пополнения).</li>

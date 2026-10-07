@@ -119,7 +119,7 @@ with t2:
             st.caption("Метрики появятся, когда история портфеля будет длиннее ~2 месяцев.")
 
 with t3:
-    st.caption("Сравнение TWR портфеля со стратегиями НИР на том же отрезке (без пополнений).")
+    st.caption("Сравнение TWR портфеля с классическими пассивными стратегиями на том же отрезке (без пополнений).")
     if hist is not None and not hist.empty and len(hist) > 20:
         s0, s1 = hist.index[0], hist.index[-1]
         picks = st.multiselect("Стратегии", list(STRATEGIES), list(STRATEGIES)[:3])

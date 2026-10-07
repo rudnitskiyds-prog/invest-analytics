@@ -1,4 +1,4 @@
-// Вкладка «Бэктест»: стратегии НИР и свой портфель. Все расчёты — web/lib (runBacktest, computeAll…).
+// Вкладка «Бэктест»: классические пассивные стратегии и свой портфель. Все расчёты — web/lib (runBacktest, computeAll…).
 
 import { colorOf, destroyChart, lineChart } from "./charts.js";
 import { $, downloadCsv, errorNotice, h, nextFrame, notice, tableWrap, withBusy } from "./dom.js";
@@ -370,7 +370,7 @@ function render() {
     yTitle: "Просадка, %", yFormat: "pct",
   });
 
-  // --- показатели (табл. 4 НИР)
+  // --- показатели эффективности
   const reports = {};
   for (const n of names) reports[n] = E.metrics.computeAll(results[n].equity, bench, g.rf, g.freq);
   if (bench) reports[benchName] = E.metrics.computeAll(bench, bench, g.rf, g.freq);
@@ -383,7 +383,7 @@ function render() {
   out.append(h("section", { class: "card" },
     h("div", { class: "chart-head" },
       h("div", {},
-        h("h3", { class: "card-title" }, "Показатели эффективности (как табл. 4 НИР)"),
+        h("h3", { class: "card-title" }, "Показатели эффективности"),
         h("p", { class: "card-sub" },
           `Rf = ${fmtPct(g.rf, 2)}, доходности ${FREQ_LABELS[g.freq]}, бенчмарк ${benchName}.`)),
       h("div", { class: "toolbar" },

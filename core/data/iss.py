@@ -390,7 +390,7 @@ def zcyc(date: Optional[str] = None) -> pd.DataFrame:
 
 
 def kbd_rate(date: Optional[str] = None, years: float = 15.0) -> float:
-    """Ставка КБД для срока `years` (доля). В НИР: 15 лет на 11.01.2011 = 7,86 %."""
+    """Ставка КБД для срока `years` (доля). Пример: 15 лет на 11.01.2011 = 7,86 %."""
     c = zcyc(date)
     if c.empty:
         raise ISSError("КБД недоступна на эту дату")

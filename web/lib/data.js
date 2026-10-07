@@ -14,9 +14,9 @@ export const ISS_BASE = 'https://iss.moex.com/iss';
 export const DEFAULT_DATA_BASE = '../public/data/';
 export const DEFAULT_FIXTURES_BASE = '../tests/fixtures/';
 
-/** Каталог базовых активов — как core/data/universe.py: CATALOG (индексы-аналоги — НИР, табл. 3). */
+/** Каталог базовых активов — как core/data/universe.py: CATALOG. */
 export const CATALOG = [
-  { key: 'MCFTR', name: 'Индекс МосБиржи полной доходности брутто', assetClass: 'Акции', source: 'iss', etf: 'EQMX', note: 'Бенчмарк НИР' },
+  { key: 'MCFTR', name: 'Индекс МосБиржи полной доходности брутто', assetClass: 'Акции', source: 'iss', etf: 'EQMX', note: 'Бенчмарк по умолчанию' },
   { key: 'IMOEX', name: 'Индекс МосБиржи (ценовой)', assetClass: 'Акции', source: 'iss', etf: '', note: '' },
   { key: 'MEBCTR', name: 'Индекс голубых фишек полной доходности', assetClass: 'Акции', source: 'iss', etf: 'SBBC', note: '' },
   { key: 'IRDIVTR', name: 'Индекс дивидендных акций полной доходности', assetClass: 'Акции', source: 'iss', etf: 'DIVD', note: '' },
@@ -27,7 +27,7 @@ export const CATALOG = [
   { key: 'RUGBITR10Y', name: 'Гособлигации 10+ лет (TR)', assetClass: 'Облигации гос.', source: 'iss', etf: 'AMGB', note: '' },
   { key: 'RUCBITR', name: 'Корпоративные облигации (TR)', assetClass: 'Облигации корп.', source: 'iss', etf: 'OBLG', note: '' },
   { key: 'RUCBTRNS', name: 'Корпоративные облигации (TR, новая методика)', assetClass: 'Облигации корп.', source: 'iss', etf: 'OBLG', note: '' },
-  { key: 'CORP_CHAIN', name: 'Корп. облигации: RUCBITR → RUCBTRNS (склейка)', assetClass: 'Облигации корп.', source: 'chain', etf: 'OBLG', note: 'Как в НИР: пересчёт базы при смене методики' },
+  { key: 'CORP_CHAIN', name: 'Корп. облигации: RUCBITR → RUCBTRNS (склейка)', assetClass: 'Облигации корп.', source: 'chain', etf: 'OBLG', note: 'Пересчёт базы при смене методики индекса' },
   { key: 'GOLD_CBR', name: 'Золото, учётная цена ЦБ РФ', assetClass: 'Золото', source: 'cbr', etf: 'GOLD', note: '' },
   { key: 'GLDRUB_TOM', name: 'Золото, биржевой (руб./г)', assetClass: 'Золото', source: 'iss', etf: 'GOLD', note: '' },
   { key: 'RUONIA', name: 'Индекс денежного рынка (накопленная RUONIA)', assetClass: 'Денежный рынок', source: 'cbr', etf: 'LQDT', note: '' },
@@ -385,7 +385,7 @@ function monthEnd(m) {
 }
 
 /**
- * Демо-фрейм из месячных фикстур (universe._offline_frame / reproduce_nir.load_fixture):
+ * Демо-фрейм из месячных фикстур (как universe._offline_frame в Python):
  * iss_monthly.csv ⋈ cbr_monthly.csv ⋈ iss_monthly_extra.csv по столбцу m (inner join),
  * дата — последний день месяца, плюс CORP_CHAIN = chain(RUCBITR, RUCBTRNS, '2018-12-29').
  * @returns {Promise<Frame>}

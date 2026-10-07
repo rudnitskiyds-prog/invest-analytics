@@ -128,5 +128,5 @@ export function efficientFrontier(inputs, {nPoints=40, wMin=0, wMax=1, nRandom=4
 ## Проверка
 
 `tests/web/*.test.mjs` (node:test) прогоняются из pytest-обёртки `tests/test_web_engine.py`, чтобы
-`pytest -q` покрывал и JS. Эталоны: табл. 4 НИР (`scripts/reproduce_nir.py`) и результаты Python
+`pytest -q` покрывал и JS. Эталоны: результаты Python
 на тех же фикстурах.

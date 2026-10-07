@@ -1,8 +1,7 @@
 /**
  * Коэффициенты эффективности — порт core/analytics/metrics.py с теми же конвенциями.
  *
- * Набор показателей — НИР «Сравнительный анализ пассивных стратегий управления инвестиционным
- * портфелем на российском финансовом рынке» (Рудницкий Д.С., 2026), п. 1.3, табл. 2 и табл. 4.
+ * Набор показателей — стандартные коэффициенты эффективности портфеля (классические формулы).
  * Формулы меняются только вместе с core/analytics/metrics.py и страницей «Методика» (инвариант 3).
  *
  * Соглашения (как в Python):
@@ -159,7 +158,7 @@ export function totalReturn(s) {
   return p[p.length - 1] / p[0] - 1;
 }
 
-/** CAGR = (P_T / P_0)^(1/лет) − 1, годы = календарные дни / 365,25 (НИР, табл. 2). */
+/** CAGR = (P_T / P_0)^(1/лет) − 1, годы = календарные дни / 365,25 (стандартное определение). */
 export function cagr(s) {
   const p = clean(s);
   const years = days(p.dates[0], p.dates[p.dates.length - 1]) / 365.25;
@@ -203,14 +202,14 @@ export function maxDrawdownInfo(s) {
   };
 }
 
-/** Кальмар K = CAGR / |MaxDD| (НИР, табл. 2). */
+/** Кальмар K = CAGR / |MaxDD| (стандартное определение). */
 export function calmar(s) {
   const mdd = maxDrawdown(s);
   return mdd < 0 ? cagr(s) / Math.abs(mdd) : NaN;
 }
 
 // ------------------------------------------------------------------ risk-adjusted
-/** Шарп S = (Rp − Rf) / σp, годовой: mean(r − rf) / σ(r − rf) · √n (НИР, табл. 2). */
+/** Шарп S = (Rp − Rf) / σp, годовой: mean(r − rf) / σ(r − rf) · √n (стандартное определение). */
 export function sharpe(r, rf = 0, n) {
   r = clean(r); n = nOf(r, n);
   const ex = excess(r, rf, n);
@@ -225,7 +224,7 @@ export function downsideDeviation(r, mar = 0, n) {
   return Math.sqrt(mean(ex.map((x) => Math.min(x, 0) ** 2))) * Math.sqrt(n);
 }
 
-/** Сортино So = (Rp − Rf) / σд (НИР, табл. 2; конвенция — как в metrics.py). */
+/** Сортино So = (Rp − Rf) / σд (конвенция — как в metrics.py). */
 export function sortino(r, rf = 0, n) {
   r = clean(r); n = nOf(r, n);
   const ex = excess(r, rf, n);
@@ -249,7 +248,7 @@ export function correlation(r, rm) {
   return c.xy / Math.sqrt(c.xx * c.yy);
 }
 
-/** Альфа Дженсена α = Rp − [Rf + β(Rm − Rf)], годовая (НИР, табл. 2). */
+/** Альфа Дженсена α = Rp − [Rf + β(Rm − Rf)], годовая (стандартное определение). */
 export function jensenAlpha(r, rm, rf = 0, n) {
   n = nOf(r, n);
   const j = joinInner(r, rm);
@@ -260,7 +259,7 @@ export function jensenAlpha(r, rm, rf = 0, n) {
   return a * n;
 }
 
-/** Трейнор T = (Rp − Rf)·n / β (НИР, табл. 2; конвенция — как в metrics.py). */
+/** Трейнор T = (Rp − Rf)·n / β (конвенция — как в metrics.py). */
 export function treynor(r, rm, rf = 0, n) {
   r = clean(r); n = nOf(r, n);
   const b = beta(r, rm);
@@ -290,7 +289,7 @@ export function modiglianiM2(r, rm, rf = 0, n) {
   return sharpe(r, rf, n) * volatility(clean(rm), n) + annualRf(rf);
 }
 
-/** Омега Ω = Σ max(r − L, 0) / Σ max(L − r, 0) (НИР, табл. 2). */
+/** Омега Ω = Σ max(r − L, 0) / Σ max(L − r, 0) (стандартное определение). */
 export function omega(r, threshold = 0, n) {
   r = clean(r); n = nOf(r, n);
   const ex = excess(r, threshold, n);
@@ -299,7 +298,7 @@ export function omega(r, threshold = 0, n) {
   return l > 0 ? g / l : NaN;
 }
 
-/** Швагер Sw = ΣProfit / Σ|Loss| по доходностям периодов (НИР, табл. 2). */
+/** Швагер Sw = ΣProfit / Σ|Loss| по доходностям периодов (стандартное определение). */
 export function schwager(r) {
   let g = 0, l = 0;
   for (const x of vals(clean(r))) { if (x > 0) g += x; else if (x < 0) l += -x; }
@@ -505,7 +504,7 @@ export function rebase(series, base = 100) {
 }
 
 /**
- * Сводная таблица как табл. 4 НИР (metrics_table): {rows: ключи по порядку LABELS_RU,
+ * Сводная таблица показателей (metrics_table): {rows: ключи по порядку LABELS_RU,
  * cols: имена рядов, data: {имя: MetricsReport}}.
  */
 export function metricsTable(seriesByName, benchmark = null, rf = 0, freq = 'M', opts = {}) {
