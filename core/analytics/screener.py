@@ -5,9 +5,13 @@
 волатильность, Шарп, Сортино, бета к бенчмарку, макс. просадка за 1 год,
 капитализация, дивидендная доходность (12 мес.) и мультипликаторы.
 
-Мультипликаторы (P/E, P/B, P/S, EV/EBITDA, ROE, ND/EBITDA) ISS не публикует —
-считаются по файлу data/fundamentals.csv (финансовые показатели эмитента:
-чистая прибыль, выручка, EBITDA, капитал, чистый долг — млрд руб., МСФО LTM).
+Мультипликаторы (P/E, P/B, P/S, EV/EBITDA, ROE, ND/EBITDA) ISS не публикует.
+Основной источник — public/data/fundamentals.json (T-Invest API, GetAssetFundamentals;
+значения берутся как есть, без пересчёта). Для бумаг, которых там нет, — расчёт
+по файлу data/fundamentals.csv (финансовые показатели эмитента: чистая прибыль, выручка,
+EBITDA, капитал, чистый долг — млрд руб., МСФО LTM).
+Сектор акций и комиссия фондов — из tinvest_shares.json / tinvest_etfs.json.
+Отсутствие файлов не ошибка: соответствующие колонки просто не появляются.
 """
 from __future__ import annotations
 
@@ -19,7 +23,7 @@ import pandas as pd
 
 from core.analytics import metrics as m
 from core.config import FUNDAMENTALS_CSV
-from core.data import iss
+from core.data import iss, public_data
 
 FUND_COLUMNS = ["secid", "period", "net_income", "revenue", "ebitda", "equity", "net_debt",
                 "shares_out", "source"]
@@ -42,6 +46,24 @@ def multiples(cap_bln: pd.Series, fund: pd.DataFrame) -> pd.DataFrame:
     out["EV/EBITDA"] = ev / f["ebitda"].where(f["ebitda"] > 0)
     out["ND/EBITDA"] = f["net_debt"] / f["ebitda"].where(f["ebitda"] > 0)
     out["ROE"] = f["net_income"] / f["equity"].where(f["equity"] > 0)
+    return out
+
+
+# короткое поле fundamentals.json -> колонка витрины; ROE в T-Invest API — в процентах,
+# в витрине — доля (как в multiples()), поэтому делится на 100
+TINVEST_MULTIPLES = {"pe": "P/E", "pb": "P/B", "ps": "P/S", "ev_ebitda": "EV/EBITDA",
+                     "nd_ebitda": "ND/EBITDA", "roe": "ROE"}
+MULT_COLUMNS = list(TINVEST_MULTIPLES.values())
+
+
+def tinvest_multiples(fund: pd.DataFrame) -> pd.DataFrame:
+    """Мультипликаторы T-Invest API по тикерам (индекс fund — тикер). Источник: поля
+    pe_ratio_ttm, price_to_book_ttm, price_to_sales_ttm, ev_to_ebitda_mrq, net_debt_to_ebitda,
+    roe (StatisticResponse, instruments.proto); пересчёта нет, кроме ROE: % -> доля."""
+    out = pd.DataFrame(index=fund.index)
+    for src, col in TINVEST_MULTIPLES.items():
+        v = pd.to_numeric(fund[src], errors="coerce") if src in fund else pd.Series(np.nan, index=fund.index)
+        out[col] = v / 100 if src == "roe" else v
     return out
 
 
@@ -80,8 +102,29 @@ def dividend_yield_12m(secid: str, price: float) -> float:
         return np.nan
     if dv.empty or not price:
         return np.nan
-    recent = dv[dv["registryclosedate"] >= pd.Timestamp.today() - pd.Timedelta(days=365)]
+    today = pd.Timestamp.today().normalize()
+    # только состоявшиеся реестры за 12 мес.: объявленные будущие выплаты не учитываются
+    recent = dv[(dv["registryclosedate"] >= today - pd.Timedelta(days=365))
+                & (dv["registryclosedate"] <= today)]
     return float(recent["value"].sum() / price) if len(recent) else 0.0
+
+
+def _multiples_for(cap_bln: pd.Series) -> Optional[pd.DataFrame]:
+    """Мультипликаторы по бумаге целиком из одного источника: если тикер есть
+    в fundamentals.json (T-Invest) — его строка, иначе расчёт по data/fundamentals.csv.
+    Ячейки двух источников не смешиваются (разные даты и методики отчётности)."""
+    tf = public_data.fundamentals()
+    fund = load_fundamentals()
+    if tf.empty and fund.empty:
+        return None
+    out = pd.DataFrame(np.nan, index=cap_bln.index, columns=MULT_COLUMNS)
+    if not fund.empty:
+        out = multiples(cap_bln, fund)[MULT_COLUMNS]
+    if not tf.empty:
+        tm = tinvest_multiples(tf)
+        has = cap_bln.index[cap_bln.index.isin(tm.index)]
+        out.loc[has, MULT_COLUMNS] = tm.loc[has, MULT_COLUMNS].to_numpy()
+    return out[MULT_COLUMNS]
 
 
 def shares_showcase(benchmark: str = "IMOEX", rf: float = 0.16, top: int = 80,
@@ -107,10 +150,12 @@ def shares_showcase(benchmark: str = "IMOEX", rf: float = 0.16, top: int = 80,
             dy = list(ex.map(dividend_yield_12m, df["SECID"], df["PRICE"]))
         if pd.Series(dy, dtype=float).notna().any():
             df["Див. доходность"] = dy
-    fund = load_fundamentals()
-    if not fund.empty:
-        mult = multiples(df.set_index("SECID")["Кап., млрд"], fund)
+    mult = _multiples_for(df.set_index("SECID")["Кап., млрд"])
+    if mult is not None:
         df = df.merge(mult, left_on="SECID", right_index=True, how="left")
+    sectors = public_data.share_sectors()
+    if not sectors.empty:
+        df.insert(df.columns.get_loc("SHORTNAME") + 1, "Сектор", df["SECID"].map(sectors))
     return df.rename(columns={"SHORTNAME": "Название", "PRICE": "Цена",
                               "LASTTOPREVPRICE": "Изм. день, %", "VALTODAY_RUR": "Оборот, руб.",
                               "LISTLEVEL": "Листинг"}).drop(columns=["CAP"])
@@ -125,6 +170,10 @@ def etf_showcase(benchmark: str = "IMOEX", rf: float = 0.16) -> pd.DataFrame:
         st = pd.DataFrame(list(ex.map(lambda s: _stats_one(s, bench_r, rf, start), base["SECID"])))
     df = base[["SECID", "SHORTNAME", "FUNDTYPE", "PRICE", "LASTTOPREVPRICE", "VALTODAY_RUR"]] \
         .merge(st, on="SECID", how="left")
+    fees = public_data.etf_commissions()
+    if not fees.empty:
+        # % годовых, как отдаёт T-Invest API (Etf.fixed_commission)
+        df.insert(df.columns.get_loc("FUNDTYPE") + 1, "Комиссия, %", df["SECID"].map(fees))
     return df.rename(columns={"SHORTNAME": "Название", "FUNDTYPE": "Тип", "PRICE": "Цена",
                               "LASTTOPREVPRICE": "Изм. день, %", "VALTODAY_RUR": "Оборот, руб."})
 

@@ -1,0 +1,18 @@
+{
+ "instruments": [
+  {"figi": "TESTE0000001", "ticker": "FNDA", "classCode": "TQTF", "isin": "RU000TESTE01", "lot": 1,
+   "currency": "rub", "name": "Фонд акций", "focusType": "equity",
+   "fixedCommission": {"units": "0", "nano": 950000000}, "rebalancingFreq": "quarterly",
+   "numShares": {"units": "1500000", "nano": 0}, "uid": "uid-fnda", "assetUid": "asset-fnda"},
+  {"figi": "TESTE0000002", "ticker": "FNDB", "classCode": "TQBR", "isin": "RU000TESTE02", "lot": 1,
+   "currency": "rub", "name": "Фонд облигаций", "focusType": "fixed_income",
+   "fixedCommission": {"units": "1", "nano": 200000000}, "rebalancingFreq": "",
+   "numShares": {"units": "250", "nano": 500000000}, "uid": "uid-fndb", "assetUid": "asset-fndb"},
+  {"figi": "TESTE0000003", "ticker": "FNDC", "classCode": "TQTF", "isin": "RU000TESTE03", "lot": 1,
+   "currency": "rub", "name": "Фонд без комиссии в ответе", "focusType": "money_market",
+   "uid": "uid-fndc", "assetUid": "asset-fndc"},
+  {"figi": "TESTE0000004", "ticker": "FNDZ", "classCode": "SPBETF", "isin": "US000TESTE04", "lot": 1,
+   "currency": "usd", "name": "Иностранный фонд", "focusType": "equity",
+   "fixedCommission": {"units": "0", "nano": 300000000}, "uid": "uid-fndz", "assetUid": "asset-fndz"}
+ ]
+}

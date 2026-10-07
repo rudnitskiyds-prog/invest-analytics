@@ -328,8 +328,17 @@ def index_constituents(index_id: str = "IMOEX") -> pd.DataFrame:
 # --------------------------------------------------------------------- cash flows
 def dividends(secid: str) -> pd.DataFrame:
     """Дивиденды по данным ISS. В 2026 г. публичный метод перестал отдавать блок dividends —
-    в этом случае используется локальный файл data/dividends.csv (secid, registryclosedate, value)."""
-    df = block(get_json(f"/securities/{secid}/dividends", ttl=TTL_REFERENCE), "dividends")
+    тогда берутся выплаты T-Invest API из файла сборщика public/data/dividends.json
+    (без отменённых), а если там бумаги нет — локальный data/dividends.csv. Так же и при
+    недоступности ISS
+    (secid, registryclosedate, value)."""
+    try:
+        df = block(get_json(f"/securities/{secid}/dividends", ttl=TTL_REFERENCE), "dividends")
+    except (ISSError, requests.RequestException):
+        df = pd.DataFrame()              # ISS недоступен — локальные источники ниже
+    if df.empty:
+        from core.data import public_data
+        df = public_data.dividends(secid)
     if df.empty:
         from core.config import DATA_DIR
         f = DATA_DIR / "dividends.csv"

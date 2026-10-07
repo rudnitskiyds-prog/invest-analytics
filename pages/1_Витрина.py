@@ -3,7 +3,7 @@ import streamlit as st
 
 from core.analytics import screener
 from core.config import FUNDAMENTALS_CSV
-from core.data import iss
+from core.data import iss, public_data
 from ui.common import page_setup, to_excel
 
 page_setup("Витрина данных по бумагам", "🗂")
@@ -42,7 +42,14 @@ def pct_config(df):
     for c in ["Оборот, руб.", "Кап., млрд"]:
         if c in df.columns:
             cfg[c] = st.column_config.NumberColumn(c, format="localized")
+    if "Комиссия, %" in df.columns:
+        # значение уже в процентах годовых (0.95 = 0,95 %), без пересчёта
+        cfg["Комиссия, %"] = st.column_config.NumberColumn("Комиссия, %", format="%.2f %%",
+                                                          help="Комиссия фонда, % годовых (T-Invest API)")
     return cfg
+
+
+SOURCES = "Источники: ISS Московской биржи; дивиденды, мультипликаторы, сектора и комиссии фондов — T-Invest API."
 
 
 tab_sh, tab_etf, tab_bd, tab_mt, tab_ix = st.tabs(["Акции", "Фонды (паи)", "Облигации", "Металлы", "Индексы"])
@@ -58,12 +65,20 @@ with tab_sh:
         df = _shares(top, rf, bench)
         q = st.text_input("Поиск по тикеру/названию", key="sh_q")
         if q:
-            df = df[df["SECID"].str.contains(q.upper()) | df["Название"].str.contains(q, case=False)]
+            df = df[df["SECID"].str.contains(q.upper(), regex=False)
+                    | df["Название"].str.contains(q, case=False, regex=False)]
+        if "Сектор" in df.columns:
+            sectors = sorted(df["Сектор"].dropna().unique())
+            picked = st.multiselect("Сектор", sectors, placeholder="Все секторы", key="sh_sector")
+            if picked:
+                df = df[df["Сектор"].isin(picked)]
         st.dataframe(df, width="stretch", height=620, hide_index=True, column_config=pct_config(df))
         st.download_button("Скачать Excel", to_excel({"Акции": df}), "shares.xlsx")
-        if not FUNDAMENTALS_CSV.exists():
-            st.info("Мультипликаторы (P/E, P/B, EV/EBITDA, ROE) появятся после заполнения "
-                    "`data/fundamentals.csv` — шаблон в `data/fundamentals_template.csv`. "
+        if public_data.fundamentals().empty and not FUNDAMENTALS_CSV.exists():
+            st.info("Мультипликаторы (P/E, P/B, EV/EBITDA, ROE) пока недоступны. Основной источник — "
+                    "ежедневный сбор из T-Invest API в `public/data/fundamentals.json` "
+                    "(`python -m scripts.collect_data`); запасной — ручной `data/fundamentals.csv`, "
+                    "шаблон в `data/fundamentals_template.csv`. "
                     "ISS Мосбиржи финансовую отчётность не публикует.")
     except Exception as e:  # noqa: BLE001
         st.error(f"Ошибка загрузки: {e}")
@@ -71,6 +86,16 @@ with tab_sh:
 with tab_etf:
     try:
         df = _etfs(rf, "IMOEX")
+        if "Комиссия, %" in df.columns:
+            c1, c2, _ = st.columns([1, 1, 2])
+            fee_max = c1.number_input("Комиссия до, %", min_value=0.0, max_value=10.0, value=None,
+                                      step=0.05, format="%.2f", placeholder="без ограничения",
+                                      key="etf_fee_max")
+            if c2.toggle("Сначала дешёвые", key="etf_fee_sort"):
+                df = df.sort_values("Комиссия, %", na_position="last")
+            if fee_max is not None:
+                df = df[df["Комиссия, %"] <= fee_max]
+                st.caption("При фильтре по комиссии фонды без данных о комиссии скрыты.")
         st.dataframe(df, width="stretch", height=620, hide_index=True, column_config=pct_config(df))
         st.download_button("Скачать Excel", to_excel({"Фонды": df}), "etf.xlsx")
     except Exception as e:  # noqa: BLE001
@@ -105,3 +130,5 @@ with tab_ix:
         st.dataframe(iss.indices(), width="stretch", height=600, hide_index=True)
     except Exception as e:  # noqa: BLE001
         st.error(f"Ошибка загрузки: {e}")
+
+st.caption(SOURCES)
