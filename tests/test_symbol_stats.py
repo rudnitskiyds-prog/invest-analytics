@@ -217,7 +217,7 @@ def test_symbol_stats_file_has_no_quotes(env):
     assert d["total_return"] is False                     # в tmp нет dividends.json — акции по ценам
     assert d["split_adjusted"] is True                    # свечи ISS скорректированы биржей
     assert not any(it["tr"] for it in d["items"].values())
-    allowed = {"class", "tr", *ranking.STAT_FIELDS, "months", "rank", "score"}
+    allowed = {"class", "tr", "rf", *ranking.STAT_FIELDS, "months", "rank", "score"}
     for sec, it in d["items"].items():
         assert set(it) == allowed, sec
         assert not any(isinstance(v, list) for v in it.values()), sec
@@ -510,3 +510,11 @@ def test_monthly_closes_empty_has_datetime_index(monkeypatch):
     monkeypatch.setattr(iss, "candles", lambda *a, **k: pd.DataFrame())
     s = iss.monthly_closes("NEWX", "2016-01-01", "2026-09-30")
     assert s.empty and isinstance(s.index, pd.DatetimeIndex) and s.attrs["split_adjusted"] is True
+
+
+def test_symbol_stats_rf_per_security_period():
+    """rf бумаги — средняя ключевая ставка за её собственный период, а не за всё окно."""
+    rate = pd.Series([0.07, 0.21], index=pd.to_datetime(["2016-01-01", "2022-01-01"]))
+    whole = ranking.mean_rate(rate, "2016-09-30", "2026-09-30")
+    recent = ranking.mean_rate(rate, "2022-06-30", "2026-09-30")
+    assert recent == pytest.approx(0.21) and whole < recent

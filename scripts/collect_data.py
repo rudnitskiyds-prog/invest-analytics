@@ -406,7 +406,8 @@ def symbol_stats(spec: dict) -> tuple:
     Сплиты: месячные свечи ISS уже скорректированы биржей задним числом — отдельной корректировки нет,
     "split_adjusted": true по источнику; дивиденды T-Invest — в текущих акциях.
     Месячные цены — свечи ISS interval=31 (один запрос на бумагу), окно — до 10 лет полных месяцев
-    (текущий месяц не входит); rf — средняя по времени ключевая ставка за окно.
+    (текущий месяц не входит); rf — средняя по времени ключевая ставка за период бумаги (item "rf"),
+    верхнее "rf" — за всё окно (справочно).
     Сбои по отдельным бумагам — пропуск; источник — сбой, если сбоев > MAX_FAIL_SHARE,
     MAX_CONSECUTIVE_FAILS подряд, исчерпан бюджет времени или акций в рейтинге < min_rows."""
     from core.analytics import ranking
@@ -416,7 +417,8 @@ def symbol_stats(spec: dict) -> tuple:
     till = today.replace(day=1) - dt.timedelta(days=1)                   # конец прошлого месяца
     first = (pd.Timestamp(till) - pd.DateOffset(months=12 * SYMBOL_STATS_YEARS)).to_period("M")
     start = first.to_timestamp().date()                                  # 1-е число месяца базовой цены
-    rf = ranking.mean_rate(_key_rate_series(), first.to_timestamp("M"), till)
+    key_rate = _key_rate_series()
+    rf = ranking.mean_rate(key_rate, first.to_timestamp("M"), till)      # за всё окно (справочно в файле)
     if not math.isfinite(rf):
         raise ValueError("ключевая ставка за окно не определена")
 
@@ -468,7 +470,11 @@ def symbol_stats(spec: dict) -> tuple:
         tr = classes[sec] == "share" and div_data is not None
         if tr:
             s = total_return_series(s, ranking.ex_dividends(div_data.get(sec)))
-        items[sec] = {"class": classes[sec], "tr": tr, **ranking.symbol_metrics(s, rf)}
+        # rf — средняя ключевая ставка за период самой бумаги (а не за всё окно): иначе у бумаг с короткой
+        # историей (2022–2026, ставка выше средней за 10 лет) Шарп/Сортино/Омега/Мартин завышены
+        rf_sec = ranking.mean_rate(key_rate, s.index[0], s.index[-1])
+        rf_sec = rf_sec if math.isfinite(rf_sec) else rf
+        items[sec] = {"class": classes[sec], "tr": tr, "rf": round(rf_sec, 6), **ranking.symbol_metrics(s, rf_sec)}
     if len(failed) > 20:
         print(f"  … всего пропусков свечей: {len(failed)}", file=sys.stderr)
     if secs and len(failed) / len(secs) > MAX_FAIL_SHARE:

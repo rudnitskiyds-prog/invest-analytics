@@ -84,9 +84,13 @@ class Session:
         def route(r):
             url = r.request.url
             if url.startswith(server):
-                if urlparse(url).path.endswith("/public/data/symbol_stats.json") and stats:
-                    r.fulfill(status=200, content_type="application/json",
-                              body=json.dumps(iss_fake.symbol_stats(), ensure_ascii=False))
+                if urlparse(url).path.endswith("/public/data/symbol_stats.json"):
+                    # файл от сборщика в репозитории не используется: синтетический или «файла нет» (404)
+                    if stats:
+                        r.fulfill(status=200, content_type="application/json",
+                                  body=json.dumps(iss_fake.symbol_stats(), ensure_ascii=False))
+                    else:
+                        r.fulfill(status=404, content_type="text/plain", body="not found")
                 else:
                     r.continue_()
             elif live and urlparse(url).hostname == "iss.moex.com":
