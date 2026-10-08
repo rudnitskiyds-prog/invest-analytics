@@ -569,7 +569,7 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:  # noqa: BLE001
             failed += 1
             ti_failed += is_ti(name)
-            res = {"ok": False, "error": f"{type(e).__name__}: {e}"[:500]}
+            res = {"ok": False, "error": f"{type(e).__name__}: {e}"[:500], "where": _where(e)}
             print(f"FAIL {name}: {res['error']}", file=sys.stderr)
             traceback.print_exc(limit=2)
         ti_tried += is_ti(name) and not res.get("skipped")
@@ -599,6 +599,14 @@ def _short(err: str, n: int = 200) -> str:
     """Краткая причина для ::warning:: — первая строка текста ошибки, не длиннее n символов."""
     line = (str(err).strip().splitlines() or ["причина неизвестна"])[0]
     return line[:n] or "причина неизвестна"
+
+
+def _where(e: BaseException) -> str:
+    """Место ошибки для status.json (логи Actions не всегда доступны): последние 3 кадра «файл:строка функция»
+    в пределах репозитория, без значений переменных."""
+    frames = [f for f in traceback.extract_tb(e.__traceback__) if str(ROOT) in f.filename] or \
+        traceback.extract_tb(e.__traceback__)
+    return " <- ".join(f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in reversed(frames[-3:]))
 
 
 def _ti_reason(status: dict) -> str:
