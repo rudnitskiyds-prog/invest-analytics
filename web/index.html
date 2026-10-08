@@ -16,33 +16,29 @@
 
 <header class="app-header">
   <div class="wrap header-row">
-    <div class="brand">
+    <a class="brand" href="#/" aria-label="ИнвестАналитика — на главную">
       <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8"/><path d="M7 22l6-7 5 4 7-9"/></svg>
       <div>
         <h1 class="brand-title">ИнвестАналитика</h1>
         <p class="brand-sub">Оценка эффективности инвестиций на российском рынке</p>
       </div>
+    </a>
+    <button type="button" id="nav-toggle" class="nav-toggle" aria-expanded="false" aria-controls="site-nav">
+      <span aria-hidden="true">☰</span><span class="sr-only">Меню разделов</span>
+    </button>
+    <nav id="site-nav" class="site-nav" aria-label="Разделы сайта">
+      <ul>
+        <li><a href="#/" data-nav="home">Главная</a></li>
+        <li><a href="#/tools" data-nav="tools">Инструменты</a></li>
+        <li><a href="#/screener/stocks" data-nav="screener">Скринеры</a></li>
+        <li><a href="#/portfolios/lazy" data-nav="portfolios">Портфели</a></li>
+        <li><a href="#/docs" data-nav="docs">Методика</a></li>
+      </ul>
+    </nav>
+    <div class="nav-search" role="search">
+      <label for="nav-search" class="sr-only">Поиск бумаги по тикеру или названию</label>
+      <input id="nav-search" type="text" placeholder="Тикер или название: SBER, ОФЗ…" enterkeyhint="go">
     </div>
-    <form class="global-params" id="global-form" aria-label="Общие параметры расчёта" onsubmit="return false">
-      <div class="field field-compact">
-        <label for="g-rf">Безрисковая ставка, % год.</label>
-        <input id="g-rf" name="rf" type="text" inputmode="decimal" autocomplete="off"
-               aria-describedby="g-rf-hint" title="По умолчанию — 15-летняя ставка КБД Мосбиржи на 11.01.2011">
-        <small id="g-rf-hint" class="hint">По умолчанию — 15-летняя ставка КБД Мосбиржи на 11.01.2011</small>
-      </div>
-      <div class="field field-compact">
-        <label for="g-bench">Бенчмарк</label>
-        <select id="g-bench" name="bench"></select>
-      </div>
-      <div class="field field-compact">
-        <label for="g-freq">Частота метрик</label>
-        <select id="g-freq" name="freq">
-          <option value="D">Дневная</option>
-          <option value="W">Недельная</option>
-          <option value="M">Месячная</option>
-        </select>
-      </div>
-    </form>
   </div>
 </header>
 
@@ -55,20 +51,90 @@
   <div id="engine-banner"></div>
 </div>
 
-<nav class="wrap tabs" role="tablist" aria-label="Разделы">
-  <button class="tab" role="tab" id="tab-backtest" aria-controls="panel-backtest" data-tab="backtest">Бэктест</button>
-  <button class="tab" role="tab" id="tab-frontier" aria-controls="panel-frontier" data-tab="frontier">Граница Марковица</button>
-  <button class="tab" role="tab" id="tab-security" aria-controls="panel-security" data-tab="security">Коэффициенты бумаги</button>
-  <button class="tab" role="tab" id="tab-method" aria-controls="panel-method" data-tab="method">Методика</button>
+<nav class="wrap tool-nav" id="tool-nav" aria-label="Инструменты" hidden>
+  <a href="#/tools/backtest" data-tool="backtest">Бэктест</a>
+  <a href="#/tools/frontier" data-tool="frontier">Граница Марковица</a>
+  <a href="#/tools/metrics" data-tool="metrics">Коэффициенты бумаги</a>
+  <a href="#/tools" class="tool-nav-all">Все инструменты</a>
 </nav>
+
+<div class="wrap params-bar" id="params-bar" hidden>
+  <form class="global-params" id="global-form" aria-label="Общие параметры расчёта" onsubmit="return false">
+    <div class="field field-compact">
+      <label for="g-rf">Безрисковая ставка, % год.</label>
+      <input id="g-rf" name="rf" type="text" inputmode="decimal" autocomplete="off"
+             aria-describedby="g-rf-hint" title="По умолчанию — 15-летняя ставка КБД Мосбиржи на 11.01.2011">
+      <small id="g-rf-hint" class="hint">По умолчанию — 15-летняя ставка КБД Мосбиржи на 11.01.2011</small>
+    </div>
+    <div class="field field-compact" data-param-scope="tools">
+      <label for="g-bench">Бенчмарк</label>
+      <select id="g-bench" name="bench"></select>
+    </div>
+    <div class="field field-compact" data-param-scope="tools">
+      <label for="g-freq">Частота метрик</label>
+      <select id="g-freq" name="freq">
+        <option value="D">Дневная</option>
+        <option value="W">Недельная</option>
+        <option value="M">Месячная</option>
+      </select>
+    </div>
+  </form>
+</div>
 <div class="progress" aria-hidden="true"><span></span></div>
 
-<main id="main" class="wrap">
+<main id="main" class="wrap" tabindex="-1">
+
+<!-- ============================================================ ГЛАВНАЯ -->
+<section class="panel" id="panel-home" aria-labelledby="h-home" hidden>
+  <div class="hero card">
+    <h2 id="h-home">Доходность и риск бумаг Мосбиржи — в одном месте</h2>
+    <p class="lead">Страницы акций, фондов, облигаций и индексов: доходность по периодам, моментум, просадки,
+      волатильность, дивиденды и рейтинг риск/доходность. Бэктест портфелей и граница Марковица.
+      Данные — ISS Мосбиржи, Банк России, T-Invest API и RusETFs.</p>
+    <div class="hero-search">
+      <label for="home-search">Найти бумагу</label>
+      <input id="home-search" type="text" placeholder="Тикер, название или ISIN" enterkeyhint="go">
+      <small class="hint">Начните вводить — появятся подсказки; Enter откроет страницу бумаги.</small>
+    </div>
+  </div>
+  <h3 class="section-title">Популярные бумаги</h3>
+  <ul class="pop-list" id="home-popular"></ul>
+  <h3 class="section-title">Разделы</h3>
+  <div class="entry-grid" id="home-sections"></div>
+  <div id="home-leaders"></div>
+</section>
+
+<!-- ============================================================ ИНСТРУМЕНТЫ -->
+<section class="panel" id="panel-tools" aria-labelledby="h-tools" hidden>
+  <div class="panel-head">
+    <h2 id="h-tools">Инструменты</h2>
+    <p class="lead">Анализ эффективности, риски, оптимизация и сравнение. Готовые инструменты открываются по ссылке,
+      остальные появятся на следующих этапах.</p>
+  </div>
+  <div class="tools-grid" id="tools-groups"></div>
+</section>
+
+<!-- ============================================================ СТРАНИЦА БУМАГИ -->
+<section class="panel" id="panel-symbol" aria-labelledby="sym-title" hidden>
+  <nav class="crumbs" aria-label="Навигационная цепочка"><a href="#/">Главная</a> <span aria-hidden="true">›</span> <span>Бумага</span></nav>
+  <div class="panel-head">
+    <h2 id="sym-title">Бумага</h2>
+    <p class="lead" id="sym-lead"></p>
+  </div>
+  <div id="sym-root" class="sym-root"></div>
+</section>
+
+<!-- ============================================================ ЗАГЛУШКИ -->
+<section class="panel" id="panel-stub" aria-labelledby="stub-title" hidden>
+  <div class="panel-head"><h2 id="stub-title">Раздел</h2></div>
+  <div id="stub-body"></div>
+</section>
+
 
 <!-- ============================================================ БЭКТЕСТ -->
-<section class="panel" id="panel-backtest" role="tabpanel" aria-labelledby="tab-backtest" hidden>
+<section class="panel" id="panel-backtest" aria-labelledby="h-backtest" hidden>
   <div class="panel-head">
-    <h2>Бэктест портфелей и стратегий</h2>
+    <h2 id="h-backtest">Бэктест портфелей и стратегий</h2>
     <p class="lead">По умолчанию: 1&nbsp;000&nbsp;000&nbsp;₽, 2011–2025, ежегодная ребалансировка
       в последний торговый день декабря, без комиссий и налогов, бенчмарк — MCFTR.</p>
   </div>
@@ -117,9 +183,9 @@
 </section>
 
 <!-- ============================================================ ГРАНИЦА -->
-<section class="panel" id="panel-frontier" role="tabpanel" aria-labelledby="tab-frontier" hidden>
+<section class="panel" id="panel-frontier" aria-labelledby="h-frontier" hidden>
   <div class="panel-head">
-    <h2>Граница эффективности Марковица</h2>
+    <h2 id="h-frontier">Граница эффективности Марковица</h2>
     <p class="lead">Облако случайных портфелей, эффективная граница, линия рынка капитала (CML) и
       касательный портфель для выбранных базовых активов.</p>
   </div>
@@ -157,9 +223,9 @@
 </section>
 
 <!-- ============================================================ БУМАГА -->
-<section class="panel" id="panel-security" role="tabpanel" aria-labelledby="tab-security" hidden>
+<section class="panel" id="panel-security" aria-labelledby="h-security" hidden>
   <div class="panel-head">
-    <h2>Коэффициенты бумаги</h2>
+    <h2 id="h-security">Коэффициенты бумаги</h2>
     <p class="lead">Цена тикера или индекса против бенчмарка (база = 100), просадки и полная таблица
       показателей эффективности.</p>
   </div>
@@ -179,11 +245,11 @@
 </section>
 
 <!-- ============================================================ МЕТОДИКА -->
-<section class="panel" id="panel-method" role="tabpanel" aria-labelledby="tab-method" hidden>
+<section class="panel" id="panel-method" aria-labelledby="h-method" hidden>
   <div class="panel-head">
-    <h2>Методика расчёта</h2>
+    <h2 id="h-method">Методика расчёта</h2>
     <p class="lead">Формулы показателей эффективности — классические определения; ниже — обозначения,
-      формулы и допущения бэктеста.</p>
+      формулы, оценки волатильности, показатели страницы бумаги и допущения бэктеста.</p>
   </div>
 
   <div class="card prose">
@@ -253,10 +319,55 @@
 
     <div class="formula"><div class="f-name">XIRR<small>Денежно-взвешенная доходность инвестора</small></div>
       <math display="block"><munder><mo>∑</mo><mi>i</mi></munder><mfrac><mrow><mi>C</mi><msub><mi>F</mi><mi>i</mi></msub></mrow><msup><mrow><mo>(</mo><mn>1</mn><mo>+</mo><mi>r</mi><mo>)</mo></mrow><mrow><mo>(</mo><msub><mi>t</mi><mi>i</mi></msub><mo>−</mo><msub><mi>t</mi><mn>0</mn></msub><mo>)</mo><mo>/</mo><mn>365,25</mn></mrow></msup></mfrac><mo>=</mo><mn>0</mn></math></div>
+
+    <div class="formula"><div class="f-name">Индекс язвы (Ulcer Index)<small>Среднеквадратичная просадка; dd<sub>t</sub> ≤ 0 в долях</small></div>
+      <math display="block"><mi>UI</mi><mo>=</mo><msqrt><mrow><mfrac><mn>1</mn><mi>N</mi></mfrac><munder><mo>∑</mo><mi>t</mi></munder><msubsup><mi>dd</mi><mi>t</mi><mn>2</mn></msubsup></mrow></msqrt><mo>,</mo><mspace width="1em"></mspace><msub><mi>dd</mi><mi>t</mi></msub><mo>=</mo><mfrac><msub><mi>V</mi><mi>t</mi></msub><mrow><msub><mo movablelimits="false">max</mo><mrow><mi>τ</mi><mo>≤</mo><mi>t</mi></mrow></msub><msub><mi>V</mi><mi>τ</mi></msub></mrow></mfrac><mo>−</mo><mn>1</mn></math></div>
+
+    <div class="formula"><div class="f-name">Коэффициент Мартина<small>R<sub>f</sub> — годовая</small></div>
+      <math display="block"><mi>Martin</mi><mo>=</mo><mfrac><mrow><mi>CAGR</mi><mo>−</mo><msub><mi>R</mi><mi>f</mi></msub></mrow><mi>UI</mi></mfrac></math></div>
+
+    <div class="formula"><div class="f-name">R² (коэффициент детерминации)<small>Доля колебаний, объяснённая бенчмарком</small></div>
+      <math display="block"><msup><mi>R</mi><mn>2</mn></msup><mo>=</mo><msup><mi>ρ</mi><mn>2</mn></msup><mo>(</mo><msub><mi>R</mi><mi>p</mi></msub><mo>,</mo><msub><mi>R</mi><mi>m</mi></msub><mo>)</mo></math></div>
+
+    <div class="formula"><div class="f-name">Захват роста и падения (upside / downside capture)<small>Арифметический вариант; нет периодов с R<sub>m</sub> нужного знака — не определён</small></div>
+      <math display="block"><mi>UC</mi><mo>=</mo><mfrac><mrow><msub><mo>∑</mo><mrow><mi>t</mi><mo>:</mo><msub><mi>R</mi><mrow><mi>m</mi><mo>,</mo><mi>t</mi></mrow></msub><mo>&gt;</mo><mn>0</mn></mrow></msub><msub><mi>R</mi><mrow><mi>p</mi><mo>,</mo><mi>t</mi></mrow></msub></mrow><mrow><msub><mo>∑</mo><mrow><mi>t</mi><mo>:</mo><msub><mi>R</mi><mrow><mi>m</mi><mo>,</mo><mi>t</mi></mrow></msub><mo>&gt;</mo><mn>0</mn></mrow></msub><msub><mi>R</mi><mrow><mi>m</mi><mo>,</mo><mi>t</mi></mrow></msub></mrow></mfrac><mo>,</mo><mspace width="1em"></mspace><mi>DC</mi><mo>=</mo><mfrac><mrow><msub><mo>∑</mo><mrow><mi>t</mi><mo>:</mo><msub><mi>R</mi><mrow><mi>m</mi><mo>,</mo><mi>t</mi></mrow></msub><mo>&lt;</mo><mn>0</mn></mrow></msub><msub><mi>R</mi><mrow><mi>p</mi><mo>,</mo><mi>t</mi></mrow></msub></mrow><mrow><msub><mo>∑</mo><mrow><mi>t</mi><mo>:</mo><msub><mi>R</mi><mrow><mi>m</mi><mo>,</mo><mi>t</mi></mrow></msub><mo>&lt;</mo><mn>0</mn></mrow></msub><msub><mi>R</mi><mrow><mi>m</mi><mo>,</mo><mi>t</mi></mrow></msub></mrow></mfrac></math></div>
   </div>
   <p class="hint">Прочие строки таблицы: асимметрия и эксцесс — выборочные (с поправкой на смещение, эксцесс
     избыточный); доля положительных периодов, лучший и худший период — по доходностям выбранной частоты;
     дней до восстановления — календарные дни от пика перед максимальной просадкой до возврата к нему.</p>
+
+  <h3 class="section-title">Волатильность по дневным ценам и OHLC</h3>
+  <p class="hint">Цены — дневные свечи ISS, скорректированные биржей на сплиты и консолидации. O, H, L, C — цены открытия, максимума, минимума и закрытия дня t; N — число дней окна (на странице бумаги — последний год);
+    n = 252; s<sup>2</sup> — выборочная дисперсия; дни, где хоть одна из цен O, H, L, C не больше нуля, не учитываются.</p>
+  <div class="formula-list" id="formula-list-vol">
+    <div class="formula"><div class="f-name">Скользящая волатильность (1 месяц)<small>Окно — 21 торговый день</small></div>
+      <math display="block"><msub><mi>σ</mi><mi>t</mi></msub><mo>=</mo><mi>s</mi><mo>(</mo><msub><mi>r</mi><mrow><mi>t</mi><mo>−</mo><mn>20</mn></mrow></msub><mo>,</mo><mo>…</mo><mo>,</mo><msub><mi>r</mi><mi>t</mi></msub><mo>)</mo><mo>·</mo><msqrt><mn>252</mn></msqrt></math></div>
+
+    <div class="formula"><div class="f-name">Паркинсон</div>
+      <math display="block"><msub><mi>σ</mi><mi>P</mi></msub><mo>=</mo><msqrt><mrow><mfrac><mi>n</mi><mrow><mn>4</mn><mi>N</mi><mo>ln</mo><mn>2</mn></mrow></mfrac><munder><mo>∑</mo><mi>t</mi></munder><msup><mo>ln</mo><mn>2</mn></msup><mfrac><msub><mi>H</mi><mi>t</mi></msub><msub><mi>L</mi><mi>t</mi></msub></mfrac></mrow></msqrt></math></div>
+
+    <div class="formula"><div class="f-name">Гарман–Класс</div>
+      <math display="block"><msub><mi>σ</mi><mi>GK</mi></msub><mo>=</mo><msqrt><mrow><mfrac><mi>n</mi><mi>N</mi></mfrac><munder><mo>∑</mo><mi>t</mi></munder><mrow><mo>[</mo><mfrac><mn>1</mn><mn>2</mn></mfrac><msup><mo>ln</mo><mn>2</mn></msup><mfrac><msub><mi>H</mi><mi>t</mi></msub><msub><mi>L</mi><mi>t</mi></msub></mfrac><mo>−</mo><mo>(</mo><mn>2</mn><mo>ln</mo><mn>2</mn><mo>−</mo><mn>1</mn><mo>)</mo><msup><mo>ln</mo><mn>2</mn></msup><mfrac><msub><mi>C</mi><mi>t</mi></msub><msub><mi>O</mi><mi>t</mi></msub></mfrac><mo>]</mo></mrow></mrow></msqrt></math></div>
+
+    <div class="formula"><div class="f-name">Роджерс–Сатчелл</div>
+      <math display="block"><msub><mi>σ</mi><mi>RS</mi></msub><mo>=</mo><msqrt><mrow><mfrac><mi>n</mi><mi>N</mi></mfrac><munder><mo>∑</mo><mi>t</mi></munder><mrow><mo>[</mo><mo>ln</mo><mfrac><msub><mi>H</mi><mi>t</mi></msub><msub><mi>C</mi><mi>t</mi></msub></mfrac><mo>ln</mo><mfrac><msub><mi>H</mi><mi>t</mi></msub><msub><mi>O</mi><mi>t</mi></msub></mfrac><mo>+</mo><mo>ln</mo><mfrac><msub><mi>L</mi><mi>t</mi></msub><msub><mi>C</mi><mi>t</mi></msub></mfrac><mo>ln</mo><mfrac><msub><mi>L</mi><mi>t</mi></msub><msub><mi>O</mi><mi>t</mi></msub></mfrac><mo>]</mo></mrow></mrow></msqrt></math></div>
+
+    <div class="formula"><div class="f-name">Янг–Чжан<small>σ<sub>o</sub><sup>2</sup> — дисперсия ночных доходностей, σ<sub>c</sub><sup>2</sup> — дневных (открытие → закрытие), σ<sub>RS</sub><sup>2</sup> — среднее слагаемое Роджерса–Сатчелла; все три — по N = строк − 1 дням, начиная со второго</small></div>
+      <math display="block"><msub><mi>σ</mi><mi>YZ</mi></msub><mo>=</mo><msqrt><mrow><mi>n</mi><mo>(</mo><msubsup><mi>σ</mi><mi>o</mi><mn>2</mn></msubsup><mo>+</mo><mi>k</mi><msubsup><mi>σ</mi><mi>c</mi><mn>2</mn></msubsup><mo>+</mo><mo>(</mo><mn>1</mn><mo>−</mo><mi>k</mi><mo>)</mo><msubsup><mi>σ</mi><mi>RS</mi><mn>2</mn></msubsup><mo>)</mo></mrow></msqrt><mo>,</mo><mspace width="0.6em"></mspace><msubsup><mi>σ</mi><mi>o</mi><mn>2</mn></msubsup><mo>=</mo><msup><mi>s</mi><mn>2</mn></msup><mrow><mo>(</mo><mo>ln</mo><mfrac><msub><mi>O</mi><mi>t</mi></msub><msub><mi>C</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub></mfrac><mo>)</mo></mrow><mo>,</mo><mspace width="0.6em"></mspace><msubsup><mi>σ</mi><mi>c</mi><mn>2</mn></msubsup><mo>=</mo><msup><mi>s</mi><mn>2</mn></msup><mrow><mo>(</mo><mo>ln</mo><mfrac><msub><mi>C</mi><mi>t</mi></msub><msub><mi>O</mi><mi>t</mi></msub></mfrac><mo>)</mo></mrow><mo>,</mo><mspace width="0.6em"></mspace><mi>k</mi><mo>=</mo><mfrac><mn>0,34</mn><mrow><mn>1,34</mn><mo>+</mo><mfrac><mrow><mi>N</mi><mo>+</mo><mn>1</mn></mrow><mrow><mi>N</mi><mo>−</mo><mn>1</mn></mrow></mfrac></mrow></mfrac></math></div>
+  </div>
+
+  <h3 class="section-title">Страница бумаги: моментум, рейтинг, дивиденды</h3>
+  <div class="formula-list" id="formula-list-symbol">
+    <div class="formula"><div class="f-name">Балл моментума 0–100<small>Среднее пяти подбаллов (при истории короче 200 дней — доступных); [·] — 1, если условие выполнено, иначе 0; P — последняя цена закрытия, SMA — средние последних 50 и 200 цен; P<sub>T−k мес</sub> — последняя цена не позже даты T − k месяцев</small></div>
+      <math display="block"><mi>Score</mi><mo>=</mo><mfrac><mn>1</mn><mn>5</mn></mfrac><mrow><mo>(</mo><mn>100</mn><mo>[</mo><mi>P</mi><mo>&gt;</mo><msub><mi>SMA</mi><mn>50</mn></msub><mo>]</mo><mo>+</mo><mn>100</mn><mo>[</mo><mi>P</mi><mo>&gt;</mo><msub><mi>SMA</mi><mn>200</mn></msub><mo>]</mo><mo>+</mo><mn>100</mn><mo>[</mo><msub><mi>SMA</mi><mn>50</mn></msub><mo>&gt;</mo><msub><mi>SMA</mi><mn>200</mn></msub><mo>]</mo><mo>+</mo><msub><mi>c</mi><mn>6</mn></msub><mo>+</mo><msub><mi>c</mi><mn>12</mn></msub><mo>)</mo></mrow></math>
+      <math display="block"><msub><mi>c</mi><mi>k</mi></msub><mo>=</mo><mi>clamp</mi><mo>(</mo><mn>50</mn><mo>+</mo><mn>250</mn><mo>·</mo><msub><mi>mom</mi><mi>k</mi></msub><mo>,</mo><mn>0</mn><mo>,</mo><mn>100</mn><mo>)</mo><mo>,</mo><mspace width="0.6em"></mspace><msub><mi>mom</mi><mi>k</mi></msub><mo>=</mo><mfrac><msub><mi>P</mi><mrow><mi>T</mi><mo>−</mo><mn>1</mn><mtext> мес</mtext></mrow></msub><msub><mi>P</mi><mrow><mi>T</mi><mo>−</mo><mi>k</mi><mtext> мес</mtext></mrow></msub></mfrac><mo>−</mo><mn>1</mn><mo>,</mo><mspace width="0.4em"></mspace><mi>k</mi><mo>∈</mo><mo>{</mo><mn>6</mn><mo>,</mo><mn>12</mn><mo>}</mo></math></div>
+
+    <div class="formula"><div class="f-name">Рейтинг риск/доходность<small>Внутри класса — торгуемые сейчас акции или фонды TQBR с историей ≥ 36 мес.; месячные доходности до 10 лет: акции — с реинвестированием дивидендов (T-Invest), фонды — по цене; цены — месячные свечи ISS, скорректированные биржей на сплиты и консолидации; R<sub>f</sub> — средняя ключевая ставка ЦБ за период истории бумаги в окне. Коэффициенты рейтинга месячные, на странице бумаги — дневные. r<sub>j</sub> — средний ранг коэффициента j по возрастанию среди N бумаг класса (100 — лучший, одна бумага — 50); Score — среднее доступных перцентилей</small></div>
+      <math display="block"><msub><mi>P</mi><mi>j</mi></msub><mo>=</mo><mn>100</mn><mo>·</mo><mfrac><mrow><msub><mi>r</mi><mi>j</mi></msub><mo>−</mo><mn>1</mn></mrow><mrow><mi>N</mi><mo>−</mo><mn>1</mn></mrow></mfrac><mo>,</mo><mspace width="1em"></mspace><mi>Score</mi><mo>=</mo><mfrac><mn>1</mn><mn>5</mn></mfrac><munder><mo>∑</mo><mrow><mi>j</mi><mo>∈</mo><mo>{</mo><mi>S</mi><mo>,</mo><mi>So</mi><mo>,</mo><mi>Ω</mi><mo>,</mo><mi>K</mi><mo>,</mo><mi>Martin</mi><mo>}</mo></mrow></munder><msub><mi>P</mi><mi>j</mi></msub></math></div>
+
+    <div class="formula"><div class="f-name">Доходность акции с учётом дивидендов<small>Дивиденд D реинвестируется в дату отсечки — первую торговую дату не раньше exDate (следующий рабочий день после последнего дня покупки с дивидендом); TR<sub>0</sub> = P<sub>0</sub></small></div>
+      <math display="block"><msub><mi>TR</mi><mi>t</mi></msub><mo>=</mo><msub><mi>TR</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub><mo>·</mo><mfrac><mrow><msub><mi>P</mi><mi>t</mi></msub><mo>+</mo><msub><mi>D</mi><mi>t</mi></msub></mrow><msub><mi>P</mi><mrow><mi>t</mi><mo>−</mo><mn>1</mn></mrow></msub></mfrac></math></div>
+  </div>
 
   <h3 class="section-title">Граница Марковица</h3>
   <div class="card prose">
@@ -288,7 +399,8 @@
 <footer class="app-footer">
   <div class="wrap footer-row">
     <p>Источники данных: <a href="https://iss.moex.com/iss/reference/" rel="noopener">ISS Московской биржи</a>,
-      <a href="https://www.cbr.ru/" rel="noopener">Банк России</a>. Расчёты выполняются в вашем браузере.</p>
+      <a href="https://www.cbr.ru/" rel="noopener">Банк России</a>, T-Invest API (дивиденды),
+      <a href="https://rusetfs.com/" rel="noopener">RusETFs</a> (комиссии фондов). Расчёты выполняются в вашем браузере.</p>
     <p class="disclaimer">Не является инвестиционной рекомендацией. Результаты в прошлом не гарантируют доходность в будущем.</p>
   </div>
 </footer>

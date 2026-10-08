@@ -137,13 +137,25 @@ const Y_FORMATS = {
   rub: { tick: (v) => fmtNum(v / 1e6, Math.abs(v) < 1e7 ? 1 : 0), tip: fmtRub },
   pct: { tick: (v) => `${fmtNum(v * 100, 0)} %`, tip: (v) => fmtPct(v, 1) },
   num: { tick: (v) => fmtNum(v, 0), tip: (v) => fmtNum(v, 1) },
+  price: { tick: (v) => fmtNum(v, Math.max(0, priceDigits(v) - 1)), tip: (v) => fmtNum(v, priceDigits(v)) },
+  money: { tick: (v) => fmtNum(v, Math.abs(v) < 10 ? 1 : 0), tip: (v) => `${fmtNum(v, 2)} ₽` },
 };
+
+/** Знаков после запятой для цены: дешёвые бумаги (VTBR) — больше знаков. */
+export function priceDigits(v) {
+  const a = Math.abs(v);
+  if (a === 0 || !Number.isFinite(a)) return 2;
+  if (a < 0.1) return 5;
+  if (a < 1) return 4;
+  if (a < 100) return 2;
+  return 1;
+}
 
 /**
  * series: [{name, dates, values, bench?}] — общий календарь строится объединением дат.
  * yFormat: rub | pct | num; yTitle — с единицами («Стоимость, млн ₽»).
  */
-export function lineChart(canvas, { series, yTitle, yFormat = "num", log = false, fill = false }) {
+export function lineChart(canvas, { series, yTitle, yFormat = "num", log = false, fill = false, xDays = false }) {
   const all = new Set();
   series.forEach((s) => s.dates.forEach((d) => all.add(d)));
   const labels = [...all].sort();
@@ -188,7 +200,8 @@ export function lineChart(canvas, { series, yTitle, yFormat = "num", log = false
           maxTicksLimit: 8,
           maxRotation: 0,
           callback(v) {
-            return fmtMonth(this.getLabelForValue(v));
+            const d = this.getLabelForValue(v);
+            return xDays ? fmtDate(d).slice(0, 5) : fmtMonth(d);
           },
         },
       },
@@ -214,4 +227,74 @@ export function lineChart(canvas, { series, yTitle, yFormat = "num", log = false
     };
     return { type: "line", data: { labels, datasets }, options: opts };
   });
+}
+
+// ---------------------------------------------------------------- столбцы
+
+/**
+ * Столбчатая диаграмма одной сущности: labels — подписи по оси X (годы, даты),
+ * values — числа; name — сущность (цвет закреплён за ней); highlight — индексы
+ * столбцов, выделяемых приглушённым цветом (например, будущие купоны).
+ */
+export function barChart(canvas, { labels, values, name, yTitle, xTitle = "", yFormat = "num", muted = [] }) {
+  const fmt = Y_FORMATS[yFormat];
+  const mutedSet = new Set(muted);
+  return renderChart(canvas, () => {
+    const t = themeColors();
+    const color = colorOf(name);
+    const opts = baseOptions({ legend: false });
+    opts.plugins.tooltip.callbacks = {
+      title: (items) => String(items[0]?.label ?? ""),
+      label: (it) => ` ${name}: ${fmt.tip(it.parsed.y)}${mutedSet.has(it.dataIndex) ? " (ожидается)" : ""}`,
+    };
+    opts.scales = {
+      x: {
+        title: axisTitle(xTitle, t),
+        grid: { display: false },
+        border: { color: t.grid },
+        ticks: { color: t.muted, autoSkip: true, maxTicksLimit: 14, maxRotation: 0 },
+      },
+      y: {
+        title: axisTitle(yTitle, t),
+        grid: { color: t.grid },
+        border: { display: false },
+        beginAtZero: true,
+        ticks: { color: t.muted, maxTicksLimit: 6, callback: (v) => fmt.tick(Number(v)) },
+      },
+    };
+    return {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [{
+          label: name,
+          data: values,
+          backgroundColor: values.map((_, i) => (mutedSet.has(i) ? `${color}66` : color)),
+          borderColor: color,
+          borderWidth: values.map((_, i) => (mutedSet.has(i) ? 1 : 0)),
+          maxBarThickness: 36,
+        }],
+      },
+      options: opts,
+    };
+  });
+}
+
+// ---------------------------------------------------------------- тепловая шкала таблиц
+
+function mix(c1, c2, t) {
+  const p = (c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+  const a = p(c1);
+  const b = p(c2);
+  return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(",")})`;
+}
+
+/** Цвет ячейки тепловой карты доходностей: синий — рост, красный — снижение; lim — модуль крайнего значения. */
+export function heatStyle(v, lim) {
+  const dark = isDark();
+  const NEG = dark ? "#e66767" : "#e34948";
+  const POS = dark ? "#3987e5" : "#2a78d6";
+  const MID = dark ? "#34363a" : "#f0efec";
+  const t = Math.min(1, Math.abs(v) / (lim || 1));
+  return { background: mix(MID, v < 0 ? NEG : POS, t), color: t > 0.55 ? "#ffffff" : "var(--text)" };
 }

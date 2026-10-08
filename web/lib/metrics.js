@@ -350,6 +350,364 @@ export function kurtosis(a) {
   return num / den - adj;
 }
 
+// ------------------------------------------------------------------ этап 1: просадки, бенчмарк, OHLC
+// Тождественно core/analytics/metrics.py (паритет до 1e-9). Даты — строки 'YYYY-MM-DD'.
+
+/** Индекс язвы UI = sqrt(mean(dd_t²)), dd_t = P_t / max_{s≤t} P_s − 1 (доли; Martin & McCann, 1989). */
+export function ulcerIndex(s) {
+  const dd = drawdownSeries(s).values;
+  return dd.length ? Math.sqrt(mean(dd.map((x) => x * x))) : NaN;
+}
+
+/** Коэффициент Мартина = (CAGR − Rf) / UI; rf — годовая в долях; UI = 0 -> NaN. */
+export function martin(s, rf = 0) {
+  const ui = ulcerIndex(s);
+  return ui > 0 ? (cagr(s) - Number(rf)) / ui : NaN;
+}
+
+/** R² = corr(Rp, Rm)². */
+export function rSquared(r, rm) {
+  const c = correlation(r, rm);
+  return Number.isNaN(c) ? NaN : c * c;
+}
+
+/** Upside/downside capture (арифметический): up = Σ r_t / Σ rm_t по rm_t > 0, down — по rm_t < 0. */
+export function captureRatios(r, rm) {
+  const j = joinInner(r, rm);
+  const ratio = (pred) => {
+    let a = 0, b = 0, any = false;
+    for (let i = 0; i < j.x.length; i++) if (pred(j.y[i])) { a += j.x[i]; b += j.y[i]; any = true; }
+    return any && b !== 0 ? a / b : NaN;
+  };
+  return { up: ratio((y) => y > 0), down: ratio((y) => y < 0) };
+}
+
+/** Скользящая волатильность: ст. откл. (ddof = 1) доходностей окна × √n; точки без полного окна не выводятся. */
+export function rollingVolatility(s, window = 21, n = 252) {
+  const r = toReturns(clean(s));
+  const dates = [], values = [];
+  for (let i = window - 1; i < r.values.length; i++) {
+    dates.push(r.dates[i]);
+    values.push(std(r.values.slice(i - window + 1, i + 1)) * Math.sqrt(n));
+  }
+  return { dates, values };
+}
+
+/** OHLC {dates, open, high, low, close}: все строки с флагом ok (все четыре цены конечны и > 0). */
+function ohlcAll(ohlc) {
+  const out = [];
+  const len = ohlc && ohlc.close ? ohlc.close.length : 0;
+  const val = (a, i) => (a[i] === null || a[i] === undefined ? NaN : Number(a[i]));
+  for (let i = 0; i < len; i++) {
+    const o = val(ohlc.open, i), h = val(ohlc.high, i), l = val(ohlc.low, i), c = val(ohlc.close, i);
+    out.push({ o, h, l, c, ok: [o, h, l, c].every((v) => Number.isFinite(v) && v > 0) });
+  }
+  return out;
+}
+
+/** Только корректные строки OHLC. */
+function ohlcRows(ohlc) {
+  return ohlcAll(ohlc).filter((r) => r.ok);
+}
+
+const LN2 = Math.log(2);
+const rsTerm = (x) => Math.log(x.h / x.c) * Math.log(x.h / x.o) + Math.log(x.l / x.c) * Math.log(x.l / x.o);
+
+/** Паркинсон (1980): σ² = mean(ln(H/L)²) / (4 ln 2); годовая √(n·σ²). */
+export function parkinson(ohlc, n = 252) {
+  const x = ohlcRows(ohlc);
+  if (!x.length) return NaN;
+  return Math.sqrt(n * mean(x.map((v) => Math.log(v.h / v.l) ** 2)) / (4 * LN2));
+}
+
+/** Гарман–Класс (1980): σ² = mean(½ ln(H/L)² − (2 ln 2 − 1) ln(C/O)²); годовая √(n·σ²). */
+export function garmanKlass(ohlc, n = 252) {
+  const x = ohlcRows(ohlc);
+  if (!x.length) return NaN;
+  const v = mean(x.map((r) => 0.5 * Math.log(r.h / r.l) ** 2 - (2 * LN2 - 1) * Math.log(r.c / r.o) ** 2));
+  return v >= 0 ? Math.sqrt(n * v) : NaN;
+}
+
+/** Роджерс–Сатчелл (1991): σ² = mean(ln(H/C)ln(H/O) + ln(L/C)ln(L/O)); годовая √(n·σ²). */
+export function rogersSatchell(ohlc, n = 252) {
+  const x = ohlcRows(ohlc);
+  if (!x.length) return NaN;
+  const v = mean(x.map(rsTerm));
+  return v >= 0 ? Math.sqrt(n * v) : NaN;
+}
+
+/**
+ * Янг–Чжан (2000): σ² = σo² + k·σc² + (1 − k)·σrs², k = 0.34 / (1.34 + (N+1)/(N−1)); по парам соседних строк (t−1, t),
+ * где обе корректны (некорректная строка исключает пары с ней): σo² — дисп. ln(O_t/C_{t−1}), σc² — ln(C_t/O_t)
+ * (ddof = 1), σrs² — среднее Роджерса–Сатчелла строк t; N — число пар (≥ 2); годовая √(n·σ²).
+ */
+export function yangZhang(ohlc, n = 252) {
+  const x = ohlcAll(ohlc);
+  const on = [], oc = [], rs = [];
+  for (let i = 1; i < x.length; i++) {
+    if (!x[i].ok || !x[i - 1].ok) continue;
+    on.push(Math.log(x[i].o / x[i - 1].c));
+    oc.push(Math.log(x[i].c / x[i].o));
+    rs.push(rsTerm(x[i]));
+  }
+  const N = on.length;
+  if (N < 2) return NaN;
+  const k = 0.34 / (1.34 + (N + 1) / (N - 1));
+  const v = std(on) ** 2 + k * std(oc) ** 2 + (1 - k) * mean(rs);
+  return v >= 0 ? Math.sqrt(n * v) : NaN;
+}
+
+/**
+ * Сплиты -> [{date, k = before/after}] в исходном порядке; splits: [{date|tradedate, before, after}].
+ * Записи без даты или с before/after ≤ 0 пропускаются (как _split_list в Python).
+ */
+function splitList(splits) {
+  const out = [];
+  for (const r of splits || []) {
+    if (!r) continue;
+    const d = r.date || r.tradedate;
+    const b = Number(r.before), a = Number(r.after);
+    if (!d || r.before == null || r.after == null || !(b > 0 && a > 0) || !Number.isFinite(b) || !Number.isFinite(a)) continue;
+    out.push({ date: String(d).slice(0, 10), k: b / a });
+  }
+  return out;
+}
+
+/** Множитель цены на даты: произведение before/after сплитов с датой строго позже (split_factors в Python). */
+export function splitFactors(dates, splits) {
+  const f = new Array(dates.length).fill(1);
+  for (const { date, k } of splitList(splits)) {
+    for (let i = 0; i < dates.length; i++) if (dates[i] < date) f[i] *= k;
+  }
+  return f;
+}
+
+/**
+ * Корректировка на сплиты/консолидации (adjust_splits в Python): цены (values / open, high, low, close) × множитель,
+ * volume ÷ множитель; ряд приводится к текущему количеству акций. Принимает Series или OHLC, возвращает копию
+ * того же вида (прочие поля сохраняются).
+ */
+export function adjustSplits(x, splits) {
+  const f = splitFactors(x.dates || [], splits);
+  const out = { ...x };
+  for (const key of ['values', 'open', 'high', 'low', 'close']) {
+    if (Array.isArray(x[key])) out[key] = x[key].map((v, i) => (v === null || v === undefined ? v : Number(v) * f[i]));
+  }
+  if (Array.isArray(x.volume)) out.volume = x.volume.map((v, i) => (v === null || v === undefined ? v : Number(v) / f[i]));
+  return out;
+}
+
+const pad2 = (x) => String(x).padStart(2, '0');
+const daysInMonth = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();   // m — 1..12
+
+/** Дата на k календарных месяцев раньше; день ограничен концом месяца (как pd.DateOffset). */
+function minusMonths(date, k) {
+  const y0 = Number(date.slice(0, 4)), m0 = Number(date.slice(5, 7)), d0 = Number(date.slice(8, 10));
+  let m = m0 - k;
+  const y = y0 + Math.floor((m - 1) / 12);
+  m = ((((m - 1) % 12) + 12) % 12) + 1;
+  return `${y}-${pad2(m)}-${pad2(Math.min(d0, daysInMonth(y, m)))}`;
+}
+
+function minusDays(date, k) {
+  return new Date(Date.parse(date + 'T00:00:00Z') - k * 86400000).toISOString().slice(0, 10);
+}
+
+/** Индекс последней точки с датой ≤ target (−1 — нет). */
+function idxAt(dates, target) {
+  let lo = 0, hi = dates.length;            // первая дата > target
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (dates[mid] <= target) lo = mid + 1; else hi = mid; }
+  return lo - 1;
+}
+
+export const PERIOD_RETURN_KEYS = ['1D', '1W', '1M', '6M', 'YTD', '1Y', '3Y', '5Y', '10Y', 'ALL'];
+
+/**
+ * Доходность по периодам {'1D',…,'ALL': {ret, cagr, from} | null} (period_returns в Python).
+ * Начало — последняя точка ≤ asOf − период (YTD — ≤ 31.12 прошлого года, ALL — первая точка);
+ * cagr = (P1/P0)^(365.25/дней) − 1 для 3Y/5Y/10Y и для ALL длиннее года, иначе null.
+ */
+const PERIOD_MONTHS = { '1M': 1, '6M': 6, '1Y': 12, '3Y': 36, '5Y': 60, '10Y': 120 };
+
+function periodTarget(endD, period) {
+  if (period === '1D') return minusDays(endD, 1);
+  if (period === '1W') return minusDays(endD, 7);
+  if (period === 'YTD') return `${Number(endD.slice(0, 4)) - 1}-12-31`;
+  if (!(period in PERIOD_MONTHS)) throw new Error(`Неизвестный период: ${period}`);
+  return minusMonths(endD, PERIOD_MONTHS[period]);
+}
+
+/**
+ * Дата начальной точки периода (period_start в Python; та же логика, что в periodReturns):
+ * последняя дата ≤ asOf − период (asOf по умолчанию — последняя дата; месяцы — календарные, день ограничен
+ * концом месяца; YTD — ≤ 31.12 прошлого года); 'ALL' — первая дата. Нет такой точки — null.
+ * @param {string[]} dates  даты 'YYYY-MM-DD' по возрастанию
+ */
+export function periodStart(dates, period, asOf = null) {
+  if (!dates || !dates.length) return null;
+  if (period === 'ALL') return dates[0];
+  const i = idxAt(dates, periodTarget(asOf || dates[dates.length - 1], period));
+  return i >= 0 ? dates[i] : null;
+}
+
+export function periodReturns(s, asOf = null) {
+  const p = clean(s);
+  const out = Object.fromEntries(PERIOD_RETURN_KEYS.map((k) => [k, null]));
+  if (!p.dates.length) return out;
+  const endD = asOf || p.dates[p.dates.length - 1];
+  const ie = idxAt(p.dates, endD);
+  if (ie < 0) return out;
+  const d1 = p.dates[ie], v1 = p.values[ie];
+  for (const k of PERIOD_RETURN_KEYS) {
+    const ds = periodStart(p.dates, k, endD);
+    if (ds === null) continue;
+    const i0 = idxAt(p.dates, ds);
+    const d0 = p.dates[i0], v0 = p.values[i0];
+    const dd = days(d0, d1);
+    const long = k === '3Y' || k === '5Y' || k === '10Y' || (k === 'ALL' && dd / 365.25 > 1);
+    out[k] = { ret: v1 / v0 - 1, cagr: long && dd > 0 ? (v1 / v0) ** (365.25 / dd) - 1 : null, from: d0 };
+  }
+  return out;
+}
+
+const clamp = (x, lo = 0, hi = 100) => Math.min(Math.max(x, lo), hi);
+
+/**
+ * Моментум по дневным ценам (momentum в Python): SMA50/SMA200 — среднее последних 50/200 точек;
+ * high52 — максимум за 365 дней до последней даты; mom6/mom12 — доходность от точки ≤ T − 6/12 мес.
+ * до точки ≤ T − 1 мес.; score — среднее доступных подбаллов (0/100 и clamp(50 + 250·mom, 0, 100)).
+ */
+export function momentum(s) {
+  const p = clean(s);
+  const out = { sma50: null, sma200: null, aboveSma50: null, aboveSma200: null, high52: null,
+    distHigh52: null, mom6: null, mom12: null, score: null };
+  const len = p.values.length;
+  if (!len) return out;
+  const last = p.values[len - 1], T = p.dates[len - 1];
+  if (len >= 50) { out.sma50 = mean(p.values.slice(-50)); out.aboveSma50 = last > out.sma50; }
+  if (len >= 200) { out.sma200 = mean(p.values.slice(-200)); out.aboveSma200 = last > out.sma200; }
+  const from = minusDays(T, 365);
+  let hi = -Infinity;
+  p.dates.forEach((d, i) => { if (d >= from) hi = Math.max(hi, p.values[i]); });
+  out.high52 = hi;
+  out.distHigh52 = last / hi - 1;
+  const ia = idxAt(p.dates, minusMonths(T, 1));
+  for (const [key, k] of [['mom6', 6], ['mom12', 12]]) {
+    const ib = idxAt(p.dates, minusMonths(T, k));
+    if (ia >= 0 && ib >= 0) out[key] = p.values[ia] / p.values[ib] - 1;
+  }
+  const sub = [];
+  if (out.aboveSma50 !== null) sub.push(out.aboveSma50 ? 100 : 0);
+  if (out.aboveSma200 !== null) sub.push(out.aboveSma200 ? 100 : 0);
+  if (out.sma50 !== null && out.sma200 !== null) sub.push(out.sma50 > out.sma200 ? 100 : 0);
+  for (const key of ['mom6', 'mom12']) if (out[key] !== null) sub.push(clamp(50 + 250 * out[key]));
+  out.score = sub.length ? sum(sub) / sub.length : null;
+  return out;
+}
+
+function median(a) {
+  const x = a.slice().sort((u, v) => u - v);
+  const n = x.length;
+  if (!n) return null;
+  return n % 2 ? x[n >> 1] : (x[n / 2 - 1] + x[n / 2]) / 2;
+}
+
+/**
+ * Помесячная доходность (monthly_grid в Python): месячные цены — последнее значение месяца; база первого
+ * месяца — первая точка, если в первом месяце больше одной точки (иначе первый месяц — только база).
+ * @returns {{years:number[], cells:(number|null)[][], yearTotal:(number|null)[], medianByMonth:(number|null)[]}}
+ */
+export function monthlyGrid(s) {
+  const p = clean(s);
+  if (p.values.length < 2) return { years: [], cells: [], yearTotal: [], medianByMonth: new Array(12).fill(null) };
+  const me = resample(p, 'M');
+  const ym = (d) => d.slice(0, 7);
+  const firstCount = p.dates.filter((d) => ym(d) === ym(p.dates[0])).length;
+  const bd = firstCount > 1 ? [p.dates[0], ...me.dates] : me.dates;
+  const bv = firstCount > 1 ? [p.values[0], ...me.values] : me.values;
+  const y0 = Number(p.dates[0].slice(0, 4)), y1 = Number(p.dates[p.dates.length - 1].slice(0, 4));
+  const years = [];
+  for (let y = y0; y <= y1; y++) years.push(y);
+  const cells = years.map(() => new Array(12).fill(null));
+  for (let i = 1; i < bd.length; i++) {
+    cells[Number(bd[i].slice(0, 4)) - y0][Number(bd[i].slice(5, 7)) - 1] = bv[i] / bv[i - 1] - 1;
+  }
+  const yearTotal = cells.map((row) => {
+    const xs = row.filter((v) => v !== null);
+    if (!xs.length) return null;
+    let pr = 1;
+    for (const v of xs) pr *= 1 + v;
+    return pr - 1;
+  });
+  const medianByMonth = [];
+  for (let m = 0; m < 12; m++) medianByMonth.push(median(cells.map((r) => r[m]).filter((v) => v !== null)));
+  return { years, cells, yearTotal, medianByMonth };
+}
+
+/** Эпизоды просадки: пик (последняя точка с dd = 0) -> дно (первый минимум) -> восстановление | конец ряда. */
+function drawdownEpisodes(s) {
+  const p = clean(s);
+  const v = p.values, dates = p.dates, n = v.length;
+  const out = [];
+  if (!n) return out;
+  let runMax = v[0], peak = 0, i = 1;
+  while (i < n) {
+    if (v[i] >= runMax) { runMax = v[i]; peak = i; i++; continue; }
+    let t = i, j = i;
+    while (j < n && v[j] < runMax) { if (v[j] < v[t]) t = j; j++; }
+    const rec = j < n ? j : null;
+    out.push({
+      depth: v[t] / runMax - 1, peak: dates[peak], trough: dates[t],
+      recovery: rec !== null ? dates[rec] : null,
+      daysToTrough: days(dates[peak], dates[t]),
+      daysToRecover: rec !== null ? days(dates[peak], dates[rec]) : null,
+    });
+    i = j;
+  }
+  return out;
+}
+
+/** k крупнейших непересекающихся просадок по глубине (при равенстве — более ранняя). */
+export function topDrawdowns(s, k = 5) {
+  return drawdownEpisodes(s).slice().sort((a, b) => a.depth - b.depth).slice(0, k);
+}
+
+/** Текущая просадка {depth, peak, days}: peak — последняя дата максимума. */
+export function currentDrawdown(s) {
+  const p = clean(s);
+  if (!p.values.length) return { depth: NaN, peak: null, days: null };
+  let m = -Infinity, pi = 0;
+  p.values.forEach((v, i) => { if (v >= m) { m = v; pi = i; } });
+  const last = p.values.length - 1;
+  return { depth: p.values[last] / m - 1, peak: p.dates[pi], days: days(p.dates[pi], p.dates[last]) };
+}
+
+/** Средняя глубина эпизодов просадки (вкл. текущий), доли ≤ 0; нет просадок — NaN. */
+export function avgDrawdown(s) {
+  const e = drawdownEpisodes(s);
+  return e.length ? mean(e.map((x) => x.depth)) : NaN;
+}
+
+/**
+ * Ряд полной доходности: TR_0 = P_0, TR_t = TR_{t−1}·(P_t + D_t)/P_{t−1}; дивиденд — на первую торговую дату ≥ exDate
+ * (позже последней или не позже первой даты — не учитывается). dividends: [{exDate, value}].
+ */
+export function totalReturnSeries(close, dividends) {
+  const p = clean(close);
+  const n = p.values.length;
+  const d = new Array(n).fill(0);
+  for (const r of dividends || []) {
+    const ex = r && (r.exDate || r.ex_date);
+    if (!ex || r.value === null || r.value === undefined) continue;
+    const pos = idxAt(p.dates, minusDays(String(ex).slice(0, 10), 1)) + 1;   // первая дата ≥ exDate
+    if (pos > 0 && pos < n) d[pos] += Number(r.value);
+  }
+  const values = new Array(n);
+  if (n) values[0] = p.values[0];
+  for (let i = 1; i < n; i++) values[i] = values[i - 1] * (p.values[i] + d[i]) / p.values[i - 1];
+  return { dates: p.dates.slice(), values };
+}
+
 // ------------------------------------------------------------------ summary
 /** Подписи строк; порядок ключей = порядок строк таблицы (как LABELS_RU в Python). */
 export const LABELS_RU = {
@@ -357,9 +715,11 @@ export const LABELS_RU = {
   cagr: 'CAGR (среднегод.)',
   volatility: 'Волатильность (год.)',
   max_drawdown: 'Макс. просадка',
+  ulcer_index: 'Индекс язвы',
   sharpe: 'Коэф. Шарпа',
   sortino: 'Коэф. Сортино',
   calmar: 'Коэф. Кальмара',
+  martin: 'Коэф. Мартина',
   omega: 'Коэф. Омега',
   schwager: 'Коэф. Швагера',
   beta: 'Бета',
@@ -369,6 +729,9 @@ export const LABELS_RU = {
   tracking_error: 'Ошибка слежения',
   information_ratio: 'Информационный коэф.',
   correlation: 'Корреляция с бенчмарком',
+  r_squared: 'R² с бенчмарком',
+  up_capture: 'Захват роста (upside capture)',
+  down_capture: 'Захват падения (downside capture)',
   var_95: 'VaR 95% (за период)',
   cvar_95: 'CVaR 95% (за период)',
   skew: 'Асимметрия',
@@ -380,7 +743,8 @@ export const LABELS_RU = {
 };
 
 export const PERCENT_FIELDS = new Set(['total_return', 'cagr', 'volatility', 'max_drawdown', 'alpha',
-  'treynor', 'm2', 'tracking_error', 'var_95', 'cvar_95', 'positive_share', 'best_period', 'worst_period']);
+  'treynor', 'm2', 'tracking_error', 'var_95', 'cvar_95', 'positive_share', 'best_period', 'worst_period',
+  'ulcer_index', 'up_capture', 'down_capture']);
 
 /**
  * Полный набор показателей по ряду стоимости (compute_all): сначала ресемплинг по freq
@@ -419,6 +783,8 @@ export function computeAll(series, benchmark = null, rf = 0, freq = 'M', { retur
     best_period: rv.length ? Math.max(...rv) : NaN,
     worst_period: rv.length ? Math.min(...rv) : NaN,
     days_to_recover: maxDrawdownInfo(p).days_to_recover,
+    martin: martin(p, annualRf(rf)),
+    ulcer_index: ulcerIndex(p),
     beta: NaN,
     alpha: NaN,
     treynor: NaN,
@@ -426,6 +792,9 @@ export function computeAll(series, benchmark = null, rf = 0, freq = 'M', { retur
     tracking_error: NaN,
     information_ratio: NaN,
     correlation: NaN,
+    r_squared: NaN,
+    up_capture: NaN,
+    down_capture: NaN,
   };
   if (returnMethod === 'cagr') {
     rep.sharpe = rep.volatility ? (rep.cagr - annualRf(rf)) / rep.volatility : NaN;
@@ -442,6 +811,10 @@ export function computeAll(series, benchmark = null, rf = 0, freq = 'M', { retur
     rep.tracking_error = trackingError(rr, rbb, n);
     rep.information_ratio = informationRatio(rr, rbb, n);
     rep.correlation = correlation(rr, rbb);
+    rep.r_squared = rSquared(rr, rbb);
+    const cap = captureRatios(rr, rbb);
+    rep.up_capture = cap.up;
+    rep.down_capture = cap.down;
   }
   return rep;
 }

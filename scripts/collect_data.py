@@ -24,7 +24,14 @@ TINVEST_TOKEN (только чтение). Их файлы — {"updated", "sour
     rusetfs_funds.json   — {"updated", "source": "RusETFs (rusetfs.com)", "source_url",
                             "data": [записи core.data.rusetfs.normalize: ticker, УК, комиссия
                             commission_pct (% год.), СЧА aum_rub (руб.), класс активов, …]}.
-Порядок сбора: ряды ЦБ -> RusETFs -> T-Invest.
+Источник symbol_stats (kind = "iss", default = False — только явно: --only symbol_stats) — ночной
+расчёт рейтингов по месячным свечам ISS (core/analytics/ranking.py):
+    symbol_stats.json    — {"updated", "source": "ISS MOEX (расчёт ИнвестАналитики)", "rf", "window",
+                            "classes": {"share": {"n"}, "fund": {"n"}}, "items": {"SBER": {"class",
+                            sharpe, sortino, omega, calmar, martin, cagr, volatility, max_drawdown, months,
+                            "rank": {…}, "score"}}}; котировки в файл не пишутся.
+Порядок сбора: ряды ЦБ -> RusETFs -> T-Invest -> ISS (рейтинги).
+    python -m scripts.collect_data --skip symbol_stats   # исключить источник
 
 Если источник не ответил, прежний файл остаётся нетронутым, а в status.json
 записывается ошибка — сайт продолжает работать на последних успешных данных.
@@ -34,8 +41,10 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import os
 import sys
+import time
 import traceback
 from pathlib import Path
 from typing import Callable
@@ -346,6 +355,166 @@ SOURCES["rusetfs_funds"] = {"kind": "rusetfs", "title": "Фонды: комис�
                             "source_url": RUSETFS_URL, "collect": rusetfs_funds, "min_rows": 150}
 
 
+# ------------------------------------------------------------------ рейтинги (ISS)
+SYMBOL_STATS_SOURCE = "ISS MOEX (расчёт ИнвестАналитики)"
+SYMBOL_STATS_BUDGET_MIN = 10.0     # бюджет времени источника, мин (шаг workflow «Рейтинги» — 15 мин)
+SYMBOL_STATS_YEARS = 10            # окно — до 10 лет полных месяцев
+SYMBOL_STATS_MIN_MONTHS = 36       # минимум месячных доходностей для попадания в рейтинг
+_clock = time.monotonic            # часы бюджета (в тестах подменяются)
+
+
+class _IssStatsLoader:
+    """Доступ к ISS для symbol_stats: только через core/data/iss.py (кэш, ретраи)."""
+
+    def __init__(self):
+        self._funds: set[str] = set()
+
+    def securities(self) -> pd.DataFrame:
+        """Бумаги режима TQBR с колонками SECID, SECTYPE (акции и паи фондов)."""
+        from core.data import iss
+        df = iss.shares("TQBR")
+        self._funds = set(df.loc[df["SECTYPE"].astype(str).isin(iss.FUND_TYPES), "SECID"])
+        return df
+
+    def monthly_closes(self, secid: str, start: str, end: str) -> pd.Series:
+        """Месячные цены; свечи ISS уже скорректированы биржей на сплиты. Фонды — склейка TQTF
+        (до июня 2026 г.) + TQBR."""
+        from core.data import iss
+        legacy = ("TQTF",) if secid in self._funds else ()
+        return iss.monthly_closes(secid, start, end, board="TQBR", legacy_boards=legacy)
+
+
+def _symbol_stats_loader():
+    """Загрузчик ISS для symbol_stats (в тестах подменяется фейковым с теми же методами)."""
+    return _IssStatsLoader()
+
+
+def _key_rate_series() -> pd.Series:
+    """Ключевая ставка ЦБ (доля годовых) из public/data/key_rate.json, собранного шагом «Сбор».
+    Нет файла или он пуст — ошибка: рейтинги без безрисковой ставки не считаем."""
+    rows = _previous("key_rate").get("data")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("нет public/data/key_rate.json — ключевая ставка для rf недоступна")
+    s = pd.Series({pd.Timestamp(d): float(v) for d, v in rows if d and v is not None}, dtype=float)
+    return s.sort_index()
+
+
+def symbol_stats(spec: dict) -> tuple:
+    """Коэффициенты и ранги акций (TQBR SECTYPE 1/2/D) и фондов (J/9/A/B) с историей ≥ 36 мес.
+    Акции — по полной доходности (total_return_series с дивидендами dividends.json, item "tr": true),
+    фонды — по ценам ("tr": false); нет dividends.json — акции тоже по ценам, "total_return": false.
+    Сплиты: месячные свечи ISS уже скорректированы биржей задним числом — отдельной корректировки нет,
+    "split_adjusted": true по источнику; дивиденды T-Invest — в текущих акциях.
+    Месячные цены — свечи ISS interval=31 (один запрос на бумагу), окно — до 10 лет полных месяцев
+    (текущий месяц не входит); rf — средняя по времени ключевая ставка за период бумаги (item "rf"),
+    верхнее "rf" — за всё окно (справочно).
+    Сбои по отдельным бумагам — пропуск; источник — сбой, если сбоев > MAX_FAIL_SHARE,
+    MAX_CONSECUTIVE_FAILS подряд, исчерпан бюджет времени или акций в рейтинге < min_rows."""
+    from core.analytics import ranking
+    from core.data.iss import FUND_TYPES, SHARE_TYPES
+
+    today = dt.date.today()
+    till = today.replace(day=1) - dt.timedelta(days=1)                   # конец прошлого месяца
+    first = (pd.Timestamp(till) - pd.DateOffset(months=12 * SYMBOL_STATS_YEARS)).to_period("M")
+    start = first.to_timestamp().date()                                  # 1-е число месяца базовой цены
+    key_rate = _key_rate_series()
+    rf = ranking.mean_rate(key_rate, first.to_timestamp("M"), till)      # за всё окно (справочно в файле)
+    if not math.isfinite(rf):
+        raise ValueError("ключевая ставка за окно не определена")
+
+    # полная доходность акций: дивиденды из dividends.json (T-Invest), собранного шагом «Сбор» или ранее;
+    # нет файла — акции по ценам, "total_return": false (сайт покажет пометку)
+    from core.analytics.metrics import total_return_series
+    div_data = _previous("dividends").get("data")
+    div_data = div_data if isinstance(div_data, dict) and div_data else None
+
+    loader = _symbol_stats_loader()
+    df = loader.securities()
+    classes: dict[str, str] = {}
+    for _, r in df.iterrows():
+        sec, st = r.get("SECID"), str(r.get("SECTYPE"))
+        if sec and st in SHARE_TYPES:
+            classes[sec] = "share"
+        elif sec and st in FUND_TYPES:
+            classes[sec] = "fund"
+    deadline = _clock() + spec.get("budget_min", SYMBOL_STATS_BUDGET_MIN) * 60
+    items: dict[str, dict] = {}
+    failed: list[str] = []
+    short = streak = 0
+    secs = sorted(classes)
+    for i, sec in enumerate(secs):
+        if _clock() > deadline:
+            raise RuntimeError(f"исчерпан бюджет времени ({spec.get('budget_min', SYMBOL_STATS_BUDGET_MIN):g} мин): "
+                               f"обработано {i} из {len(secs)} бумаг")
+        try:
+            s = loader.monthly_closes(sec, start.isoformat(), till.isoformat())
+            streak = 0
+        except Exception as e:  # noqa: BLE001
+            failed.append(sec)
+            streak += 1
+            if len(failed) <= 20:
+                print(f"  пропуск свечей {sec}: {type(e).__name__}: {str(e)[:200]}", file=sys.stderr)
+            if streak >= MAX_CONSECUTIVE_FAILS:
+                raise RuntimeError(f"{streak} сбоев ISS подряд — источник прерван; последний: "
+                                   f"{type(e).__name__}: {str(e)[:200]}") from None
+            continue
+        s = s.dropna()
+        if s.empty:                          # нет свечей за окно (новая или неторгуемая бумага)
+            short += 1
+            continue
+        s.index = pd.DatetimeIndex(s.index)
+        s = s[(s.index >= first.to_timestamp("M")) & (s.index <= pd.Timestamp(till))]
+        if len(s) - 1 < SYMBOL_STATS_MIN_MONTHS:
+            short += 1
+            continue
+        tr = classes[sec] == "share" and div_data is not None
+        if tr:
+            s = total_return_series(s, ranking.ex_dividends(div_data.get(sec)))
+        # rf — средняя ключевая ставка за период самой бумаги (а не за всё окно): иначе у бумаг с короткой
+        # историей (2022–2026, ставка выше средней за 10 лет) Шарп/Сортино/Омега/Мартин завышены
+        rf_sec = ranking.mean_rate(key_rate, s.index[0], s.index[-1])
+        rf_sec = rf_sec if math.isfinite(rf_sec) else rf
+        items[sec] = {"class": classes[sec], "tr": tr, "rf": round(rf_sec, 6), **ranking.symbol_metrics(s, rf_sec)}
+    if len(failed) > 20:
+        print(f"  … всего пропусков свечей: {len(failed)}", file=sys.stderr)
+    if secs and len(failed) / len(secs) > MAX_FAIL_SHARE:
+        raise RuntimeError(f"сбоев {len(failed)} из {len(secs)} бумаг — больше {MAX_FAIL_SHARE:.0%}")
+    ranking.rank_items(items)
+    n_cls = {c: sum(it["class"] == c for it in items.values()) for c in ("share", "fund")}
+    _check("акций с историей ≥ 36 мес.", n_cls["share"], spec["min_rows"])
+    body = {
+        "total_return": div_data is not None,
+        "split_adjusted": True,          # свечи ISS скорректированы на сплиты биржей (проверено 08.10.2026)
+        "rf": round(rf, 6),
+        "window": {"from": first.to_timestamp("M").date().isoformat(), "till": till.isoformat(),
+                   "max_months": 12 * SYMBOL_STATS_YEARS, "min_months": SYMBOL_STATS_MIN_MONTHS},
+        "classes": {c: {"n": n} for c, n in n_cls.items()},
+        "items": dict(sorted(items.items())),
+    }
+    extra = {"shares": n_cls["share"], "funds": n_cls["fund"], "short_history": short, "failed": len(failed),
+             "total_return": div_data is not None}
+    return body, len(items), extra
+
+
+def collect_symbol_stats(name: str, spec: dict) -> dict:
+    """Атомарная запись symbol_stats.json; updated меняется только при изменении rf / window / classes / items;
+    при сбое (исключение до _write) прежний файл не трогается. Котировки в файл не пишутся."""
+    body, n, extra = spec["collect"](spec)
+    prev = _previous(name)
+    same = all(prev.get(k) == body[k] for k in body)
+    updated = prev.get("updated") if same and prev.get("updated") else _now()
+    _write(name, {"updated": updated, "source": SYMBOL_STATS_SOURCE, **body})
+    return {"ok": True, "rows": n, "last": body["window"]["till"], **extra}
+
+
+# kind "iss": собирается после RusETFs и T-Invest; default=False — только явно (--only symbol_stats),
+# отдельным шагом workflow «Рейтинги»: полный прогон без аргументов его не запускает
+SOURCES["symbol_stats"] = {"kind": "iss", "default": False,
+                           "title": "Рейтинги риск/доходность (расчёт по ISS)",
+                           "collect": symbol_stats, "min_rows": 100,
+                           "budget_min": SYMBOL_STATS_BUDGET_MIN}
+
+
 # ------------------------------------------------------------------ ряды ЦБ
 def collect(name: str, spec: dict) -> dict:
     s: pd.Series = spec["load"]()
@@ -364,6 +533,8 @@ def collect(name: str, spec: dict) -> dict:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", nargs="*", help="собрать только указанные источники")
+    ap.add_argument("--skip", nargs="*", default=[], metavar="ИСТОЧНИК",
+                    help="не собирать указанные источники (применяется после --only)")
     ap.add_argument("--tinvest-budget", type=float, default=TINVEST_BUDGET_MIN, metavar="МИН",
                     help=f"бюджет времени на все источники T-Invest, мин (по умолчанию {TINVEST_BUDGET_MIN:g})")
     args = ap.parse_args(argv)
@@ -376,14 +547,16 @@ def main(argv: list[str] | None = None) -> int:
         status = json.loads(status_path.read_text(encoding="utf-8")) if status_path.exists() else {}
     except ValueError:
         status = {}
-    names = args.only or list(SOURCES)
-    unknown = [n for n in names if n not in SOURCES]
+    # без --only — все источники, кроме default=False (symbol_stats: отдельный шаг workflow «Рейтинги»)
+    names = args.only or [n for n, s in SOURCES.items() if s.get("default", True)]
+    unknown = [n for n in [*names, *args.skip] if n not in SOURCES]
     if unknown:
         ap.error(f"неизвестные источники: {', '.join(unknown)}; есть: {', '.join(SOURCES)}")
+    names = [n for n in names if n not in set(args.skip)]
     # ЦБ — первым, затем RusETFs, T-Invest — последним: долгий или упавший T-Invest
     # не должен помешать сохранить остальное (сортировка устойчивая — порядок внутри группы прежний)
     is_ti = lambda n: SOURCES[n].get("kind") == "tinvest"   # noqa: E731
-    order = {"rusetfs": 1, "tinvest": 2}
+    order = {"rusetfs": 1, "tinvest": 2, "iss": 3}
     names = sorted(names, key=lambda n: order.get(SOURCES[n].get("kind"), 0))
     failed = skipped = ti_tried = ti_failed = 0
     ctx: dict = {"budget_min": args.tinvest_budget}   # общий клиент T-Invest и список акций на прогон
@@ -394,6 +567,8 @@ def main(argv: list[str] | None = None) -> int:
                 res = collect_tinvest(name, spec, ctx)
             elif spec.get("kind") == "rusetfs":
                 res = collect_rusetfs(name, spec)
+            elif spec.get("kind") == "iss":
+                res = collect_symbol_stats(name, spec)
             else:
                 res = collect(name, spec)
             print(f"OK   {name}: {res['rows']} строк, до {res['last']}")
@@ -404,7 +579,7 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:  # noqa: BLE001
             failed += 1
             ti_failed += is_ti(name)
-            res = {"ok": False, "error": f"{type(e).__name__}: {e}"[:500]}
+            res = {"ok": False, "error": f"{type(e).__name__}: {e}"[:500], "where": _where(e)}
             print(f"FAIL {name}: {res['error']}", file=sys.stderr)
             traceback.print_exc(limit=2)
         ti_tried += is_ti(name) and not res.get("skipped")
@@ -434,6 +609,14 @@ def _short(err: str, n: int = 200) -> str:
     """Краткая причина для ::warning:: — первая строка текста ошибки, не длиннее n символов."""
     line = (str(err).strip().splitlines() or ["причина неизвестна"])[0]
     return line[:n] or "причина неизвестна"
+
+
+def _where(e: BaseException) -> str:
+    """Место ошибки для status.json (логи Actions не всегда доступны): последние 3 кадра «файл:строка функция»
+    в пределах репозитория, без значений переменных."""
+    frames = [f for f in traceback.extract_tb(e.__traceback__) if str(ROOT) in f.filename] or \
+        traceback.extract_tb(e.__traceback__)
+    return " <- ".join(f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in reversed(frames[-3:]))
 
 
 def _ti_reason(status: dict) -> str:
