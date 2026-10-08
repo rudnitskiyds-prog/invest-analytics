@@ -237,8 +237,8 @@ def monthly_closes(secid: str, start: str, end: Optional[str] = None, board: str
             s = c["close"].astype(float)
             s.index = s.index.to_period("M").to_timestamp("M")
             parts.append(s)
-    if not parts:
-        s = pd.Series(dtype=float, name=secid)
+    if not parts:                            # нет свечей за окно — пустой ряд с индексом дат (не RangeIndex)
+        s = pd.Series(dtype=float, name=secid, index=pd.DatetimeIndex([]))
         s.attrs["split_adjusted"] = True
         return s
     s = pd.concat(parts)

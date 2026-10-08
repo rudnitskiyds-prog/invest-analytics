@@ -457,6 +457,10 @@ def symbol_stats(spec: dict) -> tuple:
                                    f"{type(e).__name__}: {str(e)[:200]}") from None
             continue
         s = s.dropna()
+        if s.empty:                          # нет свечей за окно (новая или неторгуемая бумага)
+            short += 1
+            continue
+        s.index = pd.DatetimeIndex(s.index)
         s = s[(s.index >= first.to_timestamp("M")) & (s.index <= pd.Timestamp(till))]
         if len(s) - 1 < SYMBOL_STATS_MIN_MONTHS:
             short += 1

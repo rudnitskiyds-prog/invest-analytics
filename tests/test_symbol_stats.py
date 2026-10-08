@@ -15,6 +15,7 @@ import pytest
 
 from core.analytics import metrics as m
 from core.analytics import ranking
+from core.data import iss
 from scripts import collect_data as cd
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -485,3 +486,27 @@ def test_workflow_ratings_step_condition():
     assert cond in ("success()||failure()", "${{success()||failure()}}"), cond
     assert "always()" not in cond and "cancelled" not in cond
     assert steps["Сохранить изменения"]["if"] == "always()"
+
+
+def test_symbol_stats_security_without_candles_is_skipped(env, monkeypatch):
+    """Регрессия (живой прогон 08.10.2026): у бумаги нет месячных свечей за окно — пустой ряд не роняет
+    источник (раньше: TypeError при сравнении RangeIndex с Timestamp), бумага считается «короткой»."""
+    out, loader = env
+    orig = loader.monthly_closes
+
+    def mc(sec, start, end):
+        if sec == "S001":
+            return pd.Series(dtype=float)            # как отдавал iss.monthly_closes без свечей
+        return orig(sec, start, end)
+
+    monkeypatch.setattr(loader, "monthly_closes", mc)
+    assert cd.main(["--only", "symbol_stats"]) == 0
+    st = json.loads((out / "status.json").read_text(encoding="utf-8"))["symbol_stats"]
+    assert st["ok"] and st["short_history"] >= 1
+    assert "S001" not in _read(out, "symbol_stats")["items"]
+
+
+def test_monthly_closes_empty_has_datetime_index(monkeypatch):
+    monkeypatch.setattr(iss, "candles", lambda *a, **k: pd.DataFrame())
+    s = iss.monthly_closes("NEWX", "2016-01-01", "2026-09-30")
+    assert s.empty and isinstance(s.index, pd.DatetimeIndex) and s.attrs["split_adjusted"] is True
