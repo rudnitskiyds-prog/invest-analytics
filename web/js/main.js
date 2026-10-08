@@ -44,8 +44,9 @@ function show(route) {
   document.title = `${route.title} — ИнвестАналитика`;
   if (S.isDemo()) $("#live-link").href = S.liveHref();
 
-  // страница бумаги сразу показывает демо-сообщение / ошибку тикера, остальное — после загрузки lib
-  if (ready || route.page === "symbol") activePage().onShow(route);
+  // страница бумаги сразу показывает демо-сообщение / ошибку тикера, каталог инструментов (STATIC)
+  // не зависит от lib; остальное — после загрузки lib
+  if (ready || route.page === "symbol" || activePage().STATIC) activePage().onShow(route);
 
   if (!firstRoute) {
     // переход внутри сайта: наверх и фокус на заголовок страницы (для экранных дикторов)

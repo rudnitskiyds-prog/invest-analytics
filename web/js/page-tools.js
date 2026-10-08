@@ -35,6 +35,9 @@ const GROUPS = [
   ] },
 ];
 
+/** Страница не зависит от модулей расчёта — показывается сразу, не дожидаясь их загрузки. */
+export const STATIC = true;
+
 let rendered = false;
 
 export function init() {}
