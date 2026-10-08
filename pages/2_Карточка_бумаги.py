@@ -36,8 +36,12 @@ st.caption(f"ISIN {info.get('isin') or '—'} · рынок {info['market']} · 
 
 start = (pd.Timestamp.today() - pd.DateOffset(years=years)).date().isoformat()
 with st.spinner("Загружаю историю…"):
-    px = load_series(secid, start, total_return=tr)
-    bpx = load_series(bench, start)
+    try:
+        px = load_series(secid, start, total_return=tr)
+        bpx = load_series(bench, start)
+    except KeyError as e:  # в демо-режиме есть не все бумаги
+        st.warning(f"Нет данных по этой бумаге: {e.args[0]}")
+        st.stop()
 if px.empty:
     st.warning("Нет истории котировок")
     st.stop()

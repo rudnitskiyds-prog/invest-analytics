@@ -39,6 +39,12 @@ def test_frontier_page():
     assert not at.exception, at.exception
 
 
+def test_security_page_without_demo_data():
+    at = run_page("pages/2_Карточка_бумаги.py")   # SBER по умолчанию, в демо-данных его нет
+    assert not at.exception, at.exception
+    assert any("Нет данных" in w.value for w in at.warning)
+
+
 def test_portfolio_pages_empty(tmp_path, monkeypatch):
     from core.portfolio import ledger as lg
     db = tmp_path / "p.sqlite"
