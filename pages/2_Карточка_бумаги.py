@@ -32,7 +32,15 @@ except Exception as e:  # noqa: BLE001
     st.stop()
 
 st.subheader(f"{info.get('name') or secid}  ·  {secid}")
-st.caption(f"ISIN {info.get('isin') or '—'} · рынок {info['market']} · режим {info['board']} · {info.get('type') or ''}")
+MARKETS = {"shares": "Акции и паи", "bonds": "Облигации", "index": "Индексы", "selt": "Валюта и металлы",
+           "special": "Расчётный ряд"}
+TYPES = {"common_share": "обыкновенная акция", "preferred_share": "привилегированная акция",
+         "ofz_bond": "ОФЗ", "corporate_bond": "корпоративная облигация", "exchange_bond": "биржевая облигация",
+         "subfederal_bond": "субфедеральная облигация", "municipal_bond": "муниципальная облигация",
+         "public_ppif": "открытый ПИФ", "exchange_ppif": "биржевой ПИФ", "etf_ppif": "ETF", "stock_index": "индекс"}
+st.caption(" · ".join(filter(None, [
+    f"ISIN {info.get('isin') or '—'}", MARKETS.get(info["market"], info["market"]), f"режим {info['board']}",
+    TYPES.get(info.get("type"), info.get("type"))])))
 
 start = (pd.Timestamp.today() - pd.DateOffset(years=years)).date().isoformat()
 with st.spinner("Загружаю историю…"):
@@ -48,12 +56,12 @@ if px.empty:
 
 rep = m.compute_all(px, bpx, rf, freq)
 k = st.columns(6)
-k[0].metric("Последняя цена", f"{px.iloc[-1]:,.2f}".replace(",", " "))
-k[1].metric("Доходность за период", fmt_pct(rep.total_return))
+k[0].metric("Последняя цена", f"{px.iloc[-1]:,.2f}".replace(",", " ").replace(".", ","))
+k[1].metric("Доходность", fmt_pct(rep.total_return), help=f"За выбранный период, {years} л.")
 k[2].metric("CAGR", fmt_pct(rep.cagr))
 k[3].metric("Волатильность", fmt_pct(rep.volatility))
-k[4].metric("Шарп", f"{rep.sharpe:.2f}")
-k[5].metric("Бета к " + bench, f"{rep.beta:.2f}" if pd.notna(rep.beta) else "—")
+k[4].metric("Шарп", f"{rep.sharpe:.2f}".replace(".", ","))
+k[5].metric("Бета к " + bench, f"{rep.beta:.2f}".replace(".", ",") if pd.notna(rep.beta) else "—")
 
 df = pd.DataFrame({secid: px, bench: bpx}).ffill().dropna()
 norm = df / df.iloc[0] * 100
