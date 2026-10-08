@@ -39,6 +39,12 @@ def test_frontier_page():
     assert not at.exception, at.exception
 
 
+def test_frontier_page_builds_on_first_open():
+    at = run_page("pages/3_Граница_Марковица.py")
+    assert not at.exception, at.exception
+    assert not any("Построить" in i.value for i in at.info)
+
+
 def test_security_page_without_demo_data():
     at = run_page("pages/2_Карточка_бумаги.py")   # SBER по умолчанию, в демо-данных его нет
     assert not at.exception, at.exception
