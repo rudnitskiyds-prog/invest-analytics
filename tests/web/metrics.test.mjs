@@ -240,10 +240,26 @@ describe('rebase', () => {
 describe('справочники', () => {
   test('LABELS_RU / PERCENT_FIELDS / PERIODS как в Python', () => {
     assert.deepEqual(M.PERIODS, { D: 252, W: 52, M: 12, Q: 4, A: 1 });
-    assert.equal(Object.keys(M.LABELS_RU).length, 24);
+    assert.equal(Object.keys(M.LABELS_RU).length, 29);
     assert.equal(Object.keys(M.LABELS_RU)[0], 'total_return');
     assert.equal(Object.keys(M.LABELS_RU).at(-1), 'days_to_recover');
-    assert.equal(M.PERCENT_FIELDS.size, 13);
+    assert.equal(M.PERCENT_FIELDS.size, 16);
+    // этап 1 (web/CONTRACT.md): места новых строк в таблице
+    const keys = Object.keys(M.LABELS_RU);
+    const after = (k, prev) => assert.equal(keys[keys.indexOf(k) - 1], prev, `${k} после ${prev}`);
+    after('ulcer_index', 'max_drawdown');
+    after('martin', 'calmar');
+    after('r_squared', 'correlation');
+    after('up_capture', 'r_squared');
+    after('down_capture', 'up_capture');
+    for (const k of ['ulcer_index', 'up_capture', 'down_capture']) assert.ok(M.PERCENT_FIELDS.has(k), k);
+    for (const k of ['martin', 'r_squared']) assert.ok(!M.PERCENT_FIELDS.has(k), k);
+  });
+  test('LABELS_RU / PERCENT_FIELDS совпадают с Python (эталон)', () => {
+    const ref = reference().labels;
+    assert.ok(ref, 'нет reference().labels — перегенерируйте: python -m tests.web.make_reference');
+    assert.deepEqual(Object.entries(M.LABELS_RU), ref.labels_ru);
+    assert.deepEqual([...M.PERCENT_FIELDS].sort(), ref.percent_fields);
   });
   test('formatMetric: NaN → «—», проценты с запятой', () => {
     assert.equal(M.formatMetric('sharpe', NaN), '—');

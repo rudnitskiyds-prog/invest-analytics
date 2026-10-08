@@ -7,6 +7,8 @@
 Что умеет:
   * resolve(secid)              — движок / рынок / основной режим бумаги;
   * candles(secid, …)           — свечи (день/неделя/месяц) с пагинацией;
+  * monthly_closes(secid, …)    — месячные цены закрытия режима TQBR одним запросом (рейтинги);
+  * splits(secid)               — сплиты и консолидации (statistics/engines/stock/splits);
   * close_series(secid, …)      — ряд цен закрытия для любой бумаги/индекса/металла;
   * shares() / etfs() / bonds() / metals() — витрины инструментов с котировками;
   * dividends(secid), coupons(secid);
@@ -164,6 +166,95 @@ def candles(secid: str, start: str = "2000-01-01", end: Optional[str] = None,
     return df.set_index("date")[["open", "high", "low", "close", "value", "volume"]]
 
 
+def _splits_frame(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or not {"tradedate", "secid", "before", "after"} <= set(df.columns):
+        return pd.DataFrame(columns=["date", "secid", "before", "after"])
+    out = pd.DataFrame({"date": pd.to_datetime(df["tradedate"], errors="coerce"), "secid": df["secid"].astype(str),
+                        "before": pd.to_numeric(df["before"], errors="coerce"),
+                        "after": pd.to_numeric(df["after"], errors="coerce")})
+    out = out.dropna()
+    out = out[(out["before"] > 0) & (out["after"] > 0)]
+    return out.drop_duplicates().sort_values(["secid", "date"]).reset_index(drop=True)
+
+
+@lru_cache(maxsize=1)
+def _all_splits() -> pd.DataFrame:
+    """Все сплиты/консолидации фондового рынка: /statistics/engines/stock/splits (блок splits:
+    tradedate, secid, before, after). Пагинация — по splits.cursor, если он есть, иначе по start, пока
+    страница приносит новые строки."""
+    frames, start, seen = [], 0, 0
+    for _ in range(100):
+        data = get_json("/statistics/engines/stock/splits", {"start": start}, ttl=TTL_REFERENCE)
+        df = block(data, "splits")
+        if df.empty:
+            break
+        frames.append(df)
+        cur = block(data, "splits.cursor")
+        if not cur.empty:
+            idx, total, size = (int(cur.iloc[0][k]) for k in ("INDEX", "TOTAL", "PAGESIZE"))
+            if idx + size >= total:
+                break
+            start = idx + size
+            continue
+        n_new = len(pd.concat(frames).drop_duplicates())
+        if n_new == seen or len(df) < 100:
+            break
+        seen, start = n_new, start + len(df)
+    return _splits_frame(pd.concat(frames, ignore_index=True) if frames else pd.DataFrame())
+
+
+def splits(secid: Optional[str] = None) -> pd.DataFrame:
+    """Сплиты и консолидации [date, secid, before, after] (сплит 1:100 — before=1, after=100; date — первый день
+    торгов в новых акциях). Для рядов из /history (не скорректированы); свечи ISS уже скорректированы биржей.
+    secid=None — все бумаги (общий список); иначе — строки бумаги из общего списка, при его недоступности —
+    /statistics/engines/stock/splits/{secid}. Оба недоступны — ISSError."""
+    try:
+        df = _all_splits()
+    except ISSError:
+        if secid is None:
+            raise
+        df = _splits_frame(block(get_json(f"/statistics/engines/stock/splits/{secid}", ttl=TTL_REFERENCE), "splits"))
+        return df[df["secid"] == secid].reset_index(drop=True)
+    return df if secid is None else df[df["secid"] == secid].reset_index(drop=True)
+
+
+def monthly_closes(secid: str, start: str, end: Optional[str] = None, board: str = "TQBR",
+                   engine: str = "stock", market: str = "shares", legacy_boards: tuple = (),
+                   adjust_splits: bool = False) -> pd.Series:
+    """Месячные цены закрытия режима `board` — свечи interval=31, без resolve() (один запрос на режим
+    при окне до 500 месяцев). legacy_boards — прежние режимы того же рынка, склеиваются перед основным
+    (фонды: ("TQTF",) — до июня 2026 г. торговались в TQTF); месяц, который есть в обоих, берётся из основного.
+    Индекс — последний календарный день месяца свечи; цены ≤ 0 отброшены.
+    Свечи ISS (interval 24 и 31; TQBR, EQBR, TQTF) уже скорректированы биржей на сплиты задним числом
+    (проверено 08.10.2026: GMKN 03.2024 ≈ 151 при сплите 1:100 от 08.04.2024), поэтому по умолчанию
+    adjust_splits=False и s.attrs["split_adjusted"] = True. adjust_splits=True дополнительно применяет
+    splits(secid) — для свечей это двойная корректировка (оставлено для рядов из /history и отладки).
+    Используется ночным расчётом рейтингов (scripts/collect_data.py, источник symbol_stats)."""
+    parts = []
+    for b in [*legacy_boards, board]:
+        c = candles(secid, start, end, "M", engine, market, b)
+        if not c.empty:
+            s = c["close"].astype(float)
+            s.index = s.index.to_period("M").to_timestamp("M")
+            parts.append(s)
+    if not parts:
+        s = pd.Series(dtype=float, name=secid)
+        s.attrs["split_adjusted"] = True
+        return s
+    s = pd.concat(parts)
+    s = s[~s.index.duplicated(keep="last")].sort_index()
+    s = s[s > 0]
+    if adjust_splits:
+        from core.analytics.metrics import adjust_splits as _adjust
+        try:
+            s = _adjust(s, splits(secid))
+        except (ISSError, requests.RequestException):
+            pass
+    s.name = secid
+    s.attrs["split_adjusted"] = True        # свечи ISS скорректированы биржей
+    return s
+
+
 def history(secid: str, start: str = "2000-01-01", end: Optional[str] = None,
             engine: Optional[str] = None, market: Optional[str] = None,
             board: Optional[str] = None) -> pd.DataFrame:
@@ -193,9 +284,12 @@ def index_history(secid: str, start: str = "2000-01-01", end: Optional[str] = No
 
 
 def close_series(secid: str, start: str = "2000-01-01", end: Optional[str] = None,
-                 interval: str = "D") -> pd.Series:
+                 interval: str = "D", adjust_splits: bool = False) -> pd.Series:
     """Ряд цен закрытия. Для индексов — значение индекса; для облигаций — % от номинала.
-    Для бумаг с историей в нескольких режимах (EQBR → TQBR) ряды склеиваются."""
+    Для бумаг с историей в нескольких режимах (EQBR → TQBR) ряды склеиваются.
+    adjust_splits=True — корректировка на сплиты (по умолчанию выключена: прежнее поведение приложения).
+    Свечи ISS уже скорректированы биржей — для акций и фондов включать не нужно (двойная корректировка);
+    индексы (history) сплитов не имеют."""
     info = resolve(secid)
     if info["market"] == "index":
         s = index_history(secid, start, end)
@@ -213,8 +307,15 @@ def close_series(secid: str, start: str = "2000-01-01", end: Optional[str] = Non
             parts.append(c["close"])
         s = pd.concat(parts).sort_index() if parts else pd.Series(dtype=float)
     s = s[~s.index.duplicated(keep="last")].astype(float)
+    s = s[s > 0]
+    if adjust_splits and info["market"] != "index" and not s.empty:
+        from core.analytics.metrics import adjust_splits as _adjust
+        try:
+            s = _adjust(s, splits(secid))
+        except (ISSError, requests.RequestException):
+            pass
     s.name = secid
-    return s[s > 0]
+    return s
 
 
 # --------------------------------------------------------------------- showcases

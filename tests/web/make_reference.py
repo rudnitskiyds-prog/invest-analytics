@@ -198,6 +198,105 @@ def annual_block(fx: pd.DataFrame) -> dict:
     }
 
 
+def labels_block() -> dict:
+    """LABELS_RU (порядок строк) и PERCENT_FIELDS — справочники должны совпадать с JS."""
+    return {"labels_ru": [[k, v] for k, v in m.LABELS_RU.items()],
+            "percent_fields": sorted(m.PERCENT_FIELDS)}
+
+
+def synthetic_ohlc() -> pd.DataFrame:
+    """Дневные OHLC 2014-02-25…2026-03-16 (рабочие дни, через 29.02 и концы месяцев), seed 11.
+    Плохие строки: NaN в open, high = 0, low < 0 — оценки по OHLC их отбрасывают, close остаётся.
+    Две длинные просадки (одна не восстановлена к концу ряда)."""
+    rng = np.random.default_rng(11)
+    idx = pd.bdate_range("2014-02-25", "2026-03-16")
+    drift = np.full(len(idx), 0.0004)
+    drift[800:1100] = -0.0025          # глубокая просадка с восстановлением
+    drift[-260:] = -0.0012             # невосстановленная просадка в конце
+    c = 100 * np.cumprod(1 + drift + rng.normal(0, 0.011, len(idx)))
+    o = np.r_[c[0], c[:-1]] * (1 + rng.normal(0, 0.004, len(idx)))
+    h = np.maximum(o, c) * (1 + np.abs(rng.normal(0, 0.006, len(idx))))
+    lo = np.minimum(o, c) * (1 - np.abs(rng.normal(0, 0.006, len(idx))))
+    o[10] = np.nan
+    h[20] = 0.0
+    lo[30] = -1.0
+    return pd.DataFrame({"open": o, "high": h, "low": lo, "close": c}, index=idx)
+
+
+def ohlc_json(df: pd.DataFrame) -> dict:
+    return {"dates": [str(d.date()) for d in df.index],
+            **{k: [clean(v) for v in df[k].values] for k in ("open", "high", "low", "close")}}
+
+
+def stage1_block(fx: pd.DataFrame) -> dict:
+    """Новые функции этапа 1 (web/CONTRACT.md): паритет JS ↔ Python до 1e-9."""
+    df = synthetic_ohlc()
+    s = df["close"]
+    oj = ohlc_json(df)
+    ohlc = {}
+    for name, part in {"full": df, "last_year": df.iloc[-252:], "rows3": df.iloc[-3:],
+                       "rows2": df.iloc[-2:], "rows1": df.iloc[-1:]}.items():
+        pj = ohlc_json(part)
+        ohlc[name] = {"input": pj, **{f"{fn}_{n}": clean(getattr(m, fn)(pj, n))
+                                      for fn in ("parkinson", "garman_klass", "rogers_satchell", "yang_zhang")
+                                      for n in (252, 12)}}
+
+    mc = fx["MCFTR"].dropna()
+    short = s.iloc[-120:]                          # < 200 точек: SMA200 и mom12 недоступны
+    tiny = s.iloc[-30:]                            # < 50 точек
+    gap = pd.concat([s.loc["2016-01-01":"2016-12-31"], s.loc["2018-03-01":"2019-06-30"]])   # год без точек
+    flat = pd.Series(100.0, index=pd.bdate_range("2024-01-01", periods=40))
+    rising = pd.Series(np.linspace(100, 140, 300), index=pd.bdate_range("2023-01-02", periods=300))
+    series = {"daily": s, "mcftr_m": mc, "short": short, "tiny": tiny, "gap": gap, "flat": flat, "rising": rising}
+
+    per_series = {}
+    for k, x in series.items():
+        per_series[k] = {
+            "input": series_json(x),
+            "ulcer": clean(m.ulcer_index(x)), "martin_0": clean(m.martin(x)), "martin_5": clean(m.martin(x, 0.05)),
+            "rolling_21_252": series_json(m.rolling_volatility(x)),
+            "rolling_5_12": series_json(m.rolling_volatility(x, 5, 12)),
+            "period": clean(m.period_returns(x)),
+            "momentum": clean(m.momentum(x)), "grid": clean(m.monthly_grid(x)),
+            "top5": clean(m.top_drawdowns(x)), "top2": clean(m.top_drawdowns(x, 2)),
+            "current": clean(m.current_drawdown(x)), "avg": clean(m.avg_drawdown(x)),
+        }
+
+    as_of = {}
+    for d in ["2024-02-29", "2025-03-31", "2024-03-30", "2023-12-31", "2014-03-03", "2010-01-01", "2030-01-01"]:
+        as_of[d] = clean(m.period_returns(s, d))
+
+    divs = [{"exDate": "2015-07-04", "value": 3.0},       # суббота -> понедельник 06.07
+            {"exDate": "2019-12-31", "value": 1.5}, {"exDate": "2019-12-31", "value": 0.5},   # две в один день
+            {"exDate": "2014-02-25", "value": 7.0},       # = первая дата ряда — не учитывается
+            {"exDate": "2010-01-01", "value": 5.0},       # раньше ряда
+            {"exDate": "2030-01-01", "value": 9.0},       # позже ряда
+            {"ex_date": "2021-06-15", "value": 2.0},      # snake_case
+            {"exDate": None, "value": 1.0}, {"exDate": "2022-01-10", "value": None}]
+    tr = series_json(m.total_return_series(s, divs))
+
+    r, rm = m.to_returns(fx["IRDIVTR"].dropna()), m.to_returns(fx["MCFTR"].dropna())
+    rg = m.to_returns(fx["GOLD_CBR"].dropna())
+    up_only = rm[rm > 0]
+    bench = {
+        "r": series_json(r), "rm": series_json(rm), "rg": series_json(rg), "rm_up": series_json(up_only),
+        "cap_div": clean(m.capture_ratios(r, rm)), "r2_div": clean(m.r_squared(r, rm)),
+        "cap_gold": clean(m.capture_ratios(rg, rm)), "r2_gold": clean(m.r_squared(rg, rm)),
+        "cap_up_only": clean(m.capture_ratios(r, up_only)),
+    }
+    # period_start: даты дневного ряда и концов месяцев; конец месяца, 29.02, as_of между датами / до начала ряда
+    eom = ["2023-02-28", "2023-03-31", "2023-08-31", "2023-12-29", "2024-01-31", "2024-02-29", "2024-03-29",
+           "2024-03-31", "2024-08-30", "2024-08-31", "2025-02-28"]
+    date_sets = {"daily": [str(d.date()) for d in s.index], "eom": eom}
+    pstart = []
+    for name, ds in date_sets.items():
+        for a in [None, "2024-02-29", "2024-03-31", "2024-08-31", "2025-02-28", "2025-03-01", "2014-01-01"]:
+            for k in m.PERIOD_RETURN_KEYS:
+                pstart.append({"dates": name, "period": k, "as_of": a, "result": m.period_start(ds, k, a)})
+    return {"ohlc": ohlc, "series": per_series, "as_of": as_of, "divs": divs, "tr": tr, "bench": bench,
+            "period_start": {"dates": {"eom": eom}, "cases": pstart}}
+
+
 def main():
     fx = load_fixture()
     ref = {
@@ -212,6 +311,8 @@ def main():
         "resample": resample_block(),
         "chain": chain_block(fx),
         "annual_returns": annual_block(fx),
+        "labels": labels_block(),
+        "stage1": stage1_block(fx),
         "strategies": {k: {"weights": v["weights"], "rebalance": v["rebalance"]} for k, v in STRATEGIES.items()},
         "benchmarks": BENCHMARKS,
     }

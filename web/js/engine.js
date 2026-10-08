@@ -1,7 +1,7 @@
 // Подключение расчётных модулей web/lib (владелец — `api`).
 // Импорт динамический: если модули недоступны, интерфейс не падает, а показывает сообщение.
 
-export const engine = { ok: false, error: null };
+export const engine = { ok: false, error: null, symbol: null, symbolError: null };
 
 let loading = null;
 
@@ -13,8 +13,14 @@ export function loadEngine() {
     import("../lib/frontier.js"),
     import("../lib/strategies.js"),
   ])
-    .then(([data, metrics, backtest, frontier, strategies]) => {
+    .then(async ([data, metrics, backtest, frontier, strategies]) => {
       Object.assign(engine, { data, metrics, backtest, frontier, strategies, ok: true });
+      // данные страницы бумаги — отдельно: без них остальные разделы должны работать
+      try {
+        engine.symbol = await import("../lib/symbol.js");
+      } catch (e) {
+        engine.symbolError = e;
+      }
       return engine;
     })
     .catch((e) => {
@@ -41,6 +47,28 @@ export class UserError extends Error {
     super(message);
     this.offerDemo = offerDemo;
   }
+}
+
+/** Модуль данных страницы бумаги (web/lib/symbol.js) или понятная ошибка. */
+export function requireSymbol() {
+  const E = requireEngine();
+  if (!E.symbol) {
+    throw new UserError(
+      "Модуль данных страницы бумаги (web/lib/symbol.js) не загрузился." +
+        (engine.symbolError ? ` Подробности: ${engine.symbolError.message}` : ""),
+    );
+  }
+  return E;
+}
+
+/** Функция из web/lib (по контракту этапа 1) или ошибка «ещё не реализовано». */
+export function libFn(mod, name) {
+  const m = engine[mod];
+  const fn = m?.[name];
+  if (typeof fn !== "function") {
+    throw new UserError(`Расчёт пока недоступен: в web/lib/${mod}.js нет функции ${name}().`);
+  }
+  return fn;
 }
 
 // ---------------------------------------------------------------- адаптеры структур контракта

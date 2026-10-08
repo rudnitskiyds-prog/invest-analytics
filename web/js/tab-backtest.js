@@ -1,6 +1,6 @@
 // Вкладка «Бэктест»: классические пассивные стратегии и свой портфель. Все расчёты — web/lib (runBacktest, computeAll…).
 
-import { colorOf, destroyChart, lineChart } from "./charts.js";
+import { colorOf, destroyChart, heatStyle, lineChart } from "./charts.js";
 import { $, downloadCsv, errorNotice, h, nextFrame, notice, tableWrap, withBusy } from "./dom.js";
 import { assetLabel, engine, entries, requireEngine, toSet, UserError } from "./engine.js";
 import { bindCheckbox, bindNumber, bindValue, globals, readDates, readNumber, FREQ_LABELS } from "./fields.js";
@@ -73,8 +73,8 @@ function addPfRow(key = "", w = "") {
   return tr;
 }
 
-/** Задать свой портфель извне (из вкладки «Граница Марковица»). weights — доли. */
-export function setCustomPortfolio(weights) {
+/** Задать свой портфель извне (граница Марковица, страница бумаги). weights — доли. */
+export function setCustomPortfolio(weights, message = "Веса с границы Марковица перенесены в «Свой портфель». Нажмите «Запустить бэктест».") {
   const tbody = $("#bt-pf-table tbody");
   tbody.replaceChildren();
   for (const [k, w] of Object.entries(weights)) {
@@ -84,9 +84,7 @@ export function setCustomPortfolio(weights) {
   S.set({ pfon: "1" });
   savePf();
   last = null;
-  $("#bt-out").replaceChildren(
-    notice("info", "Веса с границы Марковица перенесены в «Свой портфель». Нажмите «Запустить бэктест»."),
-  );
+  $("#bt-out").replaceChildren(notice("info", message));
 }
 
 // ---------------------------------------------------------------- инициализация
@@ -437,18 +435,7 @@ function annualReturns(s) {
   return new Map(years.map((y, i) => [String(y), values[i]]));
 }
 
-function mix(c1, c2, t) {
-  const p = (c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
-  const a = p(c1);
-  const b = p(c2);
-  return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(",")})`;
-}
-
 function heatmap(lineSeries) {
-  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-  const NEG = dark ? "#e66767" : "#e34948";
-  const POS = dark ? "#3987e5" : "#2a78d6";
-  const MID = dark ? "#34363a" : "#f0efec";
   const data = lineSeries.map((s) => ({ name: s.name, r: annualReturns(s) }));
   const years = [...new Set(data.flatMap((d) => [...d.r.keys()]))].sort();
   let lim = 0;
@@ -456,10 +443,7 @@ function heatmap(lineSeries) {
   lim ||= 1;
   const cell = (v) => {
     if (!Number.isFinite(v)) return h("td", { class: "muted" }, "—");
-    const t = Math.min(1, Math.abs(v) / lim);
-    const bg = mix(MID, v < 0 ? NEG : POS, t);
-    const color = t > 0.55 ? "#ffffff" : "var(--text)";
-    return h("td", { style: { background: bg, color }, title: fmtPct(v, 1) }, fmtPct(v, 0));
+    return h("td", { style: heatStyle(v, lim), title: fmtPct(v, 1) }, fmtPct(v, 0));
   };
   return h("table", { class: "heatmap" },
     h("thead", {}, h("tr", {}, h("th", { scope: "col" }, h("span", { class: "sr-only" }, "Портфель")),

@@ -1,7 +1,6 @@
 // Состояние интерфейса в URL-параметрах: ссылкой можно поделиться.
 
 export const DEFAULTS = {
-  tab: "backtest",
   rf: "7.86",          // %, годовых
   bench: "MCFTR",
   freq: "M",
@@ -51,9 +50,26 @@ export function set(obj) {
     if (k in DEFAULTS && s === DEFAULTS[k]) params.delete(k);
     else params.set(k, s);
   }
-  const q = params.toString();
-  history.replaceState(null, "", q ? `?${q}` : location.pathname);
+  write();
 }
+
+function write() {
+  const q = params.toString();
+  // hash (маршрут) сохраняем: состояние инструментов — в ?…, страница — в #/…
+  history.replaceState(null, "", (q ? `?${q}` : location.pathname) + location.hash);
+}
+
+/** Прочитать и удалить параметр (перенаправление старых ссылок ?tab=…). */
+export function take(key) {
+  if (!params.has(key)) return null;
+  const v = params.get(key);
+  params.delete(key);
+  write();
+  return v;
+}
+
+/** Есть ли в URL хотя бы один из параметров. */
+export const hasAny = (keys) => keys.some((k) => params.has(k));
 
 export const isDemo = () => params.get("demo") === "1";
 
@@ -61,12 +77,12 @@ export const isDemo = () => params.get("demo") === "1";
 export function demoHref() {
   const p = new URLSearchParams(params);
   p.set("demo", "1");
-  return `?${p.toString()}`;
+  return `?${p.toString()}${location.hash}`;
 }
 
 export function liveHref() {
   const p = new URLSearchParams(params);
   p.delete("demo");
   const q = p.toString();
-  return q ? `?${q}` : location.pathname;
+  return (q ? `?${q}` : location.pathname) + location.hash;
 }

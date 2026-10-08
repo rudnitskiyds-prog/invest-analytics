@@ -25,6 +25,12 @@ export function h(tag, attrs = {}, ...children) {
   return el;
 }
 
+/** Заменить содержимое элемента; null/false пропускаются (replaceChildren превратил бы их в текст «null»). */
+export function put(el, ...children) {
+  el.replaceChildren(...children.flat().filter((c) => c != null && c !== false));
+  return el;
+}
+
 /** Сообщение: kind = info | warn | error | ok. */
 export function notice(kind, text, { offerDemo = false } = {}) {
   const box = h("div", { class: `notice notice-${kind}`, role: kind === "error" ? "alert" : "status" });

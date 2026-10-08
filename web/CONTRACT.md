@@ -175,6 +175,41 @@ export function totalReturnSeries(close, dividends)  // dividends: [{exDate, val
 (без бенчмарка последние три — NaN); `LABELS_RU`/`PERCENT_FIELDS` дополнены. Формулы — в четырёх местах
 (инвариант 3 CLAUDE.md): методику (`pages/7_Методика.py`, вкладка «Методика» в `web/`) обновляет `site`.
 
+Уточнения реализации (api, 08.10.2026):
+* Порядок ключей `MetricsReport`/`computeAll`: …, `days_to_recover`, **`martin`, `ulcer_index`**, `beta`, …,
+  `correlation`, **`r_squared`, `up_capture`, `down_capture`**. В `LABELS_RU`: `ulcer_index` после `max_drawdown`,
+  `martin` после `calmar`, `r_squared`/`up_capture`/`down_capture` после `correlation` (теперь 29 строк).
+  В `PERCENT_FIELDS` добавлены `ulcer_index`, `up_capture`, `down_capture` (16 полей). Мартин в `computeAll` —
+  `martin(p, annualRf(rf))` на ресемплированных ценах.
+* Python-имена: `ulcer_index, martin, r_squared, capture_ratios, rolling_volatility, parkinson, garman_klass,
+  rogers_satchell, yang_zhang, period_returns, momentum, monthly_grid, top_drawdowns, current_drawdown,
+  avg_drawdown, total_return_series` (`core/analytics/metrics.py`). Ключи словарей — как в JS (camelCase:
+  `daysToTrough`, `distHigh52`, `yearTotal`, …), даты — строки `YYYY-MM-DD`, «нет значения» — `None`/`null`.
+  OHLC в Python — DataFrame с колонками open/high/low/close или тот же dict, что в JS.
+* OHLC-оценки: строки, где хоть одна из O/H/L/C не > 0, отбрасываются. Янг–Чжан — по парам соседних строк
+  (t−1, t), где обе корректны: некорректная строка исключает пары с ней, соседи не склеиваются; N — число пар (≥ 2).
+* Сплиты (Python и JS, паритет): `splitFactors(dates, splits) -> number[]` / `split_factors`,
+  `adjustSplits(x, splits)` / `adjust_splits(x, splits)`. splits — `[{date|tradedate, before, after}]` (сплит 1:100 —
+  before=1, after=100; консолидация VTBR 5000:1 — before=5000, after=1). Цены всех дат **строго до** даты сплита
+  умножаются на before/after (ряд в текущих акциях), volume делится; x — Series `{dates, values}` или OHLC
+  (Python — Series/DataFrame/тот же dict). Некорректные записи (нет даты, before/after ≤ 0) пропускаются.
+  Дата сплита — первый день торгов в новых акциях (tradedate ISS), поэтому «строго до». Только для рядов из
+  `/history`: свечи ISS уже скорректированы (см. ниже).
+* `rollingVolatility` возвращает только точки с полным окном.
+* `periodReturns`: 1D/1W — календарные дни, месяцы/годы — календарные с ограничением дня концом месяца
+  (как `pd.DateOffset`); значение конца — последняя точка ≤ asOf.
+* `export function periodStart(dates, period, asOf = последняя дата) -> string | null` (Python —
+  `period_start(dates, period, as_of=None)`): дата начальной точки периода `'1D'|'1W'|'1M'|'6M'|'YTD'|'1Y'|'3Y'|'5Y'|'10Y'|'ALL'`
+  — последняя дата ≤ asOf − период (YTD — ≤ 31.12 прошлого года, ALL — первая дата), нет такой — null;
+  неизвестный период — исключение. `periodReturns` выбирает начало через неё; интерфейс использует её для
+  периодов графика, а не считает границы сам.
+* `momentum`: high52 — максимум цен за 365 дней до последней даты; `score` — среднее **доступных** подбаллов
+  (при истории < 200 точек SMA200-подбаллы не участвуют); нет ни одного — `null`.
+* `monthlyGrid`: если в первом месяце ряда одна точка (месячные данные), первый месяц — только база (ячейка `null`).
+* `topDrawdowns`/`avgDrawdown`: эпизод — от последней точки максимума до первого возврата к нему; текущий
+  невосстановленный эпизод входит (recovery = null).
+* `totalReturnSeries`: дивиденд относится на первую дату ряда ≥ exDate.
+
 ## `web/lib/symbol.js` (api) — данные страницы бумаги
 
 ```js
@@ -204,6 +239,65 @@ export async function loadSymbolStats({base, fetchImpl}={}) -> {updated, items: 
 ```
 Все сетевые функции принимают `fetchImpl` (тесты), кэш — общий из `data.js`.
 
+Уточнения реализации (api, 08.10.2026):
+* `data.js` дополнительно экспортирует `getCached, qs, block, todayIso` (общий кэш для `symbol.js`),
+  `fetchBoards(secid)` (блок boards, кэш общий с `resolveSecurity`), `fetchHistoryPages(urlFor, fetchImpl)`
+  (history: первая страница, затем остальные параллельно по TOTAL/PAGESIZE), `mapLimit`, `ISS_PARALLEL = 6`.
+  `fetchIssIndex` грузит страницы history параллельно (URL и результат — прежние).
+* **Сплиты в ISS (проверено в браузере на живом ISS 08.10.2026):**
+  - свечи (`candles`, interval 24 и 31; режимы TQBR, EQBR, TQTF) **уже скорректированы биржей задним числом**:
+    GMKN 25.03.2024 close 151.38 (сплит 1:100 от 08.04.2024, реальная цена ~15 054), GMKN EQBR 2010 ≈ 51,
+    VTBR 08.07.2024 = 99.65 (консолидация 5000:1 от 15.07.2024, реальная 0.01992); PLZL, TRNFP, FXRU — так же;
+    месячные свечи GMKN 12.2023–06.2024 без скачка. Корректировать свечи нельзя — будет двойная корректировка;
+  - **не скорректирован только `/history`** (LEGALCLOSEPRICE GMKN 03.04.2024 = 15054, VTBR 10.07.2024 = 0.01992);
+  - `/iss/statistics/engines/stock/splits.json` — `{"splits":{"columns":["tradedate","secid","before","after"],"data":[…]}}`,
+    57 строк, без cursor; `tradedate` — первый день торгов в новых акциях (GMKN 2024-04-08, CLOSE 152.96); есть служебные
+    строки вида FIXGMKN. `/splits/{secid}.json` — тот же формат.
+  - `candleborders.json` — `{"borders":{"columns":["begin","end","interval","board_group_id"],"data":[…]}}`, `begin` со
+    временем (`"1997-09-22 00:00:00"`); берётся строка `interval = 24`. У IMOEX дневные свечи — с 1997-09-22.
+* `export async function fetchSplits(secid, {fetchImpl}) -> {splits: [{date, before, after}], ok}`: общий список
+  `splits.json` (пагинация по `splits.cursor`, если появится, иначе по start, пока приходят новые строки), при
+  недоступности — `splits/{secid}.json`; оба недоступны — `ok: false` (по одной попытке, без задержек; результат
+  запоминается на сессию). `fetchSplits`/`adjustSplits`/`splitFactors` (и Python `iss.splits`, `metrics.adjust_splits`)
+  — **утилиты только для рядов из `/history`**. Сейчас акции и фонды из `/history` нигде не берутся (history — только
+  индексы, у которых сплитов нет, и облигации в Python-приложении), поэтому утилиты нигде не применяются.
+* `fetchOHLC(secid, from, till, {fetchImpl, adjust = false})` -> `{dates, open, high, low, close, volume, splitAdjusted}`:
+  - акции/фонды/облигации/металлы — свечи основного режима + прежние режимы того же рынка до `history_from`
+    основного (EQBR и др. до 2013 г., **TQTF у фондов до июня 2026 г.**; LEGACY_MAIN_BOARDS или та же
+    `board_group_id`), при совпадении даты — основной режим; диапазон делится на куски по 700 дней, куски грузятся
+    параллельно (≤ 6), внутри куска — страницы по 500;
+  - индексы — дневные свечи рынка index (`/engines/stock/markets/index/securities/{id}/candles.json?interval=24`)
+    с даты начала свечей (`candleborders.json`, interval 24) и history только для периода до неё (страницы
+    параллельно); `candleborders` недоступен — только history, как раньше;
+  - сплиты не запрашиваются и не применяются (свечи скорректированы биржей), `splitAdjusted: true` всегда;
+    `adjust: true` дополнительно применяет `fetchSplits` + `adjustSplits` — для свечей это двойная корректировка,
+    опция оставлена только для отладки.
+* `fetchSnapshot(secid, {fetchImpl, ohlc})`: `ohlc` — готовый результат `fetchOHLC` (high52/low52 и запасная
+  цена — по нему, без отдельного запроса свечей); без `ohlc` — свечи за 380 дней, как раньше.
+* `data.js` `fetchIssSecurity`/`loadAsset` берут те же свечи ISS — они тоже скорректированы на сплиты биржей
+  (без подклейки TQTF у фондов — она есть только в `fetchOHLC`).
+* `symbol.js` экспортирует также `classify({type, group, secid, market, sectype})` и `DEFAULT_BENCHMARKS`.
+  Класс: `metal` (GLDRUB_TOM и др., *metal*), `index`, `bond`, `fund` (*ppif*/*etf*, SECTYPE J/9/A/B),
+  `share` (*share*/*depositary*, SECTYPE 1/2/D), `currency`; иначе `null`.
+* `fetchSecurityInfo`: `couponPercent` — в % годовых (как в ISS, по имени поля), `couponPeriod` — дней
+  (COUPONPERIOD или round(364 / COUPONFREQUENCY)), `firstTradeDate` — самая ранняя `history_from` режимов
+  того же рынка (для SBER — EQBR), `issuer` — `emitent_title` из `/securities.json?q=` (ошибка — null).
+  Для IMOEX бенчмарк — MCFTR (не сам с собой); для валют — null.
+* `fetchSnapshot`: `changePct` — доля; облигации: цены — % номинала, `bond.yield` — доля, `bond.duration` — лет.
+* `fetchOHLC` для индексов: `volume` — NaN; пропуски O/H/L — NaN.
+* `loadDividends`: дополнительно `paymentDate, declaredDate`; `yield` — доля (`yield_value` T-Invest в %);
+  `exDate` — следующий рабочий день (пн–пт, без учёта праздников) после `last_buy_date`, без неё — `recordDate`.
+* `dividendStats` (без отменённых и нерублёвых, на последнюю дату `close`): `byMonth` — **число** выплат по
+  месяцам exDate; `growthStreak` — число подряд идущих лет, считая назад от последнего полного года, где сумма за год больше
+  суммы предыдущего года; год первой выплаты ростом не считается (год без выплат внутри истории — сумма 0,
+  рост после него засчитывается);
+  `payoutsPerYear` — среднее число выплат за последние 3 полных года; дополнительно `upcoming` — объявленные
+  выплаты с exDate позже даты расчёта.
+* `loadCoupons`: `rate` — доля годовых (`valueprc / 100`), `value` — `value_rub` или `value`, неизвестный — null.
+* `loadFundInfo`: статистика комиссий — в % годовых (как `commission_pct`); торгуемые — `trade_status`
+  «Торгуется» (или не указан) с комиссией > 0; `classMedian` = `median`; дополнительно `marketMedian` —
+  медиана по всем торгуемым фондам. Нет файла — `{info: null, market: {… null, n: 0}}`.
+
 ## Ночной пересчёт `public/data/symbol_stats.json` (api, сборщик)
 
 Источник `symbol_stats` в `scripts/collect_data.py` (kind `"iss"`, после RusETFs и T-Invest, бюджет 10 мин,
@@ -214,3 +308,28 @@ export async function loadSymbolStats({base, fetchImpl}={}) -> {updated, items: 
 `score` — среднее пяти рангов. Формат: `{"updated","source":"ISS MOEX (расчёт ИнвестАналитики)","rf","window",
 "classes":{"share":{"n":…},"fund":{"n":…}},"items":{"SBER":{"class":"share", …}}}`. Санити: ≥ 100 акций.
 Котировки в файл не пишутся — только рассчитанные показатели.
+
+Уточнения реализации (api, 08.10.2026):
+* Источник `default: False`: полный прогон без аргументов его не запускает (тесты `main([])` не уходят в ISS);
+  запуск — `--only symbol_stats`. Новый флаг `--skip ИСТОЧНИК…` (после `--only`); шаг «Сбор» — `--skip symbol_stats`.
+  Шаг «Рейтинги» — `if: success() || failure()` (выполняется и при коде 1 «Сбора»), «Сохранить изменения» — после него, `if: always()`.
+* Окно — полные месяцы: `till` = конец прошлого месяца, база — цена на конец месяца за 120 мес. до `till`;
+  `window = {"from", "till", "max_months": 120, "min_months": 36}`; в рейтинг — бумаги с ≥ 36 месячными доходностями.
+  Акции — по **полной доходности**: `total_return_series(месячные цены, дивиденды)`, дивиденды из
+  `public/data/dividends.json` (рублёвые, не отменённые; exDate — как в `loadDividends`) относятся на первую
+  месячную дату ряда ≥ exDate (свечи ISS и дивиденды T-Invest — в текущих акциях, отдельной корректировки на
+  сплиты нет); фонды — по ценам (дивидендов фондов в файле нет). Верхнее поле `"total_return": true`
+  (false — `dividends.json` не найден, акции тоже по ценам), в каждой записи `"tr": true|false`.
+  Верхнее поле `"split_adjusted": true` — по источнику (месячные свечи ISS скорректированы биржей); сплиты в прогоне
+  не запрашиваются. Фонды — месячные свечи TQTF + TQBR (`iss.monthly_closes(…, legacy_boards=("TQTF",))`).
+  Python: `iss.splits(secid=None)` (утилита для /history), `iss.monthly_closes(secid, start, end=None, board="TQBR",
+  engine, market, legacy_boards=(), adjust_splits=False)` (s.attrs["split_adjusted"] = True), `iss.close_series(…,
+  adjust_splits=False)` — поведение по умолчанию прежнее.
+* `rf` — средняя по календарным дням ключевая ставка (доля) за окно из `public/data/key_rate.json`; нет файла — сбой источника.
+  Одна ставка на всё окно, в т. ч. для бумаг с более короткой историей.
+* Ранг: `(средний ранг по возрастанию − 1) / (N − 1) × 100` внутри класса, 1 знак; одна бумага — 50; нет значения — null.
+  `score` — среднее доступных рангов. Коэффициенты округлены до 6 знаков, `months` — число месячных доходностей.
+* Python: `core/analytics/ranking.py` (`symbol_metrics, percentile_ranks, rank_items, mean_rate, ex_dividends`),
+  `core/data/iss.monthly_closes`; загрузчик подменяется через `scripts.collect_data._symbol_stats_loader`
+  (методы `securities()` -> DataFrame SECID/SECTYPE, `monthly_closes(secid, start, end)` -> Series),
+  часы бюджета — `scripts.collect_data._clock`. Сбой: > 20 % бумаг, 10 сбоев подряд, бюджет или < 100 акций.

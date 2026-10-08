@@ -62,7 +62,11 @@ function resolveFetch(fetchImpl) {
   return f;
 }
 
-async function getCached(url, fetchImpl, kind = 'json', retries = 3) {
+/**
+ * GET с кэшем на время сессии (общий для data.js и symbol.js) и 3 попытками; ошибки не кэшируются.
+ * kind: 'json' | 'text'.
+ */
+export async function getCached(url, fetchImpl, kind = 'json', retries = 3) {
   const f = resolveFetch(fetchImpl);
   const cache = cacheFor(f);
   const key = kind + ' ' + url;
@@ -91,17 +95,19 @@ export function clearCache(fetchImpl) {
   _caches.delete(resolveFetch(fetchImpl));
 }
 
-function todayIso() {
+export function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function qs(params) {
+/** Строка запроса без пустых параметров. */
+export function qs(params) {
   return Object.entries(params)
     .filter(([, v]) => v !== undefined && v !== null && v !== '')
     .map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
 }
 
-function block(data, name) {
+/** Блок ответа ISS {columns, data} -> массив объектов (нет блока — []). */
+export function block(data, name) {
   const b = data && data[name];
   if (!b || !b.columns || !b.data) return [];
   return b.data.map((row) => Object.fromEntries(b.columns.map((c, i) => [c, row[i]])));
@@ -127,34 +133,66 @@ function pairsToSeries(pairs, { positive = true } = {}) {
  * @returns {Promise<Series>}
  */
 export async function fetchIssIndex(secid, from = '2000-01-01', till = null, { fetchImpl } = {}) {
-  const pairs = [];
-  let start = 0;
-  for (let guard = 0; guard < 10000; guard++) {
-    const url = `${ISS_BASE}/history/engines/stock/markets/index/securities/${encodeURIComponent(secid)}.json?` +
-      qs({ 'iss.meta': 'off', from: from || '2000-01-01', till: till || todayIso(),
-        'history.columns': 'TRADEDATE,CLOSE', start });
-    const data = await getCached(url, fetchImpl);
-    const rows = block(data, 'history');
-    if (!rows.length) break;
-    for (const r of rows) pairs.push([r.TRADEDATE, r.CLOSE]);
-    const cur = block(data, 'history.cursor')[0];
-    if (cur) {
-      const idx = Number(cur.INDEX), total = Number(cur.TOTAL), size = Number(cur.PAGESIZE);
-      if (idx + size >= total) break;
-      start = idx + size;
-    } else {
-      if (rows.length < 100) break;
-      start += rows.length;
-    }
+  const rows = await fetchHistoryPages((start) =>
+    `${ISS_BASE}/history/engines/stock/markets/index/securities/${encodeURIComponent(secid)}.json?` +
+    qs({ 'iss.meta': 'off', from: from || '2000-01-01', till: till || todayIso(),
+      'history.columns': 'TRADEDATE,CLOSE', start }), fetchImpl);
+  return pairsToSeries(rows.map((r) => [r.TRADEDATE, r.CLOSE]));
+}
+
+/** Параллельная обработка с ограничением числа одновременных задач; порядок результатов — как items. */
+export async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) { const k = next++; out[k] = await fn(items[k], k); }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  return out;
+}
+
+export const ISS_PARALLEL = 6;   // одновременных запросов к ISS из браузера
+
+/**
+ * Все строки блока history с пагинацией по history.cursor: первая страница — последовательно, остальные
+ * (когда известны TOTAL и PAGESIZE) — параллельно, не более ISS_PARALLEL одновременно. Без cursor — по одной
+ * странице, пока страница не короче 100 строк. urlFor(start) -> URL страницы.
+ */
+export async function fetchHistoryPages(urlFor, fetchImpl) {
+  const first = await getCached(urlFor(0), fetchImpl);
+  const rows = block(first, 'history');
+  if (!rows.length) return rows;
+  const cur = block(first, 'history.cursor')[0];
+  if (cur) {
+    const total = Number(cur.TOTAL), size = Number(cur.PAGESIZE), idx = Number(cur.INDEX);
+    if (!(size > 0) || !(idx + size < total)) return rows;
+    const starts = [];
+    for (let st = idx + size; st < total && starts.length < 10000; st += size) starts.push(st);
+    const pages = await mapLimit(starts, ISS_PARALLEL, async (st) => block(await getCached(urlFor(st), fetchImpl), 'history'));
+    for (const p of pages) rows.push(...p);
+    return rows;
   }
-  return pairsToSeries(pairs);
+  let start = rows.length, last = rows.length;
+  for (let guard = 0; guard < 10000 && last >= 100; guard++) {
+    const page = block(await getCached(urlFor(start), fetchImpl), 'history');
+    if (!page.length) break;
+    rows.push(...page);
+    last = page.length;
+    start += page.length;
+  }
+  return rows;
+}
+
+/** Все режимы торгов бумаги (блок boards ISS /securities/{id}.json?iss.only=boards; кэш общий с resolveSecurity). */
+export async function fetchBoards(secid, { fetchImpl } = {}) {
+  const url = `${ISS_BASE}/securities/${encodeURIComponent(secid)}.json?` +
+    qs({ 'iss.meta': 'off', 'iss.only': 'boards' });
+  return block(await getCached(url, fetchImpl), 'boards');
 }
 
 /** Основной режим торгов бумаги: строка boards с is_primary=1 (иначе первая). */
 export async function resolveSecurity(secid, { fetchImpl } = {}) {
-  const url = `${ISS_BASE}/securities/${encodeURIComponent(secid)}.json?` +
-    qs({ 'iss.meta': 'off', 'iss.only': 'boards' });
-  const boards = block(await getCached(url, fetchImpl), 'boards');
+  const boards = await fetchBoards(secid, { fetchImpl });
   if (!boards.length) throw new Error(`Инструмент ${secid} не найден на ISS`);
   const row = boards.find((b) => Number(b.is_primary) === 1) || boards[0];
   return { secid, engine: row.engine, market: row.market, board: row.boardid };
