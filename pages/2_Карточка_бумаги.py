@@ -6,7 +6,7 @@ from core.data import iss, universe
 from ui.common import (drawdown_chart, fmt_pct, line_chart, load_series, page_setup,
                        show_metrics_table, annual_returns, heatmap_returns)
 
-page_setup("Карточка бумаги", "🔎")
+page_setup("Карточка бумаги", ":material/search:")
 rf, bench, freq = st.session_state["rf"], st.session_state["benchmark"], st.session_state["freq"]
 
 c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
@@ -72,9 +72,9 @@ with t1:
 with t2:
     st.plotly_chart(drawdown_chart(df, bench), width="stretch")
     info_dd = m.max_drawdown_info(px)
-    st.caption(f"Макс. просадка {fmt_pct(info_dd['max_drawdown'])}: пик {info_dd['peak'].date()}, "
-               f"дно {info_dd['trough'].date()}, "
-               + (f"восстановление {info_dd['recovery'].date()} ({info_dd['days_to_recover']} дн.)"
+    st.caption(f"Макс. просадка {fmt_pct(info_dd['max_drawdown'])}: пик {info_dd['peak']:%d.%m.%Y}, "
+               f"дно {info_dd['trough']:%d.%m.%Y}, "
+               + (f"восстановление {info_dd['recovery']:%d.%m.%Y} ({info_dd['days_to_recover']} дн.)"
                   if info_dd['recovery'] is not None else "не восстановилась"))
 with t3:
     win = st.slider("Окно, мес.", 6, 36, 12)

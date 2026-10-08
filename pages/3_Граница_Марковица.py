@@ -7,7 +7,7 @@ from core.analytics.frontier import efficient_frontier, estimate_inputs
 from ui.common import (PALETTE, SEQ_BLUE, asset_label, base_layout, catalog_options, fmt_pct,
                        load_prices, page_setup)
 
-page_setup("Граница эффективности Марковица", "🎯")
+page_setup("Граница эффективности Марковица", ":material/scatter_plot:")
 rf = st.session_state["rf"]
 
 with st.form("frontier"):
@@ -55,15 +55,16 @@ st.caption(f"Общий период данных: {prices.index[0].date()} — 
            f"(ограничен самым «молодым» активом: "
            f"{max(info.items(), key=lambda kv: kv[1]['first'] or pd.Timestamp(0))[0]})")
 
-inp = estimate_inputs(prices, freq, rf, mu_method, shrink)
-fr = efficient_frontier(inp, 50, w_min, w_max, n_rand)
+with st.spinner(f"Строю границу и {n_rand} случайных портфелей…"):
+    inp = estimate_inputs(prices, freq, rf, mu_method, shrink)
+    fr = efficient_frontier(inp, 50, w_min, w_max, n_rand)
 
 fig = go.Figure()
 rnd = fr.random
-fig.add_trace(go.Scatter(
+fig.add_trace(go.Scattergl(   # тысячи точек: canvas вместо SVG
     x=rnd["vol"], y=rnd["ret"], mode="markers", name="Случайные портфели",
     marker=dict(size=4, color=rnd["sharpe"], colorscale=[[i / 6, c] for i, c in enumerate(SEQ_BLUE)],
-                colorbar=dict(title="Шарп", thickness=10), opacity=0.55),
+                colorbar=dict(title="Шарп", thickness=10), opacity=0.7),
     hovertemplate="σ %{x:.1%} · r %{y:.1%} · Шарп %{marker.color:.2f}<extra></extra>"))
 f = fr.frontier.sort_values("vol")
 fig.add_trace(go.Scatter(x=f["vol"], y=f["ret"], mode="lines", name="Эффективная граница",
@@ -87,7 +88,7 @@ fig.add_trace(go.Scatter(x=ap["vol"], y=ap["ret"], mode="markers+text", name="А
                          marker=dict(size=10, color=PALETTE[6], line=dict(width=2, color="white")),
                          hovertemplate="%{text}: σ %{x:.1%} · r %{y:.1%}<extra></extra>"))
 base_layout(fig, 560, "Ожидаемая доходность, год.", pct_y=True)
-fig.update_layout(hovermode="closest")
+fig.update_layout(hovermode="closest", separators=", ")   # запятая в дробях, пробел в тысячах
 fig.update_xaxes(title="Волатильность (σ), год.", tickformat=".0%", range=[0, xmax])
 st.plotly_chart(fig, width="stretch")
 
@@ -96,7 +97,7 @@ for col, title, w, pt in [(c1, "Портфель минимальной дисп
                           (c2, "Касательный портфель (макс. Шарп)", fr.max_sharpe, ms)]:
     with col:
         st.markdown(f"**{title}** — доходность {fmt_pct(pt['ret'])}, σ {fmt_pct(pt['vol'])}, "
-                    f"Шарп {pt['sharpe']:.2f}")
+                    f"Шарп {pt['sharpe']:.2f}".replace(".", ","))
         wt = w[w > 1e-4].sort_values(ascending=False)
         st.dataframe(pd.DataFrame({"Доля": wt}), width="stretch",
                      column_config={"Доля": st.column_config.ProgressColumn("Доля", format="percent",
@@ -107,8 +108,9 @@ target_vol = st.slider("Целевая волатильность, %", float(f["
                        float(ms["vol"] * 100), 0.1) / 100
 row = f.iloc[(f["vol"] - target_vol).abs().argmin()]
 w_sel = pd.Series({c[2:]: row[c] for c in f.columns if c.startswith("w_")})
-st.write(f"Доходность {fmt_pct(row['ret'])} · σ {fmt_pct(row['vol'])} · Шарп {row['sharpe']:.2f}")
-st.dataframe(pd.DataFrame({"Доля": w_sel[w_sel > 1e-4]}).T.style.format("{:.1%}"), width="stretch")
+st.write(f"Доходность {fmt_pct(row['ret'])} · σ {fmt_pct(row['vol'])} · "
+         f"Шарп {row['sharpe']:.2f}".replace(".", ","))
+st.dataframe(pd.DataFrame({"Доля": w_sel[w_sel > 1e-4]}).T.style.format(fmt_pct), width="stretch")
 
 cc1, cc2, cc3 = st.columns(3)
 for col, label, w in [(cc1, "Мин. дисперсия → в бэктест", fr.min_var),
@@ -121,7 +123,7 @@ for col, label, w in [(cc1, "Мин. дисперсия → в бэктест", 
 
 with st.expander("Корреляционная матрица и входные параметры"):
     corr = inp.cov / np.sqrt(np.outer(np.diag(inp.cov), np.diag(inp.cov)))
-    st.dataframe(corr.style.format("{:.2f}").background_gradient(cmap="RdBu", vmin=-1, vmax=1),
+    st.dataframe(corr.style.format(precision=2, decimal=",").background_gradient(cmap="RdBu", vmin=-1, vmax=1),
                  width="stretch")
     st.dataframe(pd.DataFrame({"Ожид. доходность": inp.mu, "Волатильность": np.sqrt(np.diag(inp.cov))})
-                 .style.format("{:.2%}"), width="stretch")
+                 .style.format(lambda x: fmt_pct(x, 2)), width="stretch")
