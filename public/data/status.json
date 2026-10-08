@@ -3,61 +3,66 @@
   "ok": true,
   "rows": 4641,
   "last": "2026-10-08",
-  "checked": "2026-10-08T18:43:36+00:00"
+  "checked": "2026-10-08T18:47:55+00:00"
  },
  "ruonia_rate": {
   "ok": true,
   "rows": 4125,
   "last": "2026-10-07",
-  "checked": "2026-10-08T18:43:37+00:00"
+  "checked": "2026-10-08T18:47:55+00:00"
  },
  "ruonia_index": {
   "ok": true,
   "rows": 4125,
   "last": "2026-10-07",
-  "checked": "2026-10-08T18:43:37+00:00"
+  "checked": "2026-10-08T18:47:55+00:00"
  },
  "key_rate": {
   "ok": true,
   "rows": 3275,
   "last": "2026-10-08",
-  "checked": "2026-10-08T18:43:37+00:00"
+  "checked": "2026-10-08T18:47:56+00:00"
  },
  "tinvest_shares": {
   "ok": true,
   "rows": 255,
   "last": "2026-10-08",
-  "checked": "2026-10-08T18:43:42+00:00"
+  "checked": "2026-10-08T18:48:01+00:00"
  },
  "tinvest_etfs": {
   "ok": true,
   "rows": 61,
   "last": "2026-10-08",
-  "checked": "2026-10-08T18:43:42+00:00"
+  "checked": "2026-10-08T18:48:02+00:00"
  },
  "dividends": {
   "ok": true,
   "rows": 201,
   "last": "2026-10-08",
-  "checked": "2026-10-08T18:45:25+00:00"
+  "checked": "2026-10-08T18:49:47+00:00"
  },
  "fundamentals": {
   "ok": true,
   "rows": 253,
   "last": "2026-10-08",
-  "checked": "2026-10-08T18:45:26+00:00"
+  "checked": "2026-10-08T18:49:48+00:00"
  },
  "rusetfs_funds": {
   "ok": true,
   "rows": 206,
   "last": "2026-10-08",
   "with_commission": 206,
-  "checked": "2026-10-08T18:43:39+00:00"
+  "checked": "2026-10-08T18:47:58+00:00"
  },
  "symbol_stats": {
-  "ok": false,
-  "error": "TypeError: '>=' not supported between instances of 'numpy.ndarray' and 'Timestamp'",
-  "where": "collect_data.py:460 symbol_stats <- collect_data.py:492 collect_symbol_stats <- collect_data.py:561 main",
-  "checked": "2026-10-08T18:45:31+00:00"
+  "ok": true,
+  "rows": 268,
+  "last": "2026-09-30",
+  "shares": 226,
+  "funds": 42,
+  "short_history": 240,
+  "failed": 0,
+  "total_return": true,
+  "checked": "2026-10-08T18:53:23+00:00"
  }
 }
