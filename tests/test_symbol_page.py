@@ -79,12 +79,15 @@ class _NoCache:
 def use_iss(monkeypatch):
     """use_iss(respond | None, fail=False) -> FakeSession. По умолчанию — синтетика tests/iss_fake.py."""
     monkeypatch.setattr(iss, "_cache", _NoCache())
-    monkeypatch.setattr(iss, "time", types.SimpleNamespace(sleep=lambda *_: None, time=lambda: 0.0))
+    clock = {"t": 1_000_000.0}          # управляемые часы ISS (кэш отказа candleborders)
+    monkeypatch.setattr(iss, "time", types.SimpleNamespace(sleep=lambda *_: None, time=lambda: clock["t"]))
+    monkeypatch.setattr(iss, "_BORDERS_FAIL", {})
 
     def install(respond=None, fail=False):
         s = FakeSession(respond or iss_fake.respond, fail)
         monkeypatch.setattr(iss, "_session", s)
         return s
+    install.clock = clock
     yield install
     iss.resolve.cache_clear()
 
@@ -783,6 +786,173 @@ def test_load_symbol_and_report_pickle(use_iss, pub):
     assert rb["metrics"]["security"].sharpe == pytest.approx(rep["metrics"]["security"].sharpe)
 
 
+def _desc_calls(s, secid):
+    return [u for u in s.calls if _q(u)[0] == f"/iss/securities/{secid}.json"]
+
+
+@pytest.mark.parametrize("secid", ["SBER", "SU26238RMFS4", "IMOEX", "LQDT"])
+def test_load_symbol_description_requested_once(use_iss, pub, secid):
+    s = use_iss()
+    d = sp.load_symbol(secid)
+    assert d["errors"] == {} or set(d["errors"]) == {"rating"}
+    assert len(_desc_calls(s, secid)) == 1, _desc_calls(s, secid)
+
+
+def test_load_symbol_iss_down_no_further_requests(use_iss, pub):
+    s = use_iss(fail=True)
+    d = sp.load_symbol("SBER")
+    assert set(_desc_calls(s, "SBER")) == set(s.calls), s.calls      # только попытки справочника
+    assert len(s.calls) <= 3
+    assert d["errors"]["info"] == d["errors"]["ohlc"] == d["errors"]["snapshot"]
+    assert len(d["dividends"]) == 5 and d["rating"]["score"] == 80.0
+
+
+def test_load_symbol_unknown_no_further_requests(use_iss, pub):
+    s = use_iss()
+    d = sp.load_symbol("NOSUCH")
+    assert set(s.calls) == set(_desc_calls(s, "NOSUCH")) and len(s.calls) == 1
+    assert "не найден" in d["errors"]["info"]
+
+
+# ---------------------------------------------------------------------- кэш отказа candleborders
+def test_candleborders_failure_cached_10_min(use_iss):
+    s = use_iss(board_world("TIDX", [("SNDX", "index", 1, "2013-01-08", "2026-10-08", 9)], {},
+                            {"2017-12-29": 1001.0}, "404"))
+
+    def n_borders():
+        return len([u for u in s.calls if "candleborders" in u])
+    assert iss.index_candle_begin("TIDX") is None and n_borders() == 1
+    iss.daily_ohlc("TIDX", "2017-01-01", "2018-01-31")
+    assert iss.index_candle_begin("TIDX") is None and n_borders() == 1      # отказ помнится
+    use_iss.clock["t"] += 599
+    assert iss.index_candle_begin("TIDX") is None and n_borders() == 1
+    use_iss.clock["t"] += 2                                                 # прошло > 10 мин
+    assert iss.index_candle_begin("TIDX") is None and n_borders() == 2
+
+
+def test_candleborders_success_clears_failure(use_iss):
+    use_iss(fail=True)
+    assert iss.index_candle_begin("IMOEX") is None
+    s = use_iss()
+    assert iss.index_candle_begin("IMOEX") is None and not s.calls          # в течение 10 мин — без запроса
+    use_iss.clock["t"] += 601
+    assert iss.index_candle_begin("IMOEX") == iss_fake.INDEX_CANDLES_FROM
+    assert "IMOEX" not in iss._BORDERS_FAIL
+
+
+def test_next_weekday_public():
+    from core.analytics import ranking
+    assert ranking.next_weekday(pd.Timestamp("2025-08-29")) == pd.Timestamp("2025-09-01")   # пт -> пн
+    assert ranking.next_weekday(pd.Timestamp("2025-08-30")) == pd.Timestamp("2025-09-01")   # сб -> пн
+    assert ranking.next_weekday(pd.Timestamp("2025-08-27")) == pd.Timestamp("2025-08-28")
+
+
+# ====================================================================== load_benchmark / check_benchmark
+def test_load_benchmark_iss_live(use_iss):
+    use_iss()
+    b = sp.load_benchmark("mcftr", "2024-01-01")
+    ref = iss_fake.ohlc("MCFTR")["close"].loc["2024-01-01":]
+    assert b.name == "MCFTR" and len(b) == len(ref)
+    assert b.tolist() == pytest.approx(ref.tolist())
+    assert b.index.is_monotonic_increasing
+
+
+def test_load_benchmark_no_demo_fallback(use_iss, monkeypatch):
+    """Сбой источника — исключение, а не месячный демо-ряд (даже в демо-режиме)."""
+    from core.data import universe
+    monkeypatch.setenv("IP_OFFLINE", "1")
+    use_iss(fail=True)
+    assert "MCFTR" in universe._offline_frame()             # демо-ряд есть — но использоваться не должен
+    with pytest.raises(Exception):
+        sp.load_benchmark("MCFTR", "2020-01-01")
+
+    def down(*a, **k):
+        raise ConnectionError("источник недоступен: www.cbr.ru")
+    monkeypatch.setattr(universe, "_load_live", down)
+    with pytest.raises(ConnectionError):
+        sp.load_benchmark("GOLD_CBR", "2020-01-01")
+    with pytest.raises(ValueError):
+        sp.load_benchmark("", "2020-01-01")
+
+
+def test_load_benchmark_cbr_via_live_loader(monkeypatch):
+    from core.data import universe
+    seen = []
+    raw = pd.Series([5.0, np.nan, 0.0, 6.0, 7.0],
+                    index=pd.to_datetime(["2024-01-03", "2024-01-04", "2024-01-05", "2024-01-09", "2024-01-09"]))
+
+    def live(key, start, end, tr):
+        seen.append((key, start, end, tr))
+        return raw
+    monkeypatch.setattr(universe, "_load_live", live)
+    b = sp.load_benchmark("GOLD_CBR", "2024-01-01")
+    assert seen == [("GOLD_CBR", "2024-01-01", None, False)]
+    assert b.tolist() == [5.0, 7.0] and b.name == "GOLD_CBR"      # NaN и 0 отброшены, дубль — последнее
+    monkeypatch.setattr(universe, "_load_live", lambda *a: pd.Series(dtype=float))
+    with pytest.raises(ValueError):
+        sp.load_benchmark("RUONIA", "2024-01-01")
+
+
+def _daily(start, end, name="B"):
+    idx = pd.bdate_range(start, end)
+    return pd.Series(np.linspace(100, 120, len(idx)), index=idx, name=name)
+
+
+def test_check_benchmark():
+    last = pd.Timestamp("2025-06-30")
+    assert sp.check_benchmark(None, last) is None
+    assert sp.check_benchmark(_daily("2024-01-01", "2025-06-30"), last) is None
+    assert sp.check_benchmark(_daily("2024-01-01", "2025-06-20"), last) is None          # отставание 10 дн.
+    why = sp.check_benchmark(_daily("2024-01-01", "2025-06-19"), last)                   # 11 дн.
+    assert why and "раньше бумаги" in why and "19.06.2025" in why
+    monthly = _daily("2020-01-01", "2025-06-30").resample("ME").last()
+    why = sp.check_benchmark(monthly, last)
+    assert why and "реже дневного" in why
+    weekly = _daily("2024-01-01", "2025-06-30").resample("W-FRI").last()                  # шаг 7 > 5
+    assert "реже дневного" in sp.check_benchmark(weekly, pd.Timestamp("2025-06-27"))
+    assert "недостаточно" in sp.check_benchmark(pd.Series([1.0], index=[last], name="B"), last)
+
+
+def test_report_rejects_stale_or_monthly_benchmark():
+    d = _data(_walk(300), start="2024-01-02")
+    last = d["ohlc"].index[-1]
+    for bench, frag in [(_daily("2023-01-02", last - pd.Timedelta(days=30)), "раньше бумаги"),
+                        (_daily("2020-01-01", last).resample("ME").last(), "реже дневного")]:
+        r = sp.report(d, bench, 0.0)
+        assert frag in r["errors"]["benchmark"]
+        assert r["benchmark"] is None and r["metrics_common"] is None and r["common_from"] is None
+        assert r["periods"]["benchmark"] is None and r["metrics"]["benchmark"] is None
+
+
+def test_report_metrics_common_on_intersection():
+    d = _data(_walk(300, 3), start="2024-01-02")
+    sidx = d["ohlc"].index
+    bidx = sidx[40::2].append(pd.DatetimeIndex([sidx[-1]])).unique()   # позже начался, через день
+    bidx = bidx.append(pd.DatetimeIndex([sidx[-1] + pd.Timedelta(days=1)]))  # и лишняя дата после бумаги
+    bench = pd.Series(_walk(len(bidx), 11, 1000.0), index=bidx, name="MCFTR")
+    r = sp.report(d, bench, 0.07)
+    common = sidx.intersection(bidx)
+    assert r["common_from"] == str(common[0].date()) and r["common_to"] == str(common[-1].date())
+    mc = r["metrics_common"]
+    assert set(mc) == {"security", "benchmark"}
+    ref_s = m.compute_all(r["series"].loc[common], bench.loc[common], 0.07, freq="D")
+    ref_b = m.compute_all(bench.loc[common], bench.loc[common], 0.07, freq="D")
+    for f in ("sharpe", "beta", "alpha", "volatility", "cagr", "max_drawdown", "tracking_error"):
+        a, b = getattr(mc["security"], f), getattr(ref_s, f)
+        assert a == pytest.approx(b, nan_ok=True), f
+        assert getattr(mc["benchmark"], f) == pytest.approx(getattr(ref_b, f), nan_ok=True), f
+    # отличается от metrics (там бенчмарк протянут на все даты бумаги)
+    assert mc["security"].volatility != pytest.approx(r["metrics"]["security"].volatility)
+
+
+def test_report_metrics_common_too_few_common_dates():
+    d = _data(_walk(50), start="2024-01-02")
+    idx = d["ohlc"].index
+    bench = pd.Series([1.0, 1.1], index=[idx[-2], idx[-1]], name="B")
+    r = sp.report(d, bench, 0.0)
+    assert r["metrics_common"] is None and "общих дат" in r["errors"]["metrics_common"]
+
+
 # ====================================================================== align_benchmark
 def test_align_benchmark_asof():
     dates = pd.DatetimeIndex(pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04",
@@ -852,8 +1022,10 @@ def _walk(n, seed=1, p0=100.0):
 def test_report_without_benchmark_keys():
     r = sp.report(_data(_walk(400), start="2023-01-02"), None, 0.1)
     assert set(r) == {"series", "close", "benchmark", "periods", "momentum", "monthly", "metrics", "drawdowns",
-                      "volatility", "dividend_stats", "total_return", "errors"}
+                      "volatility", "dividend_stats", "total_return", "errors", "metrics_common", "common_from",
+                      "common_to"}
     assert r["errors"] == {}
+    assert r["metrics_common"] is None and r["common_from"] is None and r["common_to"] is None
     assert set(r["periods"]) == {"security", "benchmark"} and r["periods"]["benchmark"] is None
     assert set(r["metrics"]) == {"security", "benchmark"} and r["metrics"]["benchmark"] is None
     assert isinstance(r["metrics"]["security"], m.MetricsReport)
@@ -974,12 +1146,19 @@ def offline(monkeypatch, use_iss):
 
 @pytest.fixture
 def live(monkeypatch, use_iss, pub):
-    """Живой режим, но без сети: ISS отключён, load_symbol и load_series подменяются в тесте."""
+    """Живой режим, но без сети: ISS отключён, load_symbol подменяется в тесте, load_benchmark — синтетикой
+    tests/iss_fake.py (вызовы — в monkeypatch.bench_calls)."""
     monkeypatch.setenv("IP_OFFLINE", "0")
     use_iss(fail=True)
-    import ui.common as uc
-    bench = iss_fake.ohlc("MCFTR")["close"].rename("MCFTR")
-    monkeypatch.setattr(uc, "load_series", lambda key, start, end=None, total_return=False: bench.loc[start:])
+    calls: list = []
+
+    def fake_bench(key, start=None):
+        calls.append((key, start))
+        if key not in iss_fake.SECURITIES:
+            raise ValueError(f"нет данных бенчмарка {key}")
+        return iss_fake.ohlc(key)["close"].loc[start or "1990-01-01":].rename(key)
+    monkeypatch.setattr(sp, "load_benchmark", fake_bench)
+    monkeypatch.bench_calls = calls
     return monkeypatch
 
 
@@ -989,6 +1168,16 @@ def _fake_world_data(secid):
 
 
 _DATA_CACHE: dict = {}
+# свежая выплата SBER: внутри окна TTM последней свечи синтетики; отсечка ≠ экс-дата
+_LBD = (iss_fake.LAST_DAY - pd.Timedelta(days=90)).normalize()
+_EX = _LBD + pd.Timedelta(days=1)
+while _EX.weekday() >= 5:
+    _EX += pd.Timedelta(days=1)
+_REC = _EX + pd.Timedelta(days=1)
+while _REC.weekday() >= 5:
+    _REC += pd.Timedelta(days=1)
+RECENT_DIV = {"record_date": str(_REC.date()), "last_buy_date": str(_LBD.date()), "value": 12.34,
+              "currency": "RUB", "yield_value": 3.0, "cancelled": False}
 
 
 @pytest.fixture
@@ -998,9 +1187,10 @@ def world(monkeypatch, tmp_path):
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(iss, "_cache", _NoCache())
             mp.setattr(iss, "_session", FakeSession(iss_fake.respond))
+            mp.setattr(iss, "_BORDERS_FAIL", {})
             d = tmp_path / "pd"
             d.mkdir()
-            _write(d, "dividends", {"data": {"SBER": DIVS_SBER}})
+            _write(d, "dividends", {"data": {"SBER": DIVS_SBER + [RECENT_DIV]}})
             _write(d, "rusetfs_funds", {"data": FUNDS})
             _write(d, "symbol_stats", iss_fake.symbol_stats())
             mp.setattr(config, "PUBLIC_DATA_DIR", d)
@@ -1052,25 +1242,30 @@ def test_card_live_share_values(live, world):
     live.setattr(sp, "load_symbol", lambda s, years=None: _fake_world_data(s))
     at = _app(CARD, {"s": "SBER"})
     _assert_clean(at)
-    ttm = next(mt for mt in at.metric if mt.label == "Выплаты за 12 мес.")
-    # выплаты с ex_date за 365 дней до последней свечи; в DIVS_SBER свежие — 2025 г. (34,84 ₽) или ни одной
-    assert ttm.value in ("34,84 ₽", "0,00 ₽")
+    last = iss_fake.LAST_DAY.normalize()
+    # TTM: рублёвые неотменённые выплаты с ex_date в (последняя свеча − 365 дн.; последняя свеча]
+    ttm = 12.34 + sum(r["value"] for r in DIVS_SBER[:3]
+                      if last - pd.Timedelta(days=365) < pd.Timestamp(r["record_date"]) <= last)
+    m_ttm = next(mt for mt in at.metric if mt.label == "Выплаты за 12 мес.")
+    assert m_ttm.value == f"{ttm:.2f}".replace(".", ",") + " ₽" and m_ttm.value != "0,00 ₽"
     score = next(mt for mt in at.metric if mt.label == "Итоговый балл")
     assert score.value == "80 из 100"
 
 
-def test_card_dividend_table_last_day_with_dividend(live, world):
-    """«Последний день с дивидендом» — это last_buy_date (17.07.2025), а не ex_date (18.07.2025 — первый день
-    без дивиденда, следующий рабочий день после last_buy_date; web/CONTRACT.md)."""
+def test_card_dividend_table_ex_date(live, world):
+    """Колонка «Экс-дивидендная дата» = ex_date (следующий рабочий день после last_buy_date), «Дата отсечки» —
+    record_date; прежняя подпись «Последний день с дивидендом» (была ошибкой) не используется."""
     live.setattr(sp, "load_symbol", lambda s, years=None: _fake_world_data(s))
     at = _app(CARD, {"s": "SBER"})
     assert not at.exception
     tables = [getattr(d.value, "data", d.value) for d in at.dataframe]
     t = next(x for x in tables if "Дата отсечки" in x.columns)
-    col = "Последний день с дивидендом"
-    if col in t.columns:
-        row = t[t["Дата отсечки"] == "18.07.2025"].iloc[0]
-        assert row[col] == "17.07.2025", f"{col}: {row[col]} (показан ex_date)"
+    assert "Последний день с дивидендом" not in t.columns
+    row = t[t["Дата отсечки"] == _REC.strftime("%d.%m.%Y")].iloc[0]
+    assert row["Экс-дивидендная дата"] == _EX.strftime("%d.%m.%Y")
+    assert _EX != _REC and _EX == _LBD + pd.offsets.BDay(1)
+    row = t[t["Дата отсечки"] == "11.05.2023"].iloc[0]          # last_buy_date 10.05.2023 (ср)
+    assert row["Экс-дивидендная дата"] == "11.05.2023"
 
 
 def test_card_live_compare(live, world):
@@ -1130,15 +1325,97 @@ def test_card_live_partial_failure(live, world):
 
 
 def test_card_live_benchmark_failure(live, world):
-    import ui.common as uc
     live.setattr(sp, "load_symbol", lambda s, years=None: _fake_world_data(s))
 
-    def nobench(*a, **k):
+    def nobench(key, start=None):
         raise requests.ConnectionError("Max retries exceeded")
-    live.setattr(uc, "load_series", nobench)
+    live.setattr(sp, "load_benchmark", nobench)
     at = _app(CARD, {"s": "SBER"})
     _assert_clean(at)
-    assert any("Бенчмарк MCFTR" in w.value for w in at.warning)
+    assert any("Бенчмарк MCFTR" in w.value and "нет связи" in w.value for w in at.warning), \
+        [w.value for w in at.warning]
+    heads = " | ".join(e.value for e in at.markdown)
+    assert "#### Риск-доходность" in heads and "#### Просадки" in heads
+
+
+def test_card_monthly_benchmark_rejected(live, world):
+    """Месячный ряд бенчмарка (как демо) отклоняется check_benchmark — предупреждение, без сравнения."""
+    live.setattr(sp, "load_symbol", lambda s, years=None: _fake_world_data(s))
+    monthly = iss_fake.ohlc("MCFTR")["close"].resample("ME").last().rename("MCFTR")
+    live.setattr(sp, "load_benchmark", lambda key, start=None: monthly.loc[start:])
+    at = _app(CARD, {"s": "SBER"})
+    _assert_clean(at)
+    assert any("реже дневного" in w.value for w in at.warning), [w.value for w in at.warning]
+
+
+def test_card_benchmark_by_class(live, world):
+    live.setattr(sp, "load_symbol", lambda s, years=None: _fake_world_data(s))
+    at = _app(CARD, {"s": "SU26238RMFS4"})
+    _assert_clean(at)
+    sb = next(s for s in at.selectbox if s.label == "Бенчмарк" and s.key == "sym_bench_sel")
+    assert sb.value == "RGBITR"
+    assert [k for k, _ in live.bench_calls] == ["RGBITR"]
+    assert "#### Относительно бенчмарка RGBITR" in " | ".join(e.value for e in at.markdown)
+    assert any("по классу бумаги" in c.value for c in at.caption)
+    # свой выбор на странице сохраняется для следующей бумаги
+    live.bench_calls.clear()
+    at = _app(CARD, {"s": "SU26238RMFS4"}, sym_bench_user="IMOEX")
+    _assert_clean(at)
+    sb = next(s for s in at.selectbox if s.key == "sym_bench_sel")
+    assert sb.value == "IMOEX" and [k for k, _ in live.bench_calls] == ["IMOEX"]
+    assert any("выбран на странице" in c.value for c in at.caption)
+
+
+@pytest.mark.parametrize("secid, bench", [("SBER", "MCFTR"), ("LQDT", "MCFTR"), ("IMOEX", "MCFTR")])
+def test_card_benchmark_default_other_classes(live, world, secid, bench):
+    live.setattr(sp, "load_symbol", lambda s, years=None: _fake_world_data(s))
+    at = _app(CARD, {"s": secid})
+    assert not at.exception
+    assert next(s for s in at.selectbox if s.key == "sym_bench_sel").value == bench
+
+
+def test_card_uses_metrics_common(live, world):
+    """Блоки сравнения — по общему периоду (metrics_common): даты бумаги и бенчмарка — пересечение."""
+    live.setattr(sp, "load_symbol", lambda s, years=None: _fake_world_data(s))
+    late = iss_fake.ohlc("MCFTR")["close"].loc["2020-01-01":].rename("MCFTR")
+    live.setattr(sp, "load_benchmark", lambda key, start=None: late)
+    at = _app(CARD, {"s": "SBER"})
+    _assert_clean(at)
+    cap = " ".join(c.value for c in at.caption)
+    first = late.index[late.index >= _DATA_CACHE["SBER"]["ohlc"].index[0]][0]
+    assert f"общий период бумаги и бенчмарка {first:%d.%m.%Y}" in cap, cap
+
+
+ESC_Q = "[x](http://e)"
+
+
+def _no_link(at):
+    for t in _texts(at):
+        assert ESC_Q.upper() not in t.upper(), t      # в markdown-источнике ссылка должна быть экранирована
+
+
+def test_card_escapes_query_live(live, use_iss):
+    use_iss()                              # синтетический поиск ISS: ничего не найдено
+    at = _app(CARD, {"s": ESC_Q})
+    assert not at.exception, [e.value for e in at.exception]
+    _no_link(at)
+    msgs = [w.value for w in at.warning] + [e.value for e in at.error]
+    assert any("\\[X\\]\\(HTTP" in v.upper() for v in msgs), msgs
+
+
+def test_card_escapes_query_offline(offline):
+    at = _app(CARD, {"s": ESC_Q})
+    assert not at.exception
+    _no_link(at)
+    assert at.error and "\\[X\\]\\(HTTP" in at.error[0].value.upper()
+
+
+def test_card_escapes_compare_input(live, world):
+    live.setattr(sp, "load_symbol", lambda s, years=None: _fake_world_data(s))
+    at = _app(CARD, {"s": "SBER"}, sym_cmp_in=ESC_Q)
+    assert not at.exception
+    _no_link(at)
+    assert any("не похоже на тикер" in w.value for w in at.warning)
 
 
 def test_card_button_prefills_backtest(live, world):
@@ -1159,13 +1436,21 @@ def test_backtest_prefill(offline):
     assert any(msg in s.value for s in at.success)
     assert at.text_input[0].value == "Портфель с SBER"
     assert at.expander[0].proto.expanded is True
-    ed = at.get("arrow_data_frame") or at.dataframe
-    # редактор с SBER 100 % и портфель доступен в выборе стратегий
+    # портфель доступен в выборе стратегий
     ms = at.multiselect[0]
     assert "Портфель с SBER" in ms.options and "Портфель с SBER" in ms.value
     assert "bt_prefill_msg" not in at.session_state      # сообщение показывается один раз
+    assert "bt_prefill" not in at.session_state          # bt_prefill удаляется после применения
+    assert at.session_state["pf_init"] == {"name": "Портфель с SBER", "weights": {"SBER": 1.0}}
     at.run()
+    assert not at.exception
     assert not any(msg in s.value for s in at.success)
+    assert at.text_input[0].value == "Портфель с SBER"   # состав живёт в pf_init до сохранения
+    save = next(b for b in at.button if b.label == "Сохранить портфель")
+    save.click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert "pf_init" not in at.session_state and "bt_prefill" not in at.session_state
+    assert at.session_state["custom_portfolios"]["Портфель с SBER"] == {"SBER": 1.0}
 
 
 def test_backtest_without_prefill(offline):

@@ -179,6 +179,15 @@ def fmt_metric(key: str, x) -> str:
     return fmt_num(x, 2)
 
 
+_MD_SPECIAL = set("\\`*_[](){}#<>$~|!")
+
+
+def esc(text) -> str:
+    """Экранирование пользовательского ввода и внешних строк для st.markdown/caption/error:
+    ссылки, разметка, HTML и формулы выводятся как обычный текст."""
+    return "".join("\\" + ch if ch in _MD_SPECIAL else ch for ch in str(text))
+
+
 def is_offline() -> bool:
     return os.environ.get("IP_OFFLINE") == "1"
 

@@ -339,9 +339,26 @@ function buildBlocks(root, ctx) {
   const pReports = Promise.all([pPrice, pBench.catch((e) => ({ error: e }))]).then(([p, b]) => {
     const bench = b && !b.error ? b : null;
     const computeAll = engine.metrics.computeAll;
-    const sec = computeAll(p.ret, bench, g.rf, "D");
-    const bm = bench && benchKey !== t ? computeAll(bench, bench, g.rf, "D") : null;
-    return { sec, bm, bench, benchError: b?.error ?? null, p };
+    // С бенчмарком коэффициенты бумаги и бенчмарка — за один период: только даты, где есть оба ряда
+    // (пересечение без протяжки, как report()["metrics_common"] в core/analytics/symbol_page.py).
+    if (bench && benchKey !== t) {
+      const bv = new Map();
+      bench.dates.forEach((d, i) => { if (isNum(bench.values[i])) bv.set(d, bench.values[i]); });
+      const sc = { dates: [], values: [] };
+      const bc = { dates: [], values: [] };
+      p.ret.dates.forEach((d, i) => {
+        if (!bv.has(d) || !isNum(p.ret.values[i])) return;
+        sc.dates.push(d); sc.values.push(p.ret.values[i]);
+        bc.dates.push(d); bc.values.push(bv.get(d));
+      });
+      if (sc.dates.length >= 3) {
+        return { sec: computeAll(sc, bc, g.rf, "D"), bm: computeAll(bc, bc, g.rf, "D"), common: true,
+          bench, benchError: null, p };
+      }
+      return { sec: computeAll(p.ret, null, g.rf, "D"), bm: null, common: false, bench: null,
+        benchError: new Error(`у ${t} и ${benchKey} меньше трёх общих дат`), p };
+    }
+    return { sec: computeAll(p.ret, null, g.rf, "D"), bm: null, common: false, bench, benchError: b?.error ?? null, p };
   });
   pReports.catch(() => {});
   const withDivsNote = (p) => (p.withDivs ? "С учётом дивидендов (реинвестирование в дату отсечки)." : p.divNote || "");
@@ -556,7 +573,7 @@ function buildBlocks(root, ctx) {
     if (!live()) return;
     const cols = [[t, R.sec, false]];
     if (R.bm) cols.push([benchKey, R.bm, true]);
-    setSub(`Rf = ${fmtPct(g.rf, 2)}, доходности ${FREQ_LABELS.D}, период ${fmtDate(R.sec.start)} — ${fmtDate(R.sec.end)}. ${withDivsNote(R.p)}`);
+    setSub(`Rf = ${fmtPct(g.rf, 2)}, доходности ${FREQ_LABELS.D}, ${R.common ? "общий период бумаги и бенчмарка" : "период"} ${fmtDate(R.sec.start)} — ${fmtDate(R.sec.end)}. ${withDivsNote(R.p)}`);
     put(body,
       R.bench ? null : notice("warn", `Бенчмарк ${benchKey}: ${humanize(R.benchError)}`),
       tableWrap(h("table", { class: "metrics-table" },
@@ -571,7 +588,8 @@ function buildBlocks(root, ctx) {
   block(root, { id: "tail", title: "Хвостовые риски: VaR и CVaR 95 %" }, async (body, live, setSub) => {
     const R = await pReports;
     if (!live()) return;
-    setSub("Исторический метод по дневным доходностям: потеря за день, которую превышают 5 % худших дней (VaR), и средняя потеря в этих днях (CVaR).");
+    setSub("Исторический метод по дневным доходностям: потеря за день, которую превышают 5 % худших дней (VaR), и средняя потеря в этих днях (CVaR)." +
+      (R.common ? ` Общий период бумаги и бенчмарка ${fmtDate(R.sec.start)} — ${fmtDate(R.sec.end)}.` : ""));
     const pair = (n, rep, bench) => h("div", { class: `kpi${bench ? " bench" : ""}`, style: { "--kpi-color": colorOf(n, { bench }) } },
       h("div", { class: "kpi-name" }, n),
       h("div", { class: "kpi-value" }, `${metric("var_95", rep.var_95)}`),

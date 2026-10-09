@@ -370,20 +370,30 @@ def board_snapshot(secid: str, engine: str, market: str, board: str) -> dict:
     return out
 
 
+# secid -> время отказа candleborders: отказ (недоступен / нет строки interval 24) помнится на процесс
+_BORDERS_FAIL: dict[str, float] = {}
+BORDERS_FAIL_TTL = 600.0
+
+
 def index_candle_begin(secid: str) -> Optional[str]:
     """Начало дневных свечей индекса: candleborders (строка interval = 24, поле begin) -> 'YYYY-MM-DD';
-    недоступно / нет строки — None (одна попытка, как indexCandleBegin в web/lib/symbol.js)."""
+    недоступно / нет строки — None (одна попытка, как indexCandleBegin в web/lib/symbol.js). Отказ запоминается
+    на BORDERS_FAIL_TTL секунд (10 мин) — повторно не запрашивается; успешный ответ кэширует HttpCache."""
+    t0 = _BORDERS_FAIL.get(secid)
+    if t0 is not None and time.time() - t0 < BORDERS_FAIL_TTL:
+        return None
     try:
         data = get_json(f"/engines/stock/markets/index/securities/{secid}/candleborders", ttl=TTL_REFERENCE,
                         retries=1)
-    except ISSError:
-        return None
+    except (ISSError, requests.RequestException):
+        data = {}
     df = block(data, "borders")
-    if df.empty or "interval" not in df.columns or "begin" not in df.columns:
-        return None
-    row = df[pd.to_numeric(df["interval"], errors="coerce") == 24]
+    row = (df[pd.to_numeric(df["interval"], errors="coerce") == 24]
+           if not df.empty and {"interval", "begin"} <= set(df.columns) else pd.DataFrame())
     if row.empty or not row["begin"].iloc[0]:
+        _BORDERS_FAIL[secid] = time.time()
         return None
+    _BORDERS_FAIL.pop(secid, None)
     return str(row["begin"].iloc[0])[:10]
 
 
@@ -392,7 +402,8 @@ def _iso(v) -> Optional[str]:
     return s if len(s) == 10 and s[4] == "-" and not s.startswith("0000") else None
 
 
-def daily_ohlc(secid: str, start: str = "1990-01-01", end: Optional[str] = None) -> pd.DataFrame:
+def daily_ohlc(secid: str, start: str = "1990-01-01", end: Optional[str] = None,
+               boards: Optional[list] = None) -> pd.DataFrame:
     """Дневные OHLC основного режима (порт fetchOHLC из web/lib/symbol.js) -> DataFrame
     (индекс — даты, колонки open, high, low, close, volume).
     Акции, фонды, облигации, металлы: свечи interval=24 основного режима и прежних режимов того же рынка до
@@ -400,9 +411,11 @@ def daily_ohlc(secid: str, start: str = "1990-01-01", end: Optional[str] = None)
     при совпадении даты — основной режим. Индексы: дневные свечи рынка index с начала (candleborders),
     history (OPEN/HIGH/LOW/CLOSE) — только до него; candleborders недоступен — только history; volume — NaN.
     Свечи ISS уже скорректированы биржей на сплиты (web/CONTRACT.md) — не корректируются повторно.
+    Индексы: history запрашивается только с start (глубину задаёт вызывающий, напр. years страницы бумаги).
+    boards — готовый список режимов из description(secid)["boards"] (без повторного запроса).
     Строки без close > 0 отбрасываются, O/H/L ≤ 0 — NaN. attrs["split_adjusted"] = True."""
-    info = description(secid)
-    boards = info["boards"]
+    if not boards:
+        boards = description(secid)["boards"]
     prim = next((b for b in boards if str(b.get("is_primary")) in ("1", "1.0")), boards[0])
     engine, market = prim.get("engine"), prim.get("market")
     f = start or "1990-01-01"

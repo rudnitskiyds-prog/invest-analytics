@@ -333,3 +333,35 @@ export async function loadSymbolStats({base, fetchImpl}={}) -> {updated, items: 
   `core/data/iss.monthly_closes`; загрузчик подменяется через `scripts.collect_data._symbol_stats_loader`
   (методы `securities()` -> DataFrame SECID/SECTYPE, `monthly_closes(secid, start, end)` -> Series),
   часы бюджета — `scripts.collect_data._clock`. Сбой: > 20 % бумаг, 10 сбоев подряд, бюджет или < 100 акций.
+
+## Страница бумаги в Streamlit: `core/analytics/symbol_page.py` (api) ↔ `pages/2_Карточка_бумаги.py` (site)
+
+Python-аналог `web/lib/symbol.js` + расчётов `web/js/page-symbol.js`; интерфейс только вызывает эти функции
+(инвариант 4) и кэширует их результаты сам (`st.cache_data`) — результаты picklable, функции без Streamlit.
+```python
+symbol_page.load_symbol(secid, years=None) -> {secid, info, ohlc, snapshot, dividends, coupons, fund, rating, errors}
+symbol_page.load_benchmark(key, start=None) -> pd.Series      # только живые данные, сбой — исключение
+symbol_page.report(data, bench, rf) -> {series, total_return, close, benchmark, periods, momentum, monthly, metrics,
+    metrics_common, common_from, common_to, drawdowns, volatility, dividend_stats, errors}
+public_data.symbol_stats() -> dict | None                     # public/data/symbol_stats.json целиком
+```
+* Ключи `info`/`snapshot`/`dividends`/`fund` — snake_case-аналоги `fetchSecurityInfo`/`fetchSnapshot`/`loadDividends`/
+  `loadFundInfo` (`short_name`, `type_label`, `change_pct`, `ex_date`, `class_median`, …); `ohlc` — DataFrame
+  open/high/low/close/volume (`iss.daily_ohlc` — порт `fetchOHLC`, подклейка EQBR/TQTF, у индексов candleborders + history);
+  `coupons` — `iss.coupons` (только облигации); `rating` — `items[secid]` + `n_class`, `updated`, `total_return`
+  (нет файла — None и текст в `errors["rating"]`, бумаги нет в рейтинге — None без ошибки).
+* Ключи грузятся независимо (ошибка — None + `errors[ключ]`). Справочник ISS запрашивается один раз; его сбой —
+  `info`/`ohlc`/`snapshot` = None с той же причиной, другие запросы ISS не делаются. `years` ограничивает начало
+  свечей (у индексов — и history). Отказ candleborders запоминается на процесс на 10 мин (`iss.index_candle_begin`).
+* `load_benchmark`: GOLD_CBR, RUONIA, CORP_CHAIN — `universe._load_live`, прочие — `iss.daily_ohlc(key)["close"]`;
+  демо-подмены `universe.load_series` нет. Если бумага сама бенчмарк — интерфейс передаёт `bench=None`.
+* `report`: `series` — полная доходность для акций с рублёвыми неотменёнными дивидендами (`total_return=True`), иначе
+  цена; бенчмарк отклоняется (`errors["benchmark"]`, далее как без бенчмарка), если его последняя дата раньше последней
+  даты бумаги > 10 календарных дней или медианный шаг дат > 5 дней. `benchmark` — бенчмарк на даты бумаги
+  (последнее известное значение ≤ даты, с первой даты бенчмарка); по нему — `periods.benchmark`, `metrics`
+  (`compute_all(series, benchmark, rf, 'D')` и `compute_all(benchmark, benchmark, …)`), ряды просадок и скользящей
+  волатильности бенчмарка. `metrics_common` — те же отчёты только по общим датам (пересечение, без протягивания),
+  `common_from`/`common_to` — его границы. `volatility` — rolling (21 день) + `close_to_close`, Паркинсон, Гарман–Класс,
+  Роджерс–Сатчелл, Янг–Чжан по OHLC за `period_start('1Y')`; `dividend_stats` — порт `dividendStats` (snake_case:
+  `ttm_value, ttm_yield, by_year, by_month, growth_streak, payouts_per_year, upcoming`), только акции.
+* `ranking.next_weekday` — публичное имя (`_next_weekday` оставлен алиасом).

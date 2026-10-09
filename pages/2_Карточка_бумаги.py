@@ -15,7 +15,8 @@ import pandas as pd
 import streamlit as st
 
 from core.analytics import metrics as m
-from ui.common import (MONTHS_RU, bar_chart, catalog_options, fmt_big_rub, fmt_date, fmt_metric, fmt_num,
+from ui.common import (MONTHS_RU, asset_label, bar_chart, catalog_options, esc, fmt_big_rub, fmt_date, fmt_metric,
+                       fmt_num,
                        fmt_pct, fmt_signed_pct, is_num, is_offline, line_chart, load_series, monthly_heatmap,
                        page_setup, position_scale, show_metrics_table)
 
@@ -32,10 +33,13 @@ def _papers(n) -> str:
 
 page_setup("Карточка бумаги", "🔎")
 ss = st.session_state
-rf, bench = ss["rf"], ss["benchmark"]
+rf = ss["rf"]
+bench = ss["benchmark"]   # демо-режим — из боковой панели; на живых данных — выбор на странице (ниже)
 OFFLINE = is_offline()
 TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9_.-]{0,31}$")
 
+# варианты бенчмарка на странице (по умолчанию — по классу бумаги: info["benchmark"])
+BENCH_OPTIONS = ["MCFTR", "IMOEX", "MEBCTR", "RGBITR", "RUCBTRNS", "GOLD_CBR", "RUONIA"]
 CHART_PERIODS = {"1M": "1М", "6M": "6М", "YTD": "YTD", "1Y": "1Г", "5Y": "5Л", "10Y": "10Л", "ALL": "Всё"}
 RETURN_PERIODS = [("1D", "1 день"), ("1W", "1 неделя"), ("1M", "1 месяц"), ("6M", "6 месяцев"),
                   ("YTD", "С начала года"), ("1Y", "1 год"), ("3Y", "3 года"), ("5Y", "5 лет"),
@@ -118,9 +122,9 @@ def card(title: str, fn, *args, **kwargs):
         try:
             fn(*args, **kwargs)
         except NoData as e:
-            st.caption(f"Нет данных. {e}".strip())
+            st.caption(f"Нет данных. {e}".strip())   # тексты NoData экранируются при создании
         except Exception as e:  # noqa: BLE001
-            st.warning(f"Блок недоступен: {humanize(e)}")
+            st.warning(f"Блок недоступен: {esc(humanize(e))}")
 
 
 def color_sign(v) -> str:
@@ -130,7 +134,7 @@ def color_sign(v) -> str:
 
 
 # ------------------------------------------------------------------ загрузка (кэш)
-@st.cache_data(ttl=24 * 3600, show_spinner=False)
+@st.cache_data(ttl=24 * 3600, show_spinner=False, max_entries=32)
 def _search(q: str) -> pd.DataFrame:
     from core.data import iss
     return iss.search(q)
@@ -142,20 +146,32 @@ def _stats() -> Optional[dict]:
     return public_data.symbol_stats()
 
 
-@st.cache_data(ttl=15 * 60, show_spinner=False)
+@st.cache_data(ttl=15 * 60, show_spinner=False, max_entries=32)
 def _load(secid: str) -> dict:
     from core.analytics import symbol_page
     return symbol_page.load_symbol(secid)
 
 
-@st.cache_data(ttl=15 * 60, show_spinner=False)
-def _bench(key: str, start: str) -> pd.Series:
-    return load_series(key, start)
+@st.cache_data(ttl=5 * 60, show_spinner=False, max_entries=32)
+def _snapshot(secid: str) -> Optional[dict]:
+    """Котировки устаревают быстрее истории: отдельный кэш на 5 минут (свечи — из _load)."""
+    from core.analytics import symbol_page
+    data = _load(secid)
+    if not data.get("info"):
+        return data.get("snapshot")
+    return symbol_page.snapshot(secid, data.get("ohlc"))
 
 
-@st.cache_data(ttl=15 * 60, show_spinner=False)
-def _report(secid: str, bench_key: Optional[str], rf: float) -> tuple[dict, Optional[pd.Series], Optional[str]]:
-    """(отчёт, ряд бенчмарка | None, текст ошибки бенчмарка | None)."""
+@st.cache_data(ttl=15 * 60, show_spinner=False, max_entries=32)
+def _prices(key: str, start: Optional[str]) -> pd.Series:
+    """Живой ряд цен бенчмарка / бумаги сравнения (без демо-подмены); сбой — исключение."""
+    from core.analytics import symbol_page
+    return symbol_page.load_benchmark(key, start)
+
+
+@st.cache_data(ttl=15 * 60, show_spinner=False, max_entries=32)
+def _report(secid: str, bench_key: Optional[str], rf: float) -> tuple[dict, Optional[str]]:
+    """(отчёт, причина, по которой бенчмарка нет | None). Бенчмарк — только symbol_page.load_benchmark."""
     from core.analytics import symbol_page
     data = _load(secid)
     ohlc = data.get("ohlc")
@@ -164,12 +180,37 @@ def _report(secid: str, bench_key: Optional[str], rf: float) -> tuple[dict, Opti
     bser, berr = None, None
     if bench_key and bench_key != secid:
         try:
-            bser = _bench(bench_key, str(pd.Timestamp(ohlc.index[0]).date()))
-            if bser is None or bser.empty:
-                bser, berr = None, "нет данных за период бумаги"
+            bser = _prices(bench_key, str(pd.Timestamp(ohlc.index[0]).date()))
         except Exception as e:  # noqa: BLE001
             bser, berr = None, humanize(e)
-    return symbol_page.report(data, bser, rf), bser, berr
+    rep = symbol_page.report(data, bser, rf)
+    berr = berr or (rep.get("errors") or {}).get("benchmark")
+    if bench_key and bench_key != secid and rep.get("benchmark") is None and not berr:
+        berr = "нет общих дат с бумагой"
+    return rep, berr
+
+
+def _search_box(query: str, container, label: str = "Найдено") -> Optional[str]:
+    """Поиск ISS по названию: выбранный тикер или None (сообщение уже выведено)."""
+    if OFFLINE:
+        if query.isascii():   # латиница со знаками / пробелами — скорее опечатка в тикере
+            st.error(f"«{esc(query)}» не похоже на тикер Мосбиржи, а поиск по названию работает только "
+                     "с живыми данными ISS. Введите тикер, например SBER или MCFTR.")
+        else:
+            st.warning("Поиск по названию работает только с живыми данными ISS. Введите тикер латиницей.")
+        return None
+    try:
+        res = _search(query)
+    except Exception as e:  # noqa: BLE001
+        st.error(f"Поиск ISS недоступен: {esc(humanize(e))}. Введите тикер латиницей.")
+        return None
+    if res is None or res.empty:
+        st.warning(f"По запросу «{esc(query)}» ничего не найдено.")
+        return None
+    names = res.drop_duplicates("secid").set_index("secid")
+    return container.selectbox(
+        label, list(names.index),
+        format_func=lambda x: f"{x} — {names.loc[x].get('shortname') or names.loc[x].get('name') or ''}")
 
 
 # ------------------------------------------------------------------ выбор бумаги
@@ -180,31 +221,19 @@ elif qp and qp != ss.get("sym_secid"):   # пришли по ссылке ?s=…
     ss["sym_q"] = qp
 if "sym_cmp_in" not in ss:
     ss["sym_cmp_in"] = ss.get("sym_cmp", "")
-c1, c2 = st.columns([3, 2])
+c1, c2, c3 = st.columns([3, 2, 2])
 q = c1.text_input("Тикер или название", key="sym_q",
-                  help="Тикер Мосбиржи (SBER, EQMX, SU26238RMFS4, IMOEX) или часть названия по-русски.")
-secid = q.strip().upper()
-if q.strip() and not q.strip().isascii():
-    if OFFLINE:
-        st.warning("Поиск по названию работает только с живыми данными ISS. Введите тикер латиницей.")
-        st.stop()
-    try:
-        res = _search(q.strip())
-    except Exception as e:  # noqa: BLE001
-        st.error(f"Поиск ISS недоступен: {humanize(e)}. Введите тикер латиницей.")
-        st.stop()
-    if res.empty:
-        st.warning(f"По запросу «{q.strip()}» ничего не найдено.")
-        st.stop()
-    names = res.drop_duplicates("secid").set_index("secid")
-    secid = c1.selectbox("Найдено", list(names.index),
-                         format_func=lambda s: f"{s} — {names.loc[s].get('shortname') or names.loc[s].get('name') or ''}")
+                  help="Тикер Мосбиржи (SBER, EQMX, SU26238RMFS4, IMOEX) или часть названия.")
+query = q.strip()
+secid = query.upper()
 if not secid:
     st.info("Введите тикер бумаги.")
     st.stop()
-if not TICKER_RE.match(secid):
-    st.error(f"«{secid}» не похоже на тикер Мосбиржи. Введите тикер латиницей или название по-русски.")
-    st.stop()
+# не тикер (кириллица, пробелы, знаки) — поиск по названию
+if not query.isascii() or not TICKER_RE.match(secid):
+    secid = _search_box(query, c1)
+    if not secid:
+        st.stop()
 ss["sym_secid"] = secid
 if st.query_params.get("s") != secid:
     st.query_params["s"] = secid
@@ -213,10 +242,8 @@ cmp = c2.text_input("Сравнить с бумагой", key="sym_cmp_in", plac
 ss["sym_cmp"] = cmp
 if cmp and (cmp == secid or not TICKER_RE.match(cmp)):
     if cmp != secid:
-        st.warning(f"«{cmp}» не похоже на тикер — сравнение не показано.")
+        st.warning(f"«{esc(cmp)}» не похоже на тикер — сравнение не показано.")
     cmp = ""
-st.caption(f"Бенчмарк ({bench}) и безрисковая ставка ({fmt_pct(rf, 2)} годовых) — в боковой панели. "
-           "Коэффициенты на этой странице считаются по дневным доходностям.")
 
 
 # ------------------------------------------------------------------ рейтинг (нужен и в демо-режиме)
@@ -228,8 +255,8 @@ def block_rating(sec: str, rating: Optional[dict] = None, err: Optional[str] = N
     it = rating or ((stats or {}).get("items") or {}).get(sec)
     if not it:
         if not stats:
-            raise NoData(err or "Рейтинг появится после ночного пересчёта (public/data/symbol_stats.json).")
-        st.caption(f"{sec} нет в рейтинге: в него входят акции и фонды основного режима торгов, "
+            raise NoData(esc(err) if err else "Рейтинг появится после ночного пересчёта (public/data/symbol_stats.json).")
+        st.caption(f"{esc(sec)} нет в рейтинге: в него входят акции и фонды основного режима торгов, "
                    "торгуемые сейчас, с историей не менее 36 месяцев.")
         return
     cls = it.get("class")
@@ -260,15 +287,16 @@ def block_rating(sec: str, rating: Optional[dict] = None, err: Optional[str] = N
 
 # ------------------------------------------------------------------ демо-режим
 if OFFLINE:
+    st.caption(f"Бенчмарк ({bench}) и безрисковая ставка ({fmt_pct(rf, 2)} годовых) — в боковой панели.")
     st.info("**Карточка бумаги работает на живых данных ISS Мосбиржи**: ей нужны дневные свечи, текущие котировки "
             "и справочник бумаги. В демо-режиме есть только месячные ряды индексов и активов каталога — "
             "ниже показаны они и рейтинг из ночного пересчёта (если бумага в нём есть).")
-    st.subheader(secid)
+    st.subheader(esc(secid))
     try:
         px = load_series(secid, "2000-01-01")
     except Exception:  # noqa: BLE001
         px = None
-        st.caption(f"Ряда {secid} нет в демо-данных. Доступны: {', '.join(catalog_options())}.")
+        st.caption(f"Ряда {esc(secid)} нет в демо-данных. Доступны: {', '.join(catalog_options())}.")
     if px is not None and len(px) > 3:
         def _demo():
             cols = {secid: px}
@@ -300,10 +328,42 @@ cls = info.get("cls")
 unit = price_unit(cls, info.get("currency"))
 
 # --- шапка
+# латиницей введено название, а не тикер (ISS бумагу не нашёл) — предлагаем поиск
+if not info and data.get("ohlc") is None and not load_err and query.isascii():
+    def _pick():
+        ss["sym_q"] = ss["sym_suggest"]
+    try:
+        _sr = _search(query)
+    except Exception:  # noqa: BLE001
+        _sr = None
+    if _sr is not None and not _sr.empty and secid not in set(_sr["secid"]):
+        _names = _sr.drop_duplicates("secid").set_index("secid")
+        st.info(f"Тикер {esc(secid)} не найден на ISS — возможно, вы искали одну из этих бумаг.")
+        st.selectbox("Найдено по названию", list(_names.index), index=None, key="sym_suggest", on_change=_pick,
+                     placeholder="Выберите бумагу",
+                     format_func=lambda x: f"{x} — {_names.loc[x].get('shortname') or _names.loc[x].get('name') or ''}")
+
+# бенчмарк: по умолчанию — по классу бумаги, пока пользователь не выбрал его на странице явно
+default_bench = info.get("benchmark") or ss["benchmark"]
+bench = ss.get("sym_bench_user") or default_bench
+bench_opts = BENCH_OPTIONS if bench in BENCH_OPTIONS else [bench] + BENCH_OPTIONS
+ss["sym_bench_sel"] = bench
+
+
+def _bench_chosen():
+    ss["sym_bench_user"] = ss["sym_bench_sel"]
+
+
+c3.selectbox("Бенчмарк", bench_opts, key="sym_bench_sel", on_change=_bench_chosen, format_func=asset_label,
+             help=f"По умолчанию — по классу бумаги ({default_bench}).")
+st.caption(f"Бенчмарк — {'выбран на странице' if ss.get('sym_bench_user') else 'по классу бумаги'}; "
+           f"безрисковая ставка ({fmt_pct(rf, 2)} годовых) — в боковой панели. "
+           "Коэффициенты на этой странице считаются по дневным доходностям.")
+
 title = info.get("name") or info.get("short_name") or secid
-st.subheader(f"{title} · {secid}" if title != secid else secid)
+st.subheader(esc(f"{title} · {secid}" if title != secid else secid))
 if load_err:
-    st.error(f"Не удалось загрузить данные {secid}: {load_err}. Попробуйте позже или проверьте тикер.")
+    st.error(f"Не удалось загрузить данные {esc(secid)}: {esc(load_err)}. Попробуйте позже или проверьте тикер.")
 elif info:
     cur = info.get("currency")
     facts = [
@@ -315,39 +375,39 @@ elif info:
         ("Валюта", "рубль" if str(cur or "").upper() in ("RUB", "SUR") else cur),
         ("Режим торгов", info.get("board")),
     ]
-    st.markdown(" · ".join(f"{k}: **{v}**" for k, v in facts if v not in (None, "", "—")))
-    rec = info.get("benchmark")
-    if rec and rec != bench and rec != secid:
-        st.caption(f"Для этого класса бумаг обычно используют бенчмарк {rec}; сейчас выбран {bench} "
-                   "(меняется в боковой панели).")
+    st.markdown(" · ".join(f"{k}: **{esc(v)}**" for k, v in facts if v not in (None, "", "—")))
 else:
-    st.warning(f"Справка по {secid} недоступна: {humanize(Exception(errors.get('info') or 'ISS не вернул описания бумаги'))}. "
+    st.warning(f"Справка по {esc(secid)} недоступна: "
+               f"{esc(humanize(Exception(errors.get('info') or 'ISS не вернул описания бумаги')))}. "
                "Остальные блоки строятся по истории торгов.")
 
-rep, bser, berr, rep_err = {}, None, None, None
+rep, berr, rep_err = {}, None, None
 if not load_err:
     with st.spinner("Считаю показатели…"):
         try:
-            rep, bser, berr = _report(secid, bench, rf)
+            rep, berr = _report(secid, bench, rf)
         except Exception as e:  # noqa: BLE001
             rep_err = str(e) if isinstance(e, NoData) else humanize(e)
 if rep_err:
-    st.warning(f"Показатели недоступны: {rep_err}")
+    st.warning(f"Показатели недоступны: {esc(rep_err)}")
 rep_errors: dict = rep.get("errors") or {}
-mets = rep.get("metrics") or {}
-# контракт: {sec, bench}; реализация api: {security, benchmark} — читаем оба варианта
-msec, mbench = g(mets, "sec", "security"), g(mets, "bench", "benchmark")
-# бенчмарк, выровненный по датам бумаги (report), иначе — как загружен
-bser = rep.get("benchmark") if rep.get("benchmark") is not None else bser
+# бенчмарк, выровненный по датам бумаги (report); устаревший / месячный / не загрузившийся — None
+bser = rep.get("benchmark")
 has_bench = bser is not None and bench != secid
+# коэффициенты бумаги и бенчмарка — за общий период (metrics_common); без бенчмарка — по всей истории бумаги
+mcommon = rep.get("metrics_common") if has_bench else None
+if mcommon:
+    msec, mbench = g(mcommon, "security", "sec"), g(mcommon, "benchmark", "bench")
+else:
+    msec, mbench = g(rep.get("metrics") or {}, "security", "sec"), None
 
 
 def need_rep(key: Optional[str] = None):
     """Нет отчёта или блока key в нём — NoData с текстом ошибки из core."""
     if not rep:
-        raise NoData(rep_err or load_err or "")
+        raise NoData(esc(rep_err or load_err or ""))
     if key and rep.get(key) is None:
-        raise NoData(rep_errors.get(key) or "")
+        raise NoData(esc(rep_errors.get(key) or ""))
 
 
 def divs_note() -> str:
@@ -356,16 +416,36 @@ def divs_note() -> str:
     return "Доходность — по цене, без дивидендов." if cls == "share" else ""
 
 
+def bench_unavailable() -> str:
+    """«Бенчмарк X недоступен: причина» без точки в конце (причина из core может быть готовой фразой)."""
+    why = str(berr or rep_errors.get("benchmark") or "нет данных").strip().rstrip(".")
+    if why.lower().startswith("бенчмарк"):
+        return esc(why)
+    return f"Бенчмарк {bench} недоступен: {esc(why)}"
+
+
 def bench_warn():
-    if bench != secid and bser is None and berr:
-        st.warning(f"Бенчмарк {bench}: {berr}")
+    if bench != secid and not has_bench:
+        why = bench_unavailable()
+        st.warning(why + ("." if "сравнение не показано" in why else " — бумага показана без него."))
+
+
+def period_note() -> str:
+    """Период коэффициентов: общий для бумаги и бенчмарка (common_from — common_to) или вся история бумаги."""
+    if mcommon:
+        return (f"общий период бумаги и бенчмарка {fmt_date(rep.get('common_from') or g(msec, 'start'))} — "
+                f"{fmt_date(rep.get('common_to') or g(msec, 'end'))}")
+    return f"период {fmt_date(g(msec, 'start'))} — {fmt_date(g(msec, 'end'))}"
 
 
 # --- ключевые цифры
 def block_key():
-    s = data.get("snapshot")
+    try:
+        s = _snapshot(secid) or data.get("snapshot")
+    except Exception:  # noqa: BLE001 — свежие котировки не загрузились: те, что пришли со свечами
+        s = data.get("snapshot")
     if not s:
-        raise NoData(errors.get("snapshot") or "ISS не вернул текущих котировок.")
+        raise NoData(esc(errors.get("snapshot") or "ISS не вернул текущих котировок."))
     if s.get("date"):
         st.caption(f"Данные ISS Мосбиржи на {fmt_date(s.get('date'))} (с задержкой до 15 минут).")
     cols = st.columns(5 if is_num(s.get("market_cap")) else 4)
@@ -387,14 +467,6 @@ def block_key():
 
 
 # --- график
-@st.cache_data(ttl=15 * 60, show_spinner=False)
-def _cmp_series(cmp: str, rf: float) -> tuple[pd.Series, bool]:
-    r, _, _ = _report(cmp, None, rf)
-    if r.get("series") is None:
-        raise ValueError((r.get("errors") or {}).get("series") or "нет истории торгов")
-    return r["series"], bool(r.get("total_return"))
-
-
 def block_chart():
     need_rep("series")
     a, b, c = st.columns([3, 2, 1])
@@ -416,12 +488,11 @@ def block_chart():
                         width="stretch")
         return
     cols = {secid: rep["series"]}
-    cmp_tr = False
     if cmp:
         try:
-            cols[cmp], cmp_tr = _cmp_series(cmp, rf)
+            cols[cmp] = _prices(cmp, str(rep["series"].index[0].date()))
         except Exception as e:  # noqa: BLE001
-            st.warning(f"{cmp}: {humanize(e)}")
+            st.warning(f"{esc(cmp)}: {esc(humanize(e))}")
     if has_bench:
         cols[bench] = bser
     else:
@@ -433,9 +504,9 @@ def block_chart():
     norm = df / df.iloc[0] * 100
     notes = [f"Рост 100 ₽ вложений, {fmt_date(norm.index[0])} — {fmt_date(norm.index[-1])}."]
     if rep.get("total_return"):
-        notes.append(f"{secid} — с учётом дивидендов.")
-    if cmp in cols and cmp_tr:
-        notes.append(f"{cmp} — с учётом дивидендов.")
+        notes.append(f"{esc(secid)} — с учётом дивидендов.")
+    if cmp in cols:
+        notes.append(f"{esc(cmp)} — по цене закрытия.")
     if has_bench:
         notes.append(f"Бенчмарк — {bench} (серый пунктир).")
     st.caption(" ".join(notes))
@@ -445,7 +516,6 @@ def block_chart():
 
 # --- доходность по периодам
 def block_periods():
-    need_rep()
     need_rep("periods")
     pr = rep.get("periods") or {}
     mine, bm = g(pr, "sec", "security") or {}, g(pr, "bench", "benchmark") if has_bench else None
@@ -516,13 +586,13 @@ def block_monthly():
 
 # --- относительно бенчмарка
 def block_relative():
-    need_rep("metrics")
     if bench == secid:
-        raise NoData("Бумага совпадает с бенчмарком — выберите другой бенчмарк в боковой панели.")
+        raise NoData("Бумага совпадает с бенчмарком — выберите другой бенчмарк.")
     if not has_bench:
-        raise NoData(f"Бенчмарк {bench} не загрузился{': ' + berr if berr else ''}.")
-    st.caption(f"{divs_note()} Дневные доходности за общий период "
-               f"{fmt_date(g(msec, 'start'))} — {fmt_date(g(msec, 'end'))}.".strip())
+        raise NoData(bench_unavailable() + ".")
+    if not mcommon:
+        raise NoData(esc(rep_errors.get("metrics_common") or "нет общего периода бумаги и бенчмарка") + ".")
+    st.caption(f"{divs_note()} Дневные доходности, {period_note()}.".strip())
     keys = list(REL_LABELS)
     for i in range(0, len(keys), 4):
         for col, k in zip(st.columns(4), keys[i:i + 4]):
@@ -533,8 +603,9 @@ def block_relative():
 def block_riskret():
     need_rep("metrics")
     bench_warn()
-    st.caption(f"Rf = {fmt_pct(rf, 2)}, дневные доходности, период {fmt_date(g(msec, 'start'))} — "
-               f"{fmt_date(g(msec, 'end'))}. {divs_note()}".strip())
+    if msec is None:
+        raise NoData(esc(rep_errors.get("metrics") or ""))
+    st.caption(f"Rf = {fmt_pct(rf, 2)}, дневные доходности, {period_note()}. {divs_note()}".strip())
     df = pd.DataFrame({"Показатель": list(RISK_LABELS.values()),
                        secid: [fmt_metric(k, g(msec, k)) for k in RISK_LABELS]})
     if has_bench and mbench is not None:
@@ -545,8 +616,10 @@ def block_riskret():
 # --- хвостовые риски
 def block_tail():
     need_rep("metrics")
+    if msec is None:
+        raise NoData(esc(rep_errors.get("metrics") or ""))
     st.caption("Исторический метод по дневным доходностям: потеря за день, которую превышают 5 % худших дней "
-               "(VaR), и средняя потеря в этих днях (CVaR).")
+               f"(VaR), и средняя потеря в этих днях (CVaR); {period_note()}.")
     pairs = [(secid, msec)] + ([(f"{bench} (бенчмарк)", mbench)] if has_bench and mbench is not None else [])
     cols = st.columns(len(pairs) * 2)
     for i, (n, r) in enumerate(pairs):
@@ -561,7 +634,7 @@ def block_fund():
     src = ("Источник: [RusETFs (rusetfs.com)](https://rusetfs.com/) — комиссии, УК и СЧА фондов; "
            "данные обновляются раз в сутки.")
     if not fi:
-        st.caption(f"{secid} нет в базе фондов RusETFs. " + (errors.get("fund") or ""))
+        st.caption(f"{esc(secid)} нет в базе фондов RusETFs. " + esc(errors.get("fund") or ""))
         st.caption(src)
         return
 
@@ -607,10 +680,10 @@ def block_divs():
     st.caption("Источник: T-Invest API (используется с разрешения Т-Банка). Доходность TTM — выплаты "
                "за последние 12 месяцев к текущей цене.")
     if not divs:
-        raise NoData(errors.get("dividends") or f"Выплат {secid} в базе нет.")
+        raise NoData(esc(errors.get("dividends") or f"Выплат {secid} в базе нет."))
     ds = rep.get("dividend_stats") or {}
     if not ds:
-        st.caption("Статистика выплат недоступна: " + (rep_errors.get("dividend_stats") or rep_err or "нет истории цен") + ".")
+        st.caption("Статистика выплат недоступна: " + esc(rep_errors.get("dividend_stats") or rep_err or "нет истории цен") + ".")
     streak, ppy = g(ds, "growth_streak", "growthStreak"), g(ds, "payouts_per_year", "payoutsPerYear")
     ttm_v = g(ds, "ttm_value", "ttmValue")
     c = st.columns(4)
@@ -654,7 +727,7 @@ def block_coupons():
     cp = data.get("coupons")
     st.caption("Источник: ISS Мосбиржи (bondization). Будущие купоны показаны бледными столбиками.")
     if cp is None or len(cp) == 0:
-        raise NoData(errors.get("coupons") or "ISS не вернул графика купонов.")
+        raise NoData(esc(errors.get("coupons") or "ISS не вернул графика купонов."))
     dcol = _col(cp, "date", "coupondate")
     vcol = _col(cp, "value", "value_rub")
     if dcol is None or vcol is None:
@@ -809,14 +882,14 @@ if not calc:
     st.stop()
 with st.container(border=True):
     a, b = st.columns([3, 1])
-    a.markdown(f"#### Собрать портфель с {secid}")
+    a.markdown(f"#### Собрать портфель с {esc(secid)}")
     a.caption("Бумага попадёт в собственные портфели бэктеста с долей 100 % — добавьте другие активы "
               "и сравните с классическими стратегиями.")
     if b.button("Собрать портфель с этой бумагой", type="primary", width="stretch"):
         name = f"Портфель с {secid}"
         ss.setdefault("custom_portfolios", {})[name] = {secid: 1.0}
         ss["bt_prefill"] = {"name": name, "weights": {secid: 1.0}}
-        ss["bt_prefill_msg"] = (f"{secid} добавлена в собственные портфели («{name}») с долей 100 %. "
+        ss["bt_prefill_msg"] = (f"{esc(secid)} добавлена в собственные портфели («{name}») с долей 100 %. "
                                 "Добавьте другие активы, задайте доли, сохраните портфель и запустите бэктест.")
         try:
             st.switch_page("pages/4_Бэктест.py")

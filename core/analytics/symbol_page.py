@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 from core.analytics import metrics as m
-from core.analytics.ranking import _next_weekday
+from core.analytics.ranking import next_weekday
 from core.data import iss, public_data
 
 SYMBOL_CLASSES = {"share": "Акция", "fund": "Фонд", "bond": "Облигация", "index": "Индекс",
@@ -133,12 +133,12 @@ def _primary(boards: list[dict]) -> dict:
 
 
 # ------------------------------------------------------------------ загрузка
-def load_info(secid: str) -> dict:
+def load_info(secid: str, raw: Optional[dict] = None) -> dict:
     """Шапка страницы (как fetchSecurityInfo): ISS /securities/{id} (description + boards) и эмитент.
     coupon_percent — % годовых (как в ISS), coupon_period — дней (COUPONPERIOD или round(364 / COUPONFREQUENCY)),
     face_value — в валюте номинала, first_trade_date — самая ранняя history_from режимов того же рынка."""
     sid = secid.strip().upper()
-    raw = iss.description(sid)
+    raw = raw or iss.description(sid)          # raw — готовый ответ iss.description (без повторного запроса)
     d, boards = raw["description"], raw["boards"]
     prim = _primary(boards)
     cls = classify(d.get("TYPE"), d.get("GROUP"), sid, prim.get("market"))
@@ -179,18 +179,21 @@ def load_info(secid: str) -> dict:
     }
 
 
-def snapshot(secid: str, ohlc: Optional[pd.DataFrame] = None) -> dict:
+def snapshot(secid: str, ohlc: Optional[pd.DataFrame] = None, boards: Optional[list] = None,
+             fetch_candles: bool = True) -> dict:
     """Ключевые цифры (как fetchSnapshot): marketdata + securities (+ marketdata_yields) основного режима;
     high52/low52 — по high/low свечей за 365 дней до последней (нет high/low — по close). ohlc не передан —
-    свечи за 380 дней. change_pct — доля; облигации: цены — % номинала, bond.yield — доля, bond.duration — лет."""
+    свечи за 380 дней (fetch_candles=False — без свечей, только marketdata). boards — готовые режимы
+    из iss.description (без повторного запроса). change_pct — доля; облигации: цены — % номинала, bond.yield — доля, bond.duration — лет."""
     sid = secid.strip().upper()
-    prim = _primary(iss.description(sid)["boards"])
+    prim = _primary(boards or iss.description(sid)["boards"])
     engine, market, board = prim.get("engine"), prim.get("market"), prim.get("boardid")
     blocks = iss.board_snapshot(sid, engine, market, board)
     s, md, my = blocks.get("securities") or {}, blocks.get("marketdata") or {}, blocks.get("marketdata_yields") or {}
-    if ohlc is None:
+    if ohlc is None and fetch_candles:
         try:
-            ohlc = iss.daily_ohlc(sid, (pd.Timestamp.today() - pd.Timedelta(days=380)).date().isoformat())
+            ohlc = iss.daily_ohlc(sid, (pd.Timestamp.today() - pd.Timedelta(days=380)).date().isoformat(),
+                                  boards=boards)
         except Exception:  # noqa: BLE001 — без свечей: только marketdata
             ohlc = None
     o = ohlc if ohlc is not None and not ohlc.empty else None
@@ -255,7 +258,7 @@ def load_dividends(secid: str) -> list[dict]:
         y = _num(r.get("yield_value"))
         out.append({
             "record_date": rec,
-            "ex_date": str(_next_weekday(pd.Timestamp(lbd)).date()) if lbd else rec,
+            "ex_date": str(next_weekday(pd.Timestamp(lbd)).date()) if lbd else rec,
             "payment_date": _iso(r.get("payment_date")),
             "declared_date": _iso(r.get("declared_date")),
             "value": value,
@@ -316,7 +319,10 @@ def load_symbol(secid: str, years: Optional[int] = None) -> dict:
     """Все данные страницы бумаги: {secid, info, ohlc, snapshot, dividends, coupons, fund, rating, errors}.
     years — глубина свечей в календарных годах от сегодня (None — вся история с 1990 г.).
     Ключи грузятся независимо: ошибка — значение None и текст в errors[ключ]. coupons — только для облигаций
-    (иначе None), fund — для фондов и бумаг неизвестного класса, найденных в RusETFs (иначе None)."""
+    (иначе None), fund — для фондов и бумаг неизвестного класса, найденных в RusETFs (иначе None).
+    Справочник ISS (/securities/{id}) запрашивается один раз; его сбой (ISS недоступен, бумаги нет) — info,
+    ohlc и snapshot = None с той же причиной, другие запросы ISS не делаются (файлы public/data — читаются).
+    snapshot не перезапрашивает свечи, если ohlc не загрузился."""
     sid = str(secid or "").strip().upper()
     out: dict = {"secid": sid, **{k: None for k in DATA_KEYS}, "errors": {}}
     start = "1990-01-01" if years is None else \
@@ -329,15 +335,23 @@ def load_symbol(secid: str, years: Optional[int] = None) -> dict:
             out[key] = None
             out["errors"][key] = _err(e)
 
-    run("info", lambda: load_info(sid))
+    # справочник ISS — один запрос; его режимы торгов передаются свечам и котировкам
+    try:
+        raw = iss.description(sid)
+    except Exception as e:  # noqa: BLE001 — ISS недоступен или бумаги нет: остальные запросы ISS не делаются
+        raw = None
+        for key in ("info", "ohlc", "snapshot"):
+            out["errors"][key] = _err(e)
+    if raw is not None:
+        run("info", lambda: load_info(sid, raw))
 
-    def _ohlc():
-        o = iss.daily_ohlc(sid, start)
-        if o.empty:
-            raise ValueError(f"ISS не вернул истории торгов {sid}.")
-        return o
-    run("ohlc", _ohlc)
-    run("snapshot", lambda: snapshot(sid, out["ohlc"]))
+        def _ohlc():
+            o = iss.daily_ohlc(sid, start, boards=raw["boards"])
+            if o.empty:
+                raise ValueError(f"ISS не вернул истории торгов {sid}.")
+            return o
+        run("ohlc", _ohlc)
+        run("snapshot", lambda: snapshot(sid, out["ohlc"], boards=raw["boards"], fetch_candles=False))
     run("dividends", lambda: load_dividends(sid))
     cls = (out["info"] or {}).get("cls")
     if cls == "bond":
@@ -353,6 +367,57 @@ def load_symbol(secid: str, years: Optional[int] = None) -> dict:
         run("fund", _fund)
     run("rating", lambda: rating(sid))
     return out
+
+
+def load_benchmark(key: str, start: Optional[str] = None) -> pd.Series:
+    """Ряд бенчмарка для страницы бумаги — только живые данные, без демо-подмены universe.load_series:
+    специальные ключи каталога (GOLD_CBR, RUONIA — ЦБ; CORP_CHAIN — склейка) — universe._load_live;
+    прочие (индексы и бумаги ISS) — дневные цены закрытия iss.daily_ohlc(key, start)["close"].
+    start — 'YYYY-MM-DD' (None — вся история). Сбой или пустой ряд — исключение (интерфейс показывает
+    причину и строит страницу без бенчмарка)."""
+    from core.data import universe
+    k = str(key or "").strip().upper()
+    if not k:
+        raise ValueError("не задан бенчмарк")
+    f = start or "1990-01-01"
+    spec = universe.CATALOG.get(k)
+    if spec is not None and spec.source in ("cbr", "chain"):
+        s = universe._load_live(k, f, None, False)
+    else:
+        s = iss.daily_ohlc(k, f)["close"]
+    s = s.dropna().astype(float)
+    s = s[~s.index.duplicated(keep="last")].sort_index()
+    s = s[s > 0]
+    if s.empty:
+        raise ValueError(f"нет данных бенчмарка {k}")
+    s.name = k
+    return s
+
+
+# бенчмарк отклоняется, если он отстал от бумаги больше чем на столько дней или реже дневного
+BENCH_MAX_LAG_DAYS = 10
+BENCH_MAX_STEP_DAYS = 5
+
+
+def check_benchmark(bench: Optional[pd.Series], last_date: pd.Timestamp) -> Optional[str]:
+    """Причина отклонить бенчмарк (текст) или None, если годится: пустой ряд; последняя дата раньше последней
+    даты бумаги больше чем на BENCH_MAX_LAG_DAYS календарных дней; медианный шаг дат > BENCH_MAX_STEP_DAYS
+    (реже дневного — например, месячный демо-ряд)."""
+    if bench is None:
+        return None
+    b = pd.Series(bench).dropna()
+    name = bench.name or "бенчмарк"
+    if len(b) < 2:
+        return f"Бенчмарк {name}: недостаточно данных."
+    idx = pd.DatetimeIndex(b.index).sort_values()
+    lag = (pd.Timestamp(last_date) - idx[-1]).days
+    if lag > BENCH_MAX_LAG_DAYS:
+        return (f"Бенчмарк {name}: данные заканчиваются {idx[-1].date():%d.%m.%Y}, на {lag} дн. раньше бумаги — "
+                "сравнение не показано.")
+    step = float(pd.Series(idx).diff().dt.days.median())
+    if step > BENCH_MAX_STEP_DAYS:
+        return f"Бенчмарк {name}: ряд реже дневного (медианный шаг {step:.0f} дн.) — сравнение не показано."
+    return None
 
 
 # ------------------------------------------------------------------ расчёты
@@ -437,9 +502,14 @@ def report(data: dict, bench: Optional[pd.Series], rf: m.RateLike) -> dict:
     бенчмарка — compute_all(bench, bench)); drawdowns {top (5), current, avg, ulcer, max, series,
     benchmark_series}; volatility {rolling, rolling_benchmark (21 день, ×√252), from, to, close_to_close,
     parkinson, garman_klass, rogers_satchell, yang_zhang — по OHLC за последний год (period_start '1Y')};
-    dividend_stats (только акции, иначе None); errors — {блок: текст}. Нет блока — None."""
+    dividend_stats (только акции, иначе None); errors — {блок: текст}. Нет блока — None.
+    metrics_common {security, benchmark} — compute_all (freq='D') по общему периоду: только даты, где есть и бумага,
+    и бенчмарк (пересечение, без протягивания), common_from / common_to — его границы; нет бенчмарка — None.
+    Бенчмарк отклоняется (check_benchmark: отстал > 10 дн. от бумаги или реже дневного) — считается
+    отсутствующим, причина — errors["benchmark"]."""
     out: dict = {k: None for k in ("series", "close", "benchmark", "periods", "momentum", "monthly", "metrics",
-                                   "drawdowns", "volatility", "dividend_stats")}
+                                   "drawdowns", "volatility", "dividend_stats", "metrics_common",
+                                   "common_from", "common_to")}
     out["total_return"] = False
     out["errors"] = {}
     ohlc = data.get("ohlc")
@@ -458,6 +528,10 @@ def report(data: dict, bench: Optional[pd.Series], rf: m.RateLike) -> dict:
             series = m.total_return_series(close, rub)
             out["total_return"] = True
     out["series"], out["close"] = series, close
+    why = check_benchmark(bench, series.index[-1])
+    if why:
+        out["errors"]["benchmark"] = why
+        bench = None
     b = align_benchmark(bench, series.index)
     out["benchmark"] = b
 
@@ -480,6 +554,18 @@ def report(data: dict, bench: Optional[pd.Series], rf: m.RateLike) -> dict:
         bm = m.compute_all(b, b, rf, freq="D") if b is not None and len(b) >= 3 else None
         return {"security": sec, "benchmark": bm}
     run("metrics", _metrics)
+
+    def _common():
+        braw = pd.Series(bench).dropna().astype(float)
+        braw = braw[~braw.index.duplicated(keep="last")].sort_index()
+        common = series.index.intersection(braw.index)
+        if len(common) < 3:
+            raise ValueError("у бумаги и бенчмарка меньше трёх общих дат")
+        sc, bc = series.loc[common], braw.loc[common]
+        out["common_from"], out["common_to"] = str(common[0].date()), str(common[-1].date())
+        return {"security": m.compute_all(sc, bc, rf, freq="D"), "benchmark": m.compute_all(bc, bc, rf, freq="D")}
+    if bench is not None:
+        run("metrics_common", _common)
     run("drawdowns", lambda: {
         "top": m.top_drawdowns(series, 5), "current": m.current_drawdown(series),
         "avg": m.avg_drawdown(series), "ulcer": m.ulcer_index(series), "max": m.max_drawdown(series),
