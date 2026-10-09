@@ -4,7 +4,7 @@ import streamlit as st
 from core.analytics import screener
 from core.config import FUNDAMENTALS_CSV
 from core.data import iss, public_data
-from ui.common import page_setup, to_excel
+from ui.common import fmt_date, page_setup, to_excel
 
 page_setup("Витрина данных по бумагам", "🗂")
 rf = st.session_state["rf"]
@@ -27,8 +27,50 @@ def _bonds(board):
     return screener.bonds_showcase(board)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _rating_stats():
+    """public/data/symbol_stats.json (ночной пересчёт); нет файла / функции — None."""
+    try:
+        return public_data.symbol_stats()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def add_rating(df: pd.DataFrame) -> pd.DataFrame:
+    """Колонки «Рейтинг» (score 0–100) и «Шарп, перц.» из symbol_stats — после «Название»."""
+    stats = _rating_stats()
+    items = (stats or {}).get("items") or {}
+    if not items or "SECID" not in df.columns:
+        return df
+    df = df.copy()
+    pos = df.columns.get_loc("Название") + 1 if "Название" in df.columns else 1
+    rec = df["SECID"].map(lambda s: items.get(s) or {})
+    df.insert(pos, "Рейтинг", pd.to_numeric(rec.map(lambda r: r.get("score")), errors="coerce"))
+    df.insert(pos + 1, "Шарп, перц.",
+              pd.to_numeric(rec.map(lambda r: (r.get("rank") or {}).get("sharpe")), errors="coerce"))
+    return df
+
+
+def rating_caption(df: pd.DataFrame):
+    if "Рейтинг" not in df.columns:
+        return
+    stats = _rating_stats() or {}
+    upd = fmt_date(stats.get("updated"))
+    st.caption("Рейтинг — итоговый балл 0–100 (среднее перцентилей Шарпа, Сортино, Омеги, Кальмара и Мартина) "
+               "среди торгуемых сейчас бумаг того же класса; «Шарп, перц.» — перцентиль коэффициента Шарпа. "
+               "Пересчитывается ночью по месячным данным за окно до 10 лет (акции — с дивидендами), "
+               "поэтому не совпадает с дневными метриками в таблице. Пусто — бумаги нет в рейтинге "
+               "(история меньше 36 месяцев)" + (f". Обновлено {upd}." if upd != "—" else "."))
+
+
 def pct_config(df):
     cfg = {}
+    if "Рейтинг" in df.columns:
+        cfg["Рейтинг"] = st.column_config.NumberColumn(
+            "Рейтинг", format="%.0f", help="Балл 0–100 ночного рейтинга риск/доходность (месячные данные)")
+    if "Шарп, перц." in df.columns:
+        cfg["Шарп, перц."] = st.column_config.NumberColumn(
+            "Шарп, перц.", format="%.0f", help="Перцентиль коэффициента Шарпа внутри класса, 0–100")
     for c in df.columns:
         if c in PCT:
             cfg[c] = st.column_config.NumberColumn(c, format="percent")
@@ -67,7 +109,7 @@ with tab_sh:
                "при текущей безрисковой ставке из боковой панели. Дивидендная доходность — "
                "выплаты с датой реестра за 12 мес. / цена.")
     try:
-        df = _shares(top, rf, bench)
+        df = add_rating(_shares(top, rf, bench))
         q = st.text_input("Поиск по тикеру/названию", key="sh_q")
         if q:
             df = df[df["SECID"].str.contains(q.upper(), regex=False)
@@ -78,6 +120,7 @@ with tab_sh:
             if picked:
                 df = df[df["Сектор"].isin(picked)]
         st.dataframe(df, width="stretch", height=620, hide_index=True, column_config=pct_config(df))
+        rating_caption(df)
         st.download_button("Скачать Excel", to_excel({"Акции": df}), "shares.xlsx")
         if public_data.fundamentals().empty and not FUNDAMENTALS_CSV.exists():
             st.info("Мультипликаторы (P/E, P/B, EV/EBITDA, ROE) пока недоступны. Основной источник — "
@@ -90,7 +133,7 @@ with tab_sh:
 
 with tab_etf:
     try:
-        df = _etfs(rf, "IMOEX")
+        df = add_rating(_etfs(rf, "IMOEX"))
         has_fee = "Комиссия, %" in df.columns
         # колонки RusETFs появляются, только если данные есть
         cat_filters = [(c, k) for c, k in [("УК", "etf_uk"), ("Класс активов", "etf_class")] if c in df.columns]
@@ -116,6 +159,7 @@ with tab_etf:
         st.dataframe(df, width="stretch", height=620, hide_index=True, column_config=pct_config(df))
         if {"УК", "СЧА, млрд руб."} & set(df.columns):
             st.caption("Данные о комиссиях, УК и СЧА — [RusETFs](https://rusetfs.com)")
+        rating_caption(df)
         st.download_button("Скачать Excel", to_excel({"Фонды": df}), "etf.xlsx")
     except Exception as e:  # noqa: BLE001
         st.error(f"Ошибка загрузки: {e}")

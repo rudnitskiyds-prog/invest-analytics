@@ -198,6 +198,14 @@ function swatch(name, bench = false) {
 
 // ---------------------------------------------------------------- маршрут
 
+/** Склонение «бумага»: 1 бумага, 2 бумаги, 5 бумаг. */
+function papers(n) {
+  const a = Math.abs(Math.trunc(n)), d = a % 10, h = a % 100;
+  if (d === 1 && h !== 11) return "бумага";
+  if (d >= 2 && d <= 4 && !(h >= 12 && h <= 14)) return "бумаги";
+  return "бумаг";
+}
+
 export function init() {}
 
 export function onShow(r) {
@@ -508,7 +516,7 @@ function buildBlocks(root, ctx) {
     const n = it ? stats.classes?.[it.class]?.n : null;
     const src = `Источник: ${stats.source || "ISS MOEX (расчёт ИнвестАналитики)"}, обновлено ${fmtDate(String(stats.updated || "").slice(0, 10))}.`;
     setSub(it
-      ? `Перцентиль 0–100 среди ${it.class === "fund" ? "фондов" : "акций"}${n ? ` (${fmtNum(n)} бумаг)` : ""}, торгуемых сейчас; 100 — лучший показатель класса. ` +
+      ? `Перцентиль 0–100 среди ${it.class === "fund" ? "фондов" : "акций"}${n ? ` (${fmtNum(n)} ${papers(n)})` : ""}, торгуемых сейчас; 100 — лучший показатель класса. ` +
         `Рейтинг — по месячным доходностям ${it.tr ? "с реинвестированием дивидендов (T-Invest)" : "по цене"}; цены — месячные свечи ISS, скорректированные биржей на сплиты и консолидации; ` +
         `Rf — средняя ключевая ставка ЦБ за период истории бумаги в окне; поэтому значения могут отличаться от коэффициентов ниже, рассчитанных по дневным данным. ${src}`
       : src);
@@ -634,7 +642,7 @@ function buildBlocks(root, ctx) {
           st.upcoming.map((d) => `${fmtNum(d.value, 2)} ₽, отсечка ${fmtDate(d.recordDate || d.exDate)}`).join("; "), ".") : null,
         h("h4", { class: "sub-title" }, "Последние выплаты"),
         tableWrap(h("table", {},
-          h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "Дата отсечки"), h("th", { scope: "col" }, "Последний день с дивидендом"),
+          h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "Дата отсечки"), h("th", { scope: "col" }, "Экс-дивидендная дата"),
             h("th", { scope: "col", class: "num" }, "На акцию"), h("th", { scope: "col", class: "num" }, "Доходность"))),
           h("tbody", {}, recent.map((d) => h("tr", {},
             h("td", {}, fmtDate(d.recordDate)), h("td", {}, fmtDate(d.exDate)),

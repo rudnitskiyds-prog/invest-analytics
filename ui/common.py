@@ -118,6 +118,83 @@ def fmt_rub(x):
     return f"{x:,.0f} ₽".replace(",", " ")
 
 
+def is_num(x) -> bool:
+    """Конечное число (не None, не NaN, не bool)."""
+    if x is None or isinstance(x, bool):
+        return False
+    try:
+        return bool(np.isfinite(float(x)))
+    except (TypeError, ValueError):
+        return False
+
+
+def fmt_num(x, digits: int = 0) -> str:
+    """Число с пробелом между разрядами и запятой в дробной части; нет числа — «—»."""
+    if not is_num(x):
+        return "—"
+    s = f"{float(x):,.{digits}f}"
+    if float(s.replace(",", "")) == 0:
+        s = s.lstrip("-")
+    return s.replace(",", " ").replace(".", ",")
+
+
+def fmt_signed_pct(x, digits: int = 1) -> str:
+    """Доля со знаком: +1,2% / -0,5%; округлённый ноль — без знака."""
+    if not is_num(x):
+        return "—"
+    s = fmt_pct(float(x), digits)
+    return "+" + s if float(x) > 0 and s != fmt_pct(0.0, digits) else s
+
+
+def fmt_big_rub(x) -> str:
+    """Крупные суммы компактно: «6,50 трлн ₽», «12,3 млрд ₽»."""
+    if not is_num(x):
+        return "—"
+    v = float(x)
+    a = abs(v)
+    for k, unit in ((1e12, "трлн"), (1e9, "млрд"), (1e6, "млн")):
+        if a >= k:
+            return f"{fmt_num(v / k, 2 if a / k < 10 else 1)} {unit} ₽"
+    return fmt_rub(v)
+
+
+def fmt_date(x) -> str:
+    """Дата в формате ДД.ММ.ГГГГ; нет даты — «—»."""
+    if x is None or (isinstance(x, float) and np.isnan(x)) or x is pd.NaT or x == "":
+        return "—"
+    try:
+        return pd.Timestamp(str(x)[:10] if isinstance(x, str) else x).strftime("%d.%m.%Y")
+    except (ValueError, TypeError):
+        return str(x)
+
+
+def fmt_metric(key: str, x) -> str:
+    """Значение коэффициента: доли из metrics.PERCENT_FIELDS — в процентах, прочие — 2 знака."""
+    if not is_num(x):
+        return "—"
+    if key in m.PERCENT_FIELDS:
+        return fmt_pct(float(x), 1)
+    if key == "days_to_recover":
+        return fmt_num(x)
+    return fmt_num(x, 2)
+
+
+def is_offline() -> bool:
+    return os.environ.get("IP_OFFLINE") == "1"
+
+
+SYMBOL_PAGE = "pages/2_Карточка_бумаги.py"
+
+
+def symbol_link(secid: str, label: Optional[str] = None, container=None):
+    """Ссылка на карточку бумаги (?s=SECID). Вне многостраничного приложения — обычный текст."""
+    target = container or st
+    try:
+        target.page_link(SYMBOL_PAGE, label=label or secid, query_params={"s": secid})
+    except Exception:  # noqa: BLE001 — страница не зарегистрирована (одиночный запуск файла)
+        target.markdown(f"**{label or secid}**")
+
+
 def to_excel(sheets: dict[str, pd.DataFrame]) -> bytes:
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as xw:
@@ -185,6 +262,82 @@ def heatmap_returns(r: pd.DataFrame, height: int = 360) -> go.Figure:
         hovertemplate="%{y}, %{x}: %{text}<extra></extra>", showscale=False))
     fig.update_layout(height=height, margin=dict(l=10, r=10, t=10, b=10))
     fig.update_xaxes(type="category")
+    return fig
+
+
+MONTHS_RU = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"]
+
+
+def monthly_heatmap(years: list, cells: list, year_total: list, median_by_month: list) -> go.Figure:
+    """Сетка «год × месяц» (свежие годы сверху, внизу — медиана) и отдельная колонка итога года
+    со своей цветовой шкалой. Значения — доли; пустые ячейки — «—»."""
+    from plotly.subplots import make_subplots
+
+    def num(v):
+        return float(v) if is_num(v) else np.nan
+
+    rows = [[num(v) for v in row] for row in cells]
+    med = [num(v) for v in (median_by_month or [None] * 12)]
+    z = [med] + rows                          # снизу вверх: медиана, затем годы по возрастанию
+    ylab = ["Медиана"] + [str(y) for y in years]
+    zt = [[np.nan]] + [[num(v)] for v in (year_total or [None] * len(years))]
+    arr = np.array(z, dtype=float)
+    lim = float(np.nanmax(np.abs(arr))) if np.isfinite(arr).any() else 0.1
+    tarr = np.array(zt, dtype=float)
+    tlim = float(np.nanmax(np.abs(tarr))) if np.isfinite(tarr).any() else 0.1
+    fig = make_subplots(rows=1, cols=2, column_widths=[0.88, 0.12], shared_yaxes=True,
+                        horizontal_spacing=0.01)
+    fig.add_trace(go.Heatmap(
+        z=z, x=MONTHS_RU, y=ylab, colorscale=DIVERGING, zmid=0, zmin=-lim, zmax=lim, xgap=2, ygap=2,
+        text=[[fmt_pct(v, 1) for v in row] for row in z], texttemplate="%{text}",
+        hovertemplate="%{y}, %{x}: %{text}<extra></extra>", showscale=False), 1, 1)
+    fig.add_trace(go.Heatmap(
+        z=zt, x=["Год"], y=ylab, colorscale=DIVERGING, zmid=0, zmin=-tlim, zmax=tlim, xgap=2, ygap=2,
+        text=[["" if not is_num(r[0]) else fmt_pct(r[0], 1)] for r in zt], texttemplate="<b>%{text}</b>",
+        hovertemplate="%{y}, итог года: %{text}<extra></extra>", showscale=False), 1, 2)
+    fig.update_layout(height=60 + 26 * len(ylab), margin=dict(l=10, r=10, t=10, b=10), font=dict(size=12))
+    fig.update_xaxes(side="top", type="category")
+    fig.update_yaxes(type="category")
+    return fig
+
+
+def bar_chart(labels: list, values: list, name: str, y_title: str, x_title: str = "",
+              muted: Optional[list[bool]] = None, hover_fmt: str = ",.2f", height: int = 300) -> go.Figure:
+    """Столбики одной сущности (цвет закреплён за name); muted — бледные столбики (напр. будущие купоны)."""
+    color = color_map([name])[name]
+    op = [0.35 if (muted and muted[i]) else 1.0 for i in range(len(values))]
+    fig = go.Figure(go.Bar(x=[str(x) for x in labels], y=values, name=name, marker=dict(color=color, opacity=op),
+                           hovertemplate=f"%{{x}}: %{{y:{hover_fmt}}}<extra>{name}</extra>"))
+    base_layout(fig, height, y_title)
+    fig.update_layout(hovermode="closest", showlegend=False)
+    fig.update_xaxes(title=x_title, type="category")
+    return fig
+
+
+def position_scale(value: float, lo: float, hi: float, name: str, x_title: str,
+                   q25: Optional[float] = None, median: Optional[float] = None,
+                   q75: Optional[float] = None, fmt=None, height: int = 130) -> go.Figure:
+    """Горизонтальная шкала «где бумага среди рынка»: диапазон min–max, межквартильный диапазон,
+    медиана и точка бумаги. Только отображение готовых чисел."""
+    fmt = fmt or (lambda v: fmt_num(v, 2))
+    color = color_map([name])[name]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=[lo, hi], y=[0, 0], mode="lines", line=dict(color="rgba(128,128,128,.35)", width=6),
+                             hoverinfo="skip", showlegend=False))
+    if is_num(q25) and is_num(q75):
+        fig.add_trace(go.Scatter(x=[q25, q75], y=[0, 0], mode="lines", line=dict(color=BENCH_COLOR, width=12),
+                                 name="Межквартильный диапазон", hovertemplate=f"{fmt(q25)} — {fmt(q75)}<extra></extra>"))
+    if is_num(median):
+        fig.add_trace(go.Scatter(x=[median], y=[0], mode="markers", name="Медиана",
+                                 marker=dict(symbol="line-ns", size=26, line=dict(width=3, color="#000")),
+                                 hovertemplate=f"Медиана {fmt(median)}<extra></extra>"))
+    fig.add_trace(go.Scatter(x=[value], y=[0], mode="markers", name=name,
+                             marker=dict(size=16, color=color, line=dict(width=2, color="#fff")),
+                             hovertemplate=f"{name}: {fmt(value)}<extra></extra>"))
+    base_layout(fig, height)
+    fig.update_layout(hovermode="closest", legend=dict(orientation="h", y=1.15, x=0))
+    fig.update_yaxes(visible=False, range=[-1, 1])
+    fig.update_xaxes(title=x_title)
     return fig
 
 

@@ -12,6 +12,7 @@
   * close_series(secid, …)      — ряд цен закрытия для любой бумаги/индекса/металла;
   * shares() / etfs() / bonds() / metals() — витрины инструментов с котировками;
   * dividends(secid), coupons(secid);
+  * description / issuer / board_snapshot / daily_ohlc — данные страницы бумаги (core/analytics/symbol_page.py);
   * zcyc(date) / kbd_rate(date, years) — кривая бескупонной доходности (КБД);
   * index_constituents('IMOEX') — состав индекса и веса;
   * search(query).
@@ -316,6 +317,148 @@ def close_series(secid: str, start: str = "2000-01-01", end: Optional[str] = Non
             pass
     s.name = secid
     return s
+
+
+# --------------------------------------------------------------------- страница бумаги
+# Прежние основные режимы для подклейки дневных свечей страницы бумаги: как LEGACY_MAIN_BOARDS
+# и TQTF (фонды до июня 2026 г.) — тот же набор, что LEGACY_MAIN_BOARDS в web/lib/symbol.js.
+LEGACY_OHLC_BOARDS = LEGACY_MAIN_BOARDS | {"TQTF"}
+
+
+def description(secid: str) -> dict:
+    """ISS /securities/{secid}: {"description": {NAME (верхний регистр): value}, "boards": [dict строк boards]}.
+    Тот же запрос, что resolve() (кэш общий). Нет режимов торгов — ISSError."""
+    data = get_json(f"/securities/{secid}", ttl=TTL_REFERENCE)
+    desc = block(data, "description")
+    boards = block(data, "boards")
+    if boards.empty:
+        raise ISSError(f"Инструмент {secid} не найден на ISS")
+    d = {}
+    if not desc.empty and {"name", "value"} <= set(desc.columns):
+        d = {str(k).upper(): v for k, v in zip(desc["name"], desc["value"]) if k}
+    rows = boards.astype(object).where(boards.notna(), None).to_dict("records")
+    return {"description": d, "boards": rows}
+
+
+def issuer(secid: str) -> Optional[str]:
+    """Эмитент: поле emitent_title точного совпадения secid в /securities?q= (как issuerOf в web/lib/symbol.js).
+    Ошибка или нет записи — None."""
+    try:
+        data = get_json("/securities", {"q": secid, "limit": 100, "securities.columns": "secid,emitent_title"},
+                        ttl=TTL_REFERENCE)
+    except ISSError:
+        return None
+    df = block(data, "securities")
+    if df.empty or "secid" not in df.columns or "emitent_title" not in df.columns:
+        return None
+    row = df[df["secid"] == secid]
+    v = row["emitent_title"].iloc[0] if not row.empty else None
+    return str(v) if v else None
+
+
+def board_snapshot(secid: str, engine: str, market: str, board: str) -> dict:
+    """Текущие данные режима: /engines/{e}/markets/{m}/boards/{b}/securities/{secid} (блоки securities,
+    marketdata, marketdata_yields) -> {имя блока: dict первой строки | {}}."""
+    data = get_json(f"/engines/{engine}/markets/{market}/boards/{board}/securities/{secid}",
+                    {"iss.only": "securities,marketdata,marketdata_yields"}, ttl=TTL_MARKET)
+    out = {}
+    for name in ("securities", "marketdata", "marketdata_yields"):
+        df = block(data, name)
+        out[name] = ({} if df.empty else
+                     {k: (None if (isinstance(v, float) and np.isnan(v)) else v)
+                      for k, v in df.iloc[0].to_dict().items()})
+    return out
+
+
+def index_candle_begin(secid: str) -> Optional[str]:
+    """Начало дневных свечей индекса: candleborders (строка interval = 24, поле begin) -> 'YYYY-MM-DD';
+    недоступно / нет строки — None (одна попытка, как indexCandleBegin в web/lib/symbol.js)."""
+    try:
+        data = get_json(f"/engines/stock/markets/index/securities/{secid}/candleborders", ttl=TTL_REFERENCE,
+                        retries=1)
+    except ISSError:
+        return None
+    df = block(data, "borders")
+    if df.empty or "interval" not in df.columns or "begin" not in df.columns:
+        return None
+    row = df[pd.to_numeric(df["interval"], errors="coerce") == 24]
+    if row.empty or not row["begin"].iloc[0]:
+        return None
+    return str(row["begin"].iloc[0])[:10]
+
+
+def _iso(v) -> Optional[str]:
+    s = str(v)[:10] if v else ""
+    return s if len(s) == 10 and s[4] == "-" and not s.startswith("0000") else None
+
+
+def daily_ohlc(secid: str, start: str = "1990-01-01", end: Optional[str] = None) -> pd.DataFrame:
+    """Дневные OHLC основного режима (порт fetchOHLC из web/lib/symbol.js) -> DataFrame
+    (индекс — даты, колонки open, high, low, close, volume).
+    Акции, фонды, облигации, металлы: свечи interval=24 основного режима и прежних режимов того же рынка до
+    history_from основного (LEGACY_OHLC_BOARDS — EQBR и др., TQTF у фондов — или та же board_group_id);
+    при совпадении даты — основной режим. Индексы: дневные свечи рынка index с начала (candleborders),
+    history (OPEN/HIGH/LOW/CLOSE) — только до него; candleborders недоступен — только history; volume — NaN.
+    Свечи ISS уже скорректированы биржей на сплиты (web/CONTRACT.md) — не корректируются повторно.
+    Строки без close > 0 отбрасываются, O/H/L ≤ 0 — NaN. attrs["split_adjusted"] = True."""
+    info = description(secid)
+    boards = info["boards"]
+    prim = next((b for b in boards if str(b.get("is_primary")) in ("1", "1.0")), boards[0])
+    engine, market = prim.get("engine"), prim.get("market")
+    f = start or "1990-01-01"
+    t = end or dt.date.today().isoformat()
+    parts: list[pd.DataFrame] = []
+    if market == "index":
+        begin = index_candle_begin(secid)
+        hist_till = t if begin is None else min(t, (pd.Timestamp(begin) - pd.Timedelta(days=1)).date().isoformat())
+        if f <= hist_till:
+            h = _paged(f"/history/engines/stock/markets/index/securities/{secid}",
+                       {"from": f, "till": hist_till, "history.columns": "TRADEDATE,OPEN,HIGH,LOW,CLOSE"},
+                       "history", ttl=_ttl_for(hist_till))
+            if not h.empty:
+                h = h.rename(columns=str.lower)
+                h.index = pd.to_datetime(h["tradedate"]).dt.normalize()
+                parts.append(h[["open", "high", "low", "close"]].assign(volume=np.nan))
+        if begin is not None and max(begin, f) <= t:
+            c = candles(secid, max(begin, f), t, "D", "stock", "index", None)
+            if not c.empty:
+                parts.append(c[["open", "high", "low", "close"]].assign(volume=np.nan))
+    else:
+        prim_from = _iso(prim.get("history_from"))
+        segs = []
+        for b in boards:
+            if b is prim or b.get("engine") != engine or b.get("market") != market:
+                continue
+            hf, ht = _iso(b.get("history_from")), _iso(b.get("history_till"))
+            if not hf or not prim_from or hf >= prim_from:
+                continue
+            same_group = b.get("board_group_id") is not None and b.get("board_group_id") == prim.get("board_group_id")
+            if b.get("boardid") not in LEGACY_OHLC_BOARDS and not same_group:
+                continue
+            a, z = max(hf, f), min(t, ht or t, prim_from)
+            if a <= z:
+                segs.append((hf, b["boardid"], a, z))
+        segs.sort()
+        segs.append(("", prim["boardid"], max(prim_from, f) if prim_from else f, t))
+        for _, board, a, z in segs:
+            if a > z:
+                continue
+            c = candles(secid, a, z, "D", engine, market, board)
+            if not c.empty:
+                parts.append(c[["open", "high", "low", "close", "volume"]])
+    cols = ["open", "high", "low", "close", "volume"]
+    if not parts:
+        df = pd.DataFrame(columns=cols, index=pd.DatetimeIndex([], name="date"), dtype=float)
+    else:
+        df = pd.concat(parts).apply(pd.to_numeric, errors="coerce").astype(float)
+        df = df[~df.index.duplicated(keep="last")].sort_index()
+        df = df[df["close"] > 0]
+        for k in ("open", "high", "low"):
+            df[k] = df[k].where(df[k] > 0)
+        df.index = pd.DatetimeIndex(df.index, name="date")
+        df = df[cols]
+    df.attrs["split_adjusted"] = True
+    return df
 
 
 # --------------------------------------------------------------------- showcases

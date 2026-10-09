@@ -42,6 +42,25 @@ def load(name: str) -> Optional[Any]:
         return None
 
 
+def load_file(name: str) -> Optional[Any]:
+    """Весь файл public/data/<name>.json (не только поле data) или None, если файла нет / он битый."""
+    p = config.PUBLIC_DATA_DIR / f"{name}.json"
+    try:
+        return _read(str(p), p.stat().st_mtime)
+    except (OSError, ValueError):
+        return None
+
+
+def symbol_stats() -> Optional[dict]:
+    """Ночные рейтинги public/data/symbol_stats.json ({updated, source, total_return, split_adjusted, rf, window,
+    classes, items}; формат — web/CONTRACT.md) — как loadSymbolStats в web/lib/symbol.js.
+    Нет файла, он битый или без словаря items — None. Возвращается кэшируемый объект — не изменять."""
+    js = load_file("symbol_stats")
+    if not isinstance(js, dict) or not isinstance(js.get("items"), dict):
+        return None
+    return js
+
+
 def dividends(secid: str) -> pd.DataFrame:
     """Выплаты из dividends.json в формате iss.dividends: secid, registryclosedate (строка
     YYYY-MM-DD), value, currencyid. Отменённые и записи без даты реестра / суммы отброшены."""
