@@ -88,12 +88,15 @@ def rank_items(items: dict[str, dict]) -> dict[str, dict]:
 RUB_CODES = {"RUB", "SUR", "RUR"}
 
 
-def _next_weekday(d: pd.Timestamp) -> pd.Timestamp:
+def next_weekday(d: pd.Timestamp) -> pd.Timestamp:
     """Следующий рабочий день (пн–пт) после даты; праздники биржи не учитываются (как web/lib/symbol.js)."""
     d = d + pd.Timedelta(days=1)
     while d.weekday() >= 5:
         d += pd.Timedelta(days=1)
     return d
+
+
+_next_weekday = next_weekday          # прежнее имя (совместимость)
 
 
 def ex_dividends(rows) -> list[dict]:
@@ -107,7 +110,7 @@ def ex_dividends(rows) -> list[dict]:
         if str(r.get("currency") or "RUB").upper() not in RUB_CODES:
             continue
         lbd = r.get("last_buy_date")
-        ex = _next_weekday(pd.Timestamp(lbd[:10])) if lbd else pd.Timestamp(r["record_date"][:10])
+        ex = next_weekday(pd.Timestamp(lbd[:10])) if lbd else pd.Timestamp(r["record_date"][:10])
         out.append({"exDate": str(ex.date()), "value": float(r["value"])})
     return out
 
