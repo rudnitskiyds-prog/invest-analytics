@@ -7,6 +7,9 @@
 
 Язык интерфейса, сообщений коммитов и отчётов — русский.
 
+Целевая структура сайта, статусы разделов и этапы — `docs/STRUCTURE.md` (сверяйтесь перед новой задачей).
+Данные на сайте — только российские (ISS Мосбиржи, Банк России).
+
 ## Структура
 
 | Путь | Что там | Владелец (субагент) |
@@ -15,26 +18,34 @@
 | `core/analytics/` | коэффициенты, граница Марковица, бэктест, стратегии НИР, витрина | `api` |
 | `core/portfolio/` | учёт портфеля, ребалансировки | `api` |
 | `scripts/`, `.github/workflows/`, `public/data/` | сборщик данных ЦБ, сверка с НИР, расписания | `api` |
-| `app.py`, `pages/`, `ui/`, `.streamlit/`, `docs/screenshots/` | интерфейс (сейчас Streamlit; будущий статический сайт — `web/`) | `site` |
-| `tests/` | pytest, эталонные данные в `tests/fixtures/` | `tests` |
+| `web/lib/` | расчёты и загрузка данных веб-версии (JS), контракт — `web/CONTRACT.md` | `api` |
+| `app.py`, `pages/`, `ui/`, `.streamlit/`, `docs/screenshots/` | интерфейс Streamlit (демо и рабочий инструмент) | `site` |
+| `web/` (кроме `web/lib/`) | веб-версия: HTML/CSS/JS, выкладка в Yandex Object Storage | `site` |
+| `tests/` | pytest + `tests/web/` (node:test), эталонные данные в `tests/fixtures/` | `tests` |
 
 ## Команды
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
-pytest -q                          # все тесты, сеть не нужна
+python -m pytest -q                # все тесты (вкл. JS через node), сеть не нужна
 python -m scripts.reproduce_nir    # сверка бэктеста с табл. 4 НИР
 IP_OFFLINE=1 streamlit run app.py  # интерфейс на демо-данных
 python -m scripts.collect_data     # сбор данных ЦБ в public/data/ (нужна сеть)
+python -m http.server 8000         # из корня репозитория; веб-версия: http://localhost:8000/web/ (демо: ?demo=1)
+node --test "tests/web/*.test.mjs" # тесты JS-движка (также запускаются из pytest)
+python -m tests.web.make_reference # перегенерировать эталоны Python для JS-тестов
 ```
 
 ## Инварианты — нарушать нельзя
 
-1. `pytest -q` проходит полностью. Тесты не ходят в сеть (сетевые вызовы — через monkeypatch / фикстуры).
+1. `python -m pytest -q` проходит полностью (нужны Node ≥ 22 и Playwright с chromium, иначе веб-тесты пропускаются). Тесты не ходят в сеть (сетевые вызовы — через monkeypatch / фикстуры).
 2. `tests/test_nir_reproduction.py` — эталон методики. Если правка меняет цифры сверки с табл. 4 НИР,
    это не «починка теста», а изменение методики: остановиться и спросить пользователя.
-3. Формулы коэффициентов — в `core/analytics/metrics.py` и в странице «Методика»; меняются только вместе.
-4. `core/` не импортирует Streamlit. Интерфейс не считает финансы сам — только вызывает `core/`.
+3. Формулы коэффициентов живут в четырёх местах и меняются только вместе: `core/analytics/metrics.py`,
+   `web/lib/metrics.js`, `pages/7_Методика.py`, вкладка «Методика» в `web/index.html`
+   (после правки — `python -m tests.web.make_reference`).
+4. `core/` не импортирует Streamlit. Интерфейс не считает финансы сам — только вызывает `core/`
+   (в веб-версии — `web/lib/`). Формулы в `web/lib/metrics.js` совпадают с `core/analytics/metrics.py`.
 5. Данные: ISS и ЦБ — через официальные выгрузки (JSON ISS, XML/SOAP ЦБ), не парсинг HTML.
    Котировки Мосбиржи в репозиторий не коммитим, кроме эталонных фикстур и `public/data/` от сборщика.
 6. Секреты и токены не попадают в код и коммиты.
