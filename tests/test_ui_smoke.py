@@ -1,13 +1,27 @@
 """Смоук-тест страниц Streamlit в демо-режиме (без сети)."""
-import os
-
 import pytest
+import requests
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-os.environ["IP_OFFLINE"] = "1"
 st_testing = pytest.importorskip("streamlit.testing.v1")
+
+
+@pytest.fixture(autouse=True)
+def offline(monkeypatch):
+    """Демо-режим только на время теста (не утекает в другие модули) и запрет сети:
+    любой HTTP-запрос через requests фиксируется и проваливает тест, даже если страница
+    перехватила исключение и показала st.error."""
+    monkeypatch.setenv("IP_OFFLINE", "1")
+    calls = []
+
+    def send(self, request, **kw):
+        calls.append(request.url)
+        raise requests.ConnectionError(f"сеть запрещена в тестах: {request.url}")
+    monkeypatch.setattr(requests.Session, "send", send)
+    yield
+    assert calls == [], f"смоук-тест обращался к сети: {calls}"
 
 
 def run_page(path, **state):
@@ -16,6 +30,20 @@ def run_page(path, **state):
         at.session_state[k] = v
     at.run()
     return at
+
+
+def use_tmp_ledger(tmp_path, monkeypatch):
+    """Временная БД портфеля для страниц. Ledger() берёт путь из значения по умолчанию
+    __init__(path=PORTFOLIO_DB), вычисленного при импорте core.portfolio.ledger, поэтому подмена
+    config.PORTFOLIO_DB / IP_DATA_DIR сама по себе не действует; значение по умолчанию подменяется
+    через monkeypatch и восстанавливается автоматически."""
+    from core import config
+    from core.portfolio import ledger as lg
+    db = tmp_path / "p.sqlite"
+    monkeypatch.setattr(config, "PORTFOLIO_DB", db)
+    monkeypatch.setattr(lg, "PORTFOLIO_DB", db)
+    monkeypatch.setattr(lg.Ledger.__init__, "__defaults__", (db,))
+    return lg.Ledger(db)
 
 
 def test_method_page():
@@ -52,25 +80,16 @@ def test_security_page_without_demo_data():
 
 
 def test_portfolio_pages_empty(tmp_path, monkeypatch):
-    from core.portfolio import ledger as lg
-    db = tmp_path / "p.sqlite"
-    monkeypatch.setattr(lg, "PORTFOLIO_DB", db)
-    orig = lg.Ledger.__init__.__defaults__
-    lg.Ledger.__init__.__defaults__ = (db,)
-    try:
-        for page in ["pages/5_Мой_портфель.py", "pages/6_Ребалансировки.py"]:
-            at = run_page(page)
-            assert not at.exception, (page, at.exception)
-    finally:
-        lg.Ledger.__init__.__defaults__ = orig
+    use_tmp_ledger(tmp_path, monkeypatch)
+    for page in ["pages/5_Мой_портфель.py", "pages/6_Ребалансировки.py"]:
+        at = run_page(page)
+        assert not at.exception, (page, at.exception)
 
 
 def test_portfolio_page_with_data(tmp_path, monkeypatch):
     import pandas as pd
     from core.data import quotes
-    from core.portfolio import ledger as lg
-    db = tmp_path / "p.sqlite"
-    L = lg.Ledger(db)
+    L = use_tmp_ledger(tmp_path, monkeypatch)
     pid = L.create_portfolio("Основной", target={"EQMX": 0.6, "GOLD": 0.4})
     L.add(pid, "2024-01-15", "DEPOSIT", amount=100_000)
     L.add(pid, "2024-01-15", "BUY", "EQMX", 300, 150)
@@ -83,12 +102,7 @@ def test_portfolio_page_with_data(tmp_path, monkeypatch):
     monkeypatch.setattr(quotes, "get_quotes", lambda s: pd.DataFrame(
         {"price": [180.0, 2.6], "name": ["EQMX", "GOLD"], "lot": [1, 1]}, index=["EQMX", "GOLD"]))
     monkeypatch.setattr(quotes, "price_history_rub", lambda s, start, end=None: px)
-    orig = lg.Ledger.__init__.__defaults__
-    lg.Ledger.__init__.__defaults__ = (db,)
-    try:
-        for page in ["pages/5_Мой_портфель.py", "pages/6_Ребалансировки.py"]:
-            at = run_page(page)
-            assert not at.exception, (page, at.exception)
-            assert not at.error, (page, [e.value for e in at.error])
-    finally:
-        lg.Ledger.__init__.__defaults__ = orig
+    for page in ["pages/5_Мой_портфель.py", "pages/6_Ребалансировки.py"]:
+        at = run_page(page)
+        assert not at.exception, (page, at.exception)
+        assert not at.error, (page, [e.value for e in at.error])
