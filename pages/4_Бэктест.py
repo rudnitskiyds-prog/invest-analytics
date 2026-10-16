@@ -61,7 +61,7 @@ if run:
                                       cfreq=cfreq, tax=tax, log_y=log_y, same=same_rebal)
 req = st.session_state.get("bt_req")
 if not req or not req["picked"]:
-    st.info("Методика по умолчанию — как в НИР: 1 000 000 руб., 2011–2025, ежегодная ребалансировка "
+    st.info("По умолчанию: 1 000 000 руб., 2011–2025, ежегодная ребалансировка "
             "в последний торговый день декабря, без комиссий и налогов, бенчмарк MCFTR.")
     st.stop()
 
@@ -103,7 +103,7 @@ cols = st.columns(min(len(results), 6))
 for c, (k, r) in zip(cols * 3, results.items()):
     c.metric(k, fmt_rub(r.final_value), f"{m.cagr(r.equity) * 100:.1f}% CAGR".replace(".", ","))
 
-t1, t2, t3, t4, t5 = st.tabs(["Стоимость", "Просадки", "Показатели (табл. 4 НИР)", "По годам", "Структура и сделки"])
+t1, t2, t3, t4, t5 = st.tabs(["Стоимость", "Просадки", "Показатели эффективности", "По годам", "Структура и сделки"])
 with t1:
     st.plotly_chart(line_chart(eq, bench, "Стоимость, руб.", log_y=req["log_y"], height=520), width="stretch")
     if req["contrib"]:

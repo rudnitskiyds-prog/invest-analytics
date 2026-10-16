@@ -20,7 +20,7 @@ BENCH_COLOR = "#52514e"      # бенчмарк — нейтральный се�
 SEQ_BLUE = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"]
 DIVERGING = [[0, "#e34948"], [0.5, "#f0efec"], [1, "#2a78d6"]]
 
-FREQ_LABELS = {"D": "Дневные", "W": "Недельные", "M": "Месячные (как в НИР)"}
+FREQ_LABELS = {"D": "Дневные", "W": "Недельные", "M": "Месячные"}
 
 
 def color_map(names: list[str], benchmark: Optional[str] = None) -> dict[str, str]:
@@ -56,7 +56,7 @@ def sidebar_settings():
     with st.sidebar:
         st.markdown("### Параметры расчёта")
         ss["rf"] = st.number_input("Безрисковая ставка, % годовых", 0.0, 40.0, float(ss["rf"] * 100), 0.01,
-                                   help="В НИР: 7,86 % — 15-летняя ставка КБД Мосбиржи на 11.01.2011") / 100
+                                   help="По умолчанию — 7,86 %: 15-летняя ставка КБД Мосбиржи на 11.01.2011") / 100
         c1, c2 = st.columns(2)
         if c1.button("КБД 15 лет", help="Текущая ставка КБД Мосбиржи на 15 лет"):
             try:
@@ -64,7 +64,7 @@ def sidebar_settings():
                 st.rerun()
             except Exception as e:  # noqa: BLE001
                 st.warning(f"КБД недоступна: {e}")
-        if c2.button("Как в НИР"):
+        if c2.button("Сброс", help="Вернуть 7,86 % — ставку КБД на 15 лет на 11.01.2011"):
             ss["rf"] = DEFAULT_RF
             st.rerun()
         bench_opts = ["MCFTR", "IMOEX", "MEBCTR", "RGBITR", "RUONIA", "GOLD_CBR"]
