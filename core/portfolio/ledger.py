@@ -217,24 +217,46 @@ def value_history(tx: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
     """
     Ежедневная стоимость портфеля: Σ qty_t × P_t + cash_t.
     prices — DataFrame цен (руб./бумага) по тикерам на торговые дни.
-    Возвращает value, flows (внешние потоки) и индекс доходности TWR.
+    Возвращает value, flows (внешние потоки), индекс доходности TWR и cash.
+
+    Пропуски цен: после первой известной цены — ffill; дни до первой известной цены бумаги
+    (покупка в выходной, IPO / размещение до начала торгов) заполняются первой известной ценой
+    (bfill только ведущих NaN). Если у удерживаемой бумаги (qty ≠ 0) в окне нет ни одной цены
+    (напр. не получен курс ЦБ для валютной облигации), стоимость за эти дни не определена:
+    value_t = NaN и twr_t = NaN (а не заниженная сумма).
+    Бумаги с qty = 0 на сумму не влияют, даже если их цена NaN. Тикеры, которых в prices нет
+    совсем, как и раньше, в стоимость не входят (вызывающий код передаёт цены нужных бумаг).
+    TWR считается по дням с известной стоимостью; внешние потоки за дни пропуска переносятся
+    на ближайший день с известной стоимостью. Список бумаг, у которых хотя бы в один день
+    удержания не было цены, — в result.attrs["missing_prices"] (пустой список, если всё есть).
     """
     if tx.empty:
         return pd.DataFrame()
     start = tx["date"].min()
     idx = prices.loc[start:].index.union(pd.DatetimeIndex(tx["date"].unique())).sort_values()
-    px = prices.reindex(idx).ffill()
     tx = tx.copy()
     tx["cash"] = cash_flow(tx)
     tx["dq"] = np.where(tx["type"] == "BUY", tx["qty"], np.where(tx["type"] == "SELL", -tx["qty"], 0.0))
     qty = tx[tx["dq"] != 0].pivot_table(index="date", columns="secid", values="dq", aggfunc="sum")
     qty = qty.reindex(idx).fillna(0).cumsum()
+    cols = [c for c in qty.columns if c in prices.columns]
+    qty = qty[cols]
+    # после ffill NaN остаются только до первой цены → bfill заполняет лишь ведущие пропуски
+    px = prices.reindex(idx).ffill().bfill()[cols]
     cash = tx.groupby("date")["cash"].sum().reindex(idx).fillna(0).cumsum()
-    cols = [c for c in qty.columns if c in px.columns]
-    value = (qty[cols] * px[cols]).sum(axis=1) + cash
+    held = qty.abs() > 1e-9
+    gap = held & px.isna()
+    # бумаги с qty = 0 дают 0 (NaN-цена не мешает); удерживаемые без цены — NaN на весь день
+    pos = (qty * px).where(held, 0.0)
+    value = pos.sum(axis=1, skipna=False) + cash
     flows = external_flows(tx).reindex(idx).fillna(0)
-    # TWR: r_t = (V_t − F_t) / V_{t−1} − 1 (поток в конце дня t)
-    prev = value.shift(1)
-    r = ((value - flows) / prev - 1).where(prev > 0).fillna(0)
-    twr = (1 + r).cumprod()
-    return pd.DataFrame({"value": value, "flows": flows, "twr": twr, "cash": cash})
+    # TWR: r_t = (V_t − F_t) / V_{t−1} − 1 (поток в конце дня t), по дням с известной стоимостью
+    ok = value.notna()
+    v = value[ok]
+    f = flows.cumsum()[ok].diff()  # потоки с прошлого дня с известной стоимостью
+    prev = v.shift(1)
+    r = ((v - f) / prev - 1).where(prev > 0).fillna(0)
+    twr = (1 + r).cumprod().reindex(idx)
+    out = pd.DataFrame({"value": value, "flows": flows, "twr": twr, "cash": cash})
+    out.attrs["missing_prices"] = sorted(gap.columns[gap.any()].tolist())
+    return out

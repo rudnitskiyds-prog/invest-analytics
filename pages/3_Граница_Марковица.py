@@ -20,7 +20,7 @@ with st.form("frontier"):
                           help="Акции, паи, металлы: SBER, LKOH, EQMX, GLDRUB_TOM…")
     c3, c4, c5, c6 = st.columns(4)
     start = c3.date_input("Начало", pd.Timestamp("2011-01-31"))
-    end = c4.date_input("Конец", pd.Timestamp("2025-12-31"))
+    end = c4.date_input("Конец", pd.Timestamp.today())
     freq = c5.selectbox("Частота", ["M", "W", "D"], format_func={"M": "Месяц", "W": "Неделя", "D": "День"}.get)
     mu_method = c6.selectbox("Ожидаемая доходность", ["arith", "cagr"],
                              format_func={"arith": "Среднее арифм. × n", "cagr": "CAGR"}.get)
@@ -28,17 +28,14 @@ with st.form("frontier"):
     w_min = c7.number_input("Мин. доля актива, %", 0.0, 50.0, 0.0, 1.0) / 100
     w_max = c8.number_input("Макс. доля актива, %", 5.0, 100.0, 100.0, 5.0) / 100
     n_rand = c9.number_input("Случайных портфелей", 500, 30000, 6000, 500)
-    shrink = c10.toggle("Сжатие ковариации (Ledoit–Wolf)", False)
+    shrink = c10.toggle("Ledoit–Wolf", False, help="Сжатие ковариационной матрицы")
     go_btn = st.form_submit_button("Построить", type="primary")
 
 keys = base + [t.strip().upper() for t in extra.split(",") if t.strip()]
-if go_btn:
+if go_btn or "frontier_req" not in st.session_state:   # при первом открытии строим по умолчаниям
     st.session_state["frontier_req"] = (tuple(keys), str(start), str(end), freq, mu_method, w_min, w_max,
                                         int(n_rand), shrink)
-req = st.session_state.get("frontier_req")
-if not req:
-    st.info("Выберите активы и нажмите «Построить».")
-    st.stop()
+req = st.session_state["frontier_req"]
 keys, start, end, freq, mu_method, w_min, w_max, n_rand, shrink = req
 if len(keys) < 2:
     st.warning("Нужно минимум 2 актива")

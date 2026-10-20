@@ -74,14 +74,14 @@ def pct_config(df):
     for c in df.columns:
         if c in PCT:
             cfg[c] = st.column_config.NumberColumn(c, format="percent")
-    for c in ["Цена", "Цена, %", "НКД"]:
+    for c in ["Цена", "Цена, %", "Цена, руб.", "НКД", "НКД, руб."]:
         if c in df.columns:
             cfg[c] = st.column_config.NumberColumn(c, format="%.2f")
     for c in ["Шарп", "Сортино", "Бета", "P/E", "P/B", "P/S", "EV/EBITDA", "ND/EBITDA", "Мод. дюрация",
               "Дюрация, лет", "Лет до погаш."]:
         if c in df.columns:
             cfg[c] = st.column_config.NumberColumn(c, format="%.2f")
-    for c in ["Оборот, руб.", "Кап., млрд"]:
+    for c in ["Оборот, руб.", "Кап., млрд", "Номинал"]:
         if c in df.columns:
             cfg[c] = st.column_config.NumberColumn(c, format="localized")
     if "Комиссия, %" in df.columns:
@@ -167,14 +167,23 @@ with tab_etf:
 with tab_bd:
     board = st.radio("Режим", ["TQOB", "TQCB"], horizontal=True,
                      format_func={"TQOB": "ОФЗ", "TQCB": "Корпоративные"}.get)
+    st.caption("«Цена, %» — в % от номинала в валюте номинала; «Цена, руб.» и «НКД, руб.» пересчитаны "
+               "по официальному курсу ЦБ на сегодня (пусто, если курс недоступен); оборот — в рублях.")
     try:
         df = _bonds(board)
-        c1, c2, c3 = st.columns(3)
+        has_cur = "Валюта" in df.columns
+        cols = st.columns(4 if has_cur else 3)
+        c1, c2, c3 = cols[:3]
         ymin, ymax = c1.slider("Лет до погашения", 0.0, 30.0, (0.0, 30.0), 0.5)
         min_turn = c2.number_input("Мин. оборот за день, млн руб.", 0.0, 10000.0, 0.0, 1.0)
         lvl = c3.multiselect("Уровень листинга", [1, 2, 3], [1, 2, 3])
-        f = df[(df["Лет до погаш."].between(ymin, ymax)) &
-               (df["Оборот, руб."].fillna(0) >= min_turn * 1e6) & (df["Листинг"].isin(lvl))]
+        mask = ((df["Лет до погаш."].between(ymin, ymax)) &
+                (df["Оборот, руб."].fillna(0) >= min_turn * 1e6) & (df["Листинг"].isin(lvl)))
+        if has_cur:
+            cur_all = sorted(df["Валюта"].astype(str).unique(), key=lambda x: (x != "RUB", x))
+            cur = cols[3].multiselect("Валюта номинала", cur_all, cur_all, key=f"bd_cur_{board}")
+            mask &= df["Валюта"].isin(cur)
+        f = df[mask]
         st.dataframe(f, width="stretch", height=560, hide_index=True, column_config=pct_config(f))
         st.download_button("Скачать Excel", to_excel({"Облигации": f}), f"bonds_{board}.xlsx")
     except Exception as e:  # noqa: BLE001

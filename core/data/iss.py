@@ -30,6 +30,7 @@ import requests
 
 from core.config import ISS_BASE, TTL_HISTORY_OPEN, TTL_MARKET, TTL_REFERENCE
 from core.data.cache import HttpCache, dumps
+from core.data.currency import normalize_currency
 
 _session = requests.Session()
 _session.headers.update({"User-Agent": "invest-platform/0.1 (research MVP)"})
@@ -109,7 +110,11 @@ LEGACY_MAIN_BOARDS = {"EQBR", "EQNE", "EQBS", "EQNL", "EQLV", "TQBS", "TQNE", "T
 
 @lru_cache(maxsize=2048)
 def resolve(secid: str) -> dict:
-    """Определяет engine / market / board для бумаги (основной режим торгов)."""
+    """Определяет engine / market / board для бумаги (основной режим торгов).
+
+    Ключ "faceunit" — валюта номинала (ISO, 'RUB' для рублёвых: 'SUR' → 'RUB'); важен для
+    облигаций с валютным номиналом (еврооблигации, замещающие, юаневые ОФЗ), у которых цена —
+    % от номинала в валюте FACEUNIT. Если описания нет — 'RUB'."""
     data = get_json(f"/securities/{secid}", ttl=TTL_REFERENCE)
     desc = block(data, "description")
     boards = block(data, "boards")
@@ -121,6 +126,7 @@ def resolve(secid: str) -> dict:
     info = {"secid": secid, "engine": row["engine"], "market": row["market"],
             "board": row["boardid"], "title": row.get("title", ""),
             "history_from": row.get("history_from"),
+            "faceunit": "RUB",
             # исторические режимы того же рынка (напр. EQBR до перехода акций в TQBR в 2013 г.)
             "boards_hist": [(r["boardid"], r["history_from"], r["history_till"])
                             for _, r in same.sort_values("history_from").iterrows()
@@ -133,7 +139,8 @@ def resolve(secid: str) -> dict:
                      "shortname": d.get("SHORTNAME"), "isin": d.get("ISIN"),
                      "type": d.get("TYPE"), "group": d.get("GROUP"),
                      "issuedate": d.get("ISSUEDATE"), "facevalue": d.get("FACEVALUE"),
-                     "matdate": d.get("MATDATE")})
+                     "matdate": d.get("MATDATE"),
+                     "faceunit": normalize_currency(d.get("FACEUNIT"))})
     return info
 
 
@@ -533,11 +540,17 @@ def etfs() -> pd.DataFrame:
 
 
 def bonds(board: str = "TQOB") -> pd.DataFrame:
-    """TQOB — ОФЗ, TQCB — корпоративные, TQIR — с плавающим купоном и т.п."""
+    """TQOB — ОФЗ, TQCB — корпоративные, TQIR — с плавающим купоном, TQOD / TQOY —
+    облигации с расчётами в USD / CNY и т.п.
+
+    Единицы: PRICE (LAST, иначе PREVPRICE) — % от номинала; FACEVALUE и COUPONVALUE — в валюте
+    номинала FACEUNIT; ACCRUEDINT — в валюте расчётов CURRENCYID (в TQOB/TQCB это рубли даже для
+    валютных бумаг). Добавляемые столбцы FACE_CURRENCY / SETTLE_CURRENCY — те же коды в ISO
+    ('SUR' → 'RUB'); при отсутствии столбца в ответе ISS — 'RUB'."""
     df = _board_table("stock", "bonds", board,
                       ["SECID", "SHORTNAME", "SECNAME", "ISIN", "FACEVALUE", "COUPONPERCENT",
                        "COUPONVALUE", "COUPONPERIOD", "NEXTCOUPON", "MATDATE", "OFFERDATE",
-                       "ACCRUEDINT", "PREVPRICE", "LISTLEVEL", "FACEUNIT", "BONDTYPE"],
+                       "ACCRUEDINT", "PREVPRICE", "LISTLEVEL", "FACEUNIT", "BONDTYPE", "CURRENCYID"],
                       ["SECID", "LAST", "YIELD", "DURATION", "VALTODAY_RUR", "UPDATETIME"],
                       extra_block="marketdata_yields",
                       extra_cols=["EFFECTIVEYIELD", "DURATION", "ZSPREADBP", "GSPREADBP"])
@@ -546,6 +559,8 @@ def bonds(board: str = "TQOB") -> pd.DataFrame:
     df["DURATION_Y"] = pd.to_numeric(df[dur_col], errors="coerce") / 365.25
     df["MATDATE"] = pd.to_datetime(df["MATDATE"], errors="coerce")
     df["YEARS_TO_MAT"] = (df["MATDATE"] - pd.Timestamp.today()).dt.days / 365.25
+    df["FACE_CURRENCY"] = df["FACEUNIT"].map(normalize_currency) if "FACEUNIT" in df else "RUB"
+    df["SETTLE_CURRENCY"] = df["CURRENCYID"].map(normalize_currency) if "CURRENCYID" in df else "RUB"
     return df
 
 
