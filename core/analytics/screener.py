@@ -19,7 +19,7 @@ import pandas as pd
 
 from core.analytics import metrics as m
 from core.config import FUNDAMENTALS_CSV
-from core.data import iss
+from core.data import cbr, iss
 
 FUND_COLUMNS = ["secid", "period", "net_income", "revenue", "ebitda", "equity", "net_debt",
                 "shares_out", "source"]
@@ -130,14 +130,36 @@ def etf_showcase(benchmark: str = "IMOEX", rf: float = 0.16) -> pd.DataFrame:
 
 
 def bonds_showcase(board: str = "TQOB") -> pd.DataFrame:
+    """Витрина облигаций режима `board`.
+
+    "Цена, %" и "Купон, %" — в % от номинала в его валюте ("Валюта", "Номинал").
+    Рублёвые столбцы пересчитаны по официальному курсу ЦБ на сегодня (запрос один раз на валюту,
+    для рублёвых бумаг — без сети; если курс не получен — NaN):
+      "Цена, руб." = Цена, % / 100 × Номинал × курс(валюта номинала);
+      "НКД, руб."  = ACCRUEDINT × курс(валюта расчётов CURRENCYID).
+    "Оборот, руб." (VALTODAY_RUR) публикуется ISS уже в рублях.
+    Мод. дюрация — стандартное определение D_mod = D / (1 + y).
+    """
     df = iss.bonds(board)
     ytm_col = "EFFECTIVEYIELD" if "EFFECTIVEYIELD" in df else "YIELD"
-    out = df[["SECID", "SHORTNAME", "PRICE", "COUPONPERCENT", "NEXTCOUPON", "MATDATE",
-              "YEARS_TO_MAT", "DURATION_Y", "ACCRUEDINT", "VALTODAY_RUR", "LISTLEVEL"]].copy()
-    out["Доходность, %"] = pd.to_numeric(df[ytm_col], errors="coerce").fillna(pd.to_numeric(df["YIELD"], errors="coerce"))
+    face_cur = df["FACE_CURRENCY"] if "FACE_CURRENCY" in df else pd.Series("RUB", index=df.index)
+    settle_cur = df["SETTLE_CURRENCY"] if "SETTLE_CURRENCY" in df else pd.Series("RUB", index=df.index)
+    rates = cbr.rates_on(set(face_cur) | set(settle_cur))
+    price = pd.to_numeric(df["PRICE"], errors="coerce")
+    face = pd.to_numeric(df["FACEVALUE"], errors="coerce")
+    out = pd.DataFrame({"SECID": df["SECID"], "Название": df["SHORTNAME"], "Валюта": face_cur,
+                        "Номинал": face, "Цена, %": price})
+    out["Цена, руб."] = price / 100 * face * face_cur.map(rates).astype(float)
+    out["Купон, %"] = df["COUPONPERCENT"]
+    out["След. купон"] = df["NEXTCOUPON"]
+    out["Погашение"] = df["MATDATE"]
+    out["Лет до погаш."] = df["YEARS_TO_MAT"]
+    out["Дюрация, лет"] = df["DURATION_Y"]
+    out["Доходность, %"] = pd.to_numeric(df[ytm_col], errors="coerce").fillna(
+        pd.to_numeric(df["YIELD"], errors="coerce"))
     # модифицированная дюрация: D / (1 + y)
-    out["Мод. дюрация"] = out["DURATION_Y"] / (1 + out["Доходность, %"] / 100)
-    return out.rename(columns={"SHORTNAME": "Название", "PRICE": "Цена, %", "COUPONPERCENT": "Купон, %",
-                               "NEXTCOUPON": "След. купон", "MATDATE": "Погашение",
-                               "YEARS_TO_MAT": "Лет до погаш.", "DURATION_Y": "Дюрация, лет",
-                               "ACCRUEDINT": "НКД", "VALTODAY_RUR": "Оборот, руб.", "LISTLEVEL": "Листинг"})
+    out["Мод. дюрация"] = out["Дюрация, лет"] / (1 + out["Доходность, %"] / 100)
+    out["НКД, руб."] = pd.to_numeric(df["ACCRUEDINT"], errors="coerce") * settle_cur.map(rates).astype(float)
+    out["Оборот, руб."] = df["VALTODAY_RUR"]
+    out["Листинг"] = df["LISTLEVEL"]
+    return out

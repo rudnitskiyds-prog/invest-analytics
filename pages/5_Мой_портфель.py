@@ -61,10 +61,20 @@ with st.spinner("Получаю котировки…"):
     quotes = get_quotes(held)
 val, cash = valuation(tx, quotes)
 total = (val["Стоимость"].fillna(0).sum() if not val.empty else 0) + cash
+# Позиции без цены (у валютных облигаций — нет курса ЦБ) в оценку не входят: предупреждаем,
+# а XIRR не показываем, чтобы не выдавать заниженную доходность.
+missing = sorted(val.loc[val["Стоимость"].isna() & (val["Кол-во"] > 1e-9), "Тикер"]) if not val.empty else []
+if missing:
+    fx = set(quotes.index[quotes["currency"].fillna("RUB").ne("RUB")]) \
+        if "currency" in quotes.columns else set()
+    names = ", ".join(f"{s} (нет курса ЦБ)" if s in fx else f"{s} (нет котировки — возможно, бумага погашена)"
+                      for s in missing)
+    st.warning(f"Нет цены для: {names}. Эти бумаги не включены в стоимость портфеля и результат; "
+               f"XIRR не рассчитан.")
 flows = external_flows(tx)
 net_in = flows.sum() if len(flows) else 0.0
 cf = [(d, -v) for d, v in flows.items()] + [(pd.Timestamp.today().normalize(), total)]
-irr = xirr(cf) if len(cf) > 1 else float("nan")
+irr = xirr(cf) if len(cf) > 1 and not missing else float("nan")
 
 k = st.columns(5)
 k[0].metric("Стоимость портфеля", fmt_rub(total))
@@ -96,17 +106,30 @@ with t1:
         c2.plotly_chart(fig, width="stretch")
 
 hist = None
+hist_missing = []
 with t2:
     start = str(tx["date"].min().date())
+    # цены — с запасом 14 дней до первой операции, чтобы у покупки в выходной была последняя цена
+    px_start = str((tx["date"].min() - pd.Timedelta(days=14)).date())
     with st.spinner("Строю историю стоимости…"):
         try:
-            prices = price_history_rub(held, start)
+            prices = price_history_rub(held, px_start)
             hist = value_history(tx, prices)
         except Exception as e:  # noqa: BLE001
             st.error(f"Не удалось построить историю: {e}")
     if hist is not None and not hist.empty:
+        # бумаги, у которых в дни удержания не было цены (заполняет core: учитывает только qty ≠ 0)
+        hist_missing = list(hist.attrs.get("missing_prices") or [])
         st.plotly_chart(line_chart(hist[["value"]].rename(columns={"value": cur}), y_title="Стоимость, руб."),
                         width="stretch")
+    if hist_missing:
+        gap = hist.index[hist["value"].isna()]
+        when = f" ({gap[0]:%d.%m.%Y} — {gap[-1]:%d.%m.%Y})" if len(gap) else ""
+        st.warning(f"Нет цены для: {', '.join(hist_missing)} в части дней удержания{when}. "
+                   f"На графике стоимости — разрывы.")
+        st.info("TWR, метрики и сравнение со стратегиями не рассчитаны: в истории стоимости есть дни "
+                "без оценки части позиций.")
+    elif hist is not None and not hist.empty:
         twr = hist["twr"] * 100
         b = load_series(bench, start)
         comp = pd.DataFrame({cur: twr, bench: b / b.iloc[0] * 100}).ffill().dropna()
@@ -120,7 +143,10 @@ with t2:
 
 with t3:
     st.caption("Сравнение TWR портфеля со стратегиями НИР на том же отрезке (без пополнений).")
-    if hist is not None and not hist.empty and len(hist) > 20:
+    if hist_missing:
+        st.info("Сравнение не рассчитано: в истории стоимости портфеля есть дни без оценки части позиций "
+                "(см. вкладку «Динамика и метрики»).")
+    elif hist is not None and not hist.empty and len(hist) > 20:
         s0, s1 = hist.index[0], hist.index[-1]
         picks = st.multiselect("Стратегии", list(STRATEGIES), list(STRATEGIES)[:3])
         keys = sorted({a for p in picks for a in STRATEGIES[p]["weights"]})
