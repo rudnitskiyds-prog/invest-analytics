@@ -108,6 +108,34 @@ def fmt_price(v, unit: str) -> str:
     return f"{s} {unit}"
 
 
+def cur_code(c) -> str:
+    """ISO-код валюты; пусто / SUR — рубль (RUB)."""
+    c = str(c or "").strip().upper()
+    return "RUB" if c in ("", "SUR", "RUR", "NAN", "NONE") else c
+
+
+def cur_sign(c) -> str:
+    """Знак для подписи: ₽ для рубля, иначе ISO-код (CNY, USD…)."""
+    c = cur_code(c)
+    return "₽" if c == "RUB" else c
+
+
+def fmt_money(v, c, digits: int = 2) -> str:
+    return f"{fmt_num(v, digits)} {cur_sign(c)}" if is_num(v) else "—"
+
+
+def fmt_big_cur(x, c) -> str:
+    """Сумма компактно в любой валюте: «48 тыс. CNY», «1,25 млн USD»."""
+    if not is_num(x):
+        return "—"
+    v, sign = float(x), cur_sign(c)
+    a = abs(v)
+    for k, u in ((1e12, "трлн"), (1e9, "млрд"), (1e6, "млн"), (1e3, "тыс.")):
+        if a >= k:
+            return f"{fmt_num(v / k, 2 if a / k < 10 else 0 if k == 1e3 else 1)} {u} {sign}"
+    return f"{fmt_num(v)} {sign}"
+
+
 def years_word(n: int) -> str:
     a, b = abs(n) % 100, abs(n) % 10
     if 10 < a < 20:
@@ -326,6 +354,10 @@ errors: dict = data.get("errors") or {}
 info: dict = data.get("info") or {}
 cls = info.get("cls")
 unit = price_unit(cls, info.get("currency"))
+# «Рост 100 …»: ряд облигации — цена ISS в % от номинала, т. е. в валюте номинала (без пересчёта по курсу)
+face_cur = (cur_code(g((data.get("snapshot") or {}).get("bond") or {}, "face_currency")
+                     or info.get("faceunit") or info.get("currency")) if cls == "bond" else "RUB")
+growth_label = f"Рост 100 {cur_sign(face_cur)}"
 
 # --- шапка
 # латиницей введено название, а не тикер (ISS бумагу не нашёл) — предлагаем поиск
@@ -438,6 +470,14 @@ def period_note() -> str:
     return f"период {fmt_date(g(msec, 'start'))} — {fmt_date(g(msec, 'end'))}"
 
 
+def fx_note():
+    """Облигация с валютным номиналом: ряд — цена в валюте номинала, бенчмарк и Rf — рублёвые."""
+    if face_cur == "RUB":
+        return
+    st.caption(f"Доходность и коэффициенты облигации посчитаны по цене в {face_cur} без купонов и без пересчёта "
+               "по курсу; бенчмарк и безрисковая ставка — рублёвые, поэтому сравнение условно.")
+
+
 # --- ключевые цифры
 def block_key():
     try:
@@ -462,6 +502,9 @@ def block_key():
         cols[2].progress(min(max((float(last) - float(lo)) / (float(hi) - float(lo)), 0.0), 1.0),
                          text="текущая цена в диапазоне")
     cols[3].metric("Оборот за день", fmt_big_rub(s.get("value_rub")))
+    settle = cur_code(s.get("settle_currency") or g(s.get("bond") or {}, "settle_currency") or info.get("currency"))
+    if settle != "RUB" and is_num(s.get("value_settle")):
+        cols[3].caption(f"{fmt_big_cur(s.get('value_settle'), settle)} в валюте торгов")
     if is_num(s.get("market_cap")):
         cols[4].metric("Капитализация", fmt_big_rub(s.get("market_cap")))
 
@@ -473,7 +516,7 @@ def block_chart():
     per = a.segmented_control("Период", list(CHART_PERIODS), format_func=CHART_PERIODS.get, default="1Y",
                               key="sym_per") or "1Y"
     mode = b.segmented_control("Что показывать", ["growth", "price"], default="growth", key="sym_mode",
-                               format_func={"growth": "Рост 100 ₽", "price": "Цена"}.get) or "growth"
+                               format_func={"growth": growth_label, "price": "Цена"}.get) or "growth"
     log_y = c.toggle("Лог. шкала", False, key="sym_log")
     if mode == "price":
         close = rep.get("close")
@@ -502,7 +545,11 @@ def block_chart():
         raise NoData("Нет общего периода данных.")
     df = df.loc[m.period_start(df.index, per) or df.index[0]:]
     norm = df / df.iloc[0] * 100
-    notes = [f"Рост 100 ₽ вложений, {fmt_date(norm.index[0])} — {fmt_date(norm.index[-1])}."]
+    span = f"{fmt_date(norm.index[0])} — {fmt_date(norm.index[-1])}"
+    if face_cur != "RUB" and has_bench:
+        notes = [f"{growth_label} вложений в {esc(secid)} и 100 ₽ в бенчмарк — каждый ряд в своей валюте; {span}."]
+    else:
+        notes = [f"{growth_label} вложений, {span}."]
     if rep.get("total_return"):
         notes.append(f"{esc(secid)} — с учётом дивидендов.")
     if cmp in cols:
@@ -512,6 +559,7 @@ def block_chart():
     st.caption(" ".join(notes))
     st.plotly_chart(line_chart(norm, bench if has_bench else None, "Стоимость, база = 100", log_y=log_y,
                                hover_fmt=".1f"), width="stretch")
+    fx_note()
 
 
 # --- доходность по периодам
@@ -593,6 +641,7 @@ def block_relative():
     if not mcommon:
         raise NoData(esc(rep_errors.get("metrics_common") or "нет общего периода бумаги и бенчмарка") + ".")
     st.caption(f"{divs_note()} Дневные доходности, {period_note()}.".strip())
+    fx_note()
     keys = list(REL_LABELS)
     for i in range(0, len(keys), 4):
         for col, k in zip(st.columns(4), keys[i:i + 4]):
@@ -606,6 +655,7 @@ def block_riskret():
     if msec is None:
         raise NoData(esc(rep_errors.get("metrics") or ""))
     st.caption(f"Rf = {fmt_pct(rf, 2)}, дневные доходности, {period_note()}. {divs_note()}".strip())
+    fx_note()
     df = pd.DataFrame({"Показатель": list(RISK_LABELS.values()),
                        secid: [fmt_metric(k, g(msec, k)) for k in RISK_LABELS]})
     if has_bench and mbench is not None:
@@ -737,9 +787,16 @@ def block_coupons():
     df = cp.copy()
     df[dcol] = pd.to_datetime(df[dcol])
     df = df.sort_values(dcol)
+    if vcol == "value_rub":
+        ccy = "₽"
+    else:   # value — в валюте номинала: faceunit последнего купона, иначе валюта номинала из snapshot / info
+        fcol = _col(df, "faceunit")
+        units = [u for u in df[fcol] if isinstance(u, str) and u.strip()] if fcol else []
+        bd = (data.get("snapshot") or {}).get("bond") or {}
+        ccy = cur_sign(units[-1] if units else (g(bd, "face_currency") or info.get("currency")))
     today = pd.Timestamp.today().normalize()
     vals = [float(v) if is_num(v) else None for v in df[vcol]]
-    st.plotly_chart(bar_chart([fmt_date(d) for d in df[dcol]], vals, secid, "Купон, ₽", "Дата выплаты",
+    st.plotly_chart(bar_chart([fmt_date(d) for d in df[dcol]], vals, secid, f"Купон, {ccy}", "Дата выплаты",
                               muted=list(df[dcol] >= today)), width="stretch")
     fut = df[df[dcol] >= today].head(8)
     st.markdown("**Ближайшие купоны**")
@@ -754,7 +811,7 @@ def block_coupons():
             return f"{fmt_num(r[pcol], 2)}%"
         return "—"
 
-    st.dataframe(pd.DataFrame([{"Дата": fmt_date(r[dcol]), "Купон, ₽": fmt_num(r[vcol], 2), "Ставка": rate(r)}
+    st.dataframe(pd.DataFrame([{"Дата": fmt_date(r[dcol]), f"Купон, {ccy}": fmt_num(r[vcol], 2), "Ставка": rate(r)}
                                for _, r in fut.iterrows()]), hide_index=True, width="stretch")
 
 
@@ -829,25 +886,52 @@ def block_vol():
 # --- облигация
 def block_bond():
     bd = (data.get("snapshot") or {}).get("bond") or {}
-    st.caption("Доходность к погашению (или к оферте, если она назначена), дюрация и НКД — ISS Мосбиржи. "
-               "Цена облигации — в % от номинала.")
-    dur, aci, cv = g(bd, "duration"), g(bd, "accrued_int", "accruedInt"), g(bd, "coupon_value", "couponValue")
-    cp, per, fv = info.get("coupon_percent"), info.get("coupon_period"), info.get("face_value")
+    # суммы — в валюте номинала (контракт snapshot.bond); старые данные без face_currency — валюта бумаги
+    fcur = cur_code(g(bd, "face_currency") or info.get("faceunit") or info.get("currency"))
+    fx = g(bd, "fx_rate")
+    scur = cur_code(g(bd, "settle_currency") or (data.get("snapshot") or {}).get("settle_currency")
+                    or info.get("currency"))
+    # НКД в валюте номинала; нет его (курса ЦБ нет) — accrued_int, а он в валюте расчётов
+    aci = g(bd, "accrued_int_face")
+    aci_cur = fcur
+    if not is_num(aci):
+        aci = g(bd, "accrued_int", "accruedInt")
+        aci_cur = scur
+    aci_settle = aci_cur != fcur
+    note = ("Доходность к погашению (или к оферте, если она назначена), дюрация и НКД — ISS Мосбиржи. "
+            "Цена облигации — в % от номинала.")
+    if fcur != "RUB":
+        note += (f" Номинал и купон — в валюте номинала ({fcur}), НКД — в валюте расчётов ({cur_sign(aci_cur)}), "
+                 "курс ЦБ недоступен" if aci_settle else f" Номинал, купон и НКД — в валюте номинала ({fcur})")
+        if is_num(fx):
+            note += (f"; ≈ ₽ — по официальному курсу ЦБ на сегодня "
+                     f"(1 {fcur} = {fmt_num(fx, 2 if float(fx) >= 1 else 4)} ₽)")
+        note += "."
+    st.caption(note)
+    dur = g(bd, "duration")
+    cv = g(bd, "coupon_value", "couponValue")
+    fv = g(bd, "face_value") if is_num(g(bd, "face_value")) else info.get("face_value")
+    cp, per = info.get("coupon_percent"), info.get("coupon_period")
+    rub = {"НКД": g(bd, "accrued_int_rub"), "Купон": g(bd, "coupon_value_rub"), "Номинал": g(bd, "face_value_rub")}
     facts = [
         ("Доходность", fmt_pct(g(bd, "yield"), 2)),
         ("Дюрация", f"{fmt_num(dur, 2)} г." if is_num(dur) else "—"),
-        ("НКД", f"{fmt_num(aci, 2)} ₽" if is_num(aci) else "—"),
-        ("Купон", f"{fmt_num(cv, 2)} ₽" if is_num(cv) else "—"),
+        ("НКД", fmt_money(aci, aci_cur)),
+        ("Купон", fmt_money(cv, fcur)),
         ("Ставка купона", f"{fmt_num(cp, 2)} % год." if is_num(cp) else "—"),
         ("Купонный период", f"{fmt_num(per)} дн." if is_num(per) else "—"),
         ("Ближайший купон", fmt_date(g(bd, "next_coupon", "nextCoupon"))),
-        ("Номинал", f"{fmt_num(fv, 2)} ₽" if is_num(fv) else "—"),
+        ("Номинал", fmt_money(fv, fcur)),
         ("Погашение", fmt_date(info.get("mat_date"))),
         ("Оферта", fmt_date(info.get("offer_date")) if info.get("offer_date") else "нет"),
     ]
     for i in range(0, len(facts), 5):
         for col, (k, val) in zip(st.columns(5), facts[i:i + 5]):
             col.metric(k, val)
+            if k == "НКД" and aci_settle and is_num(aci):
+                col.caption("в валюте расчётов; курс ЦБ недоступен")
+            elif fcur != "RUB" and is_num(rub.get(k)) and not (k == "НКД" and aci_settle):
+                col.caption(f"≈ {fmt_num(rub[k], 2 if abs(float(rub[k])) < 1000 else 0)} ₽ по курсу ЦБ")
 
 
 # ------------------------------------------------------------------ блоки по порядку

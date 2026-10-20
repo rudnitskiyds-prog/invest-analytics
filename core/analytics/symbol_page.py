@@ -22,7 +22,8 @@ import pandas as pd
 
 from core.analytics import metrics as m
 from core.analytics.ranking import next_weekday
-from core.data import iss, public_data
+from core.data import cbr, iss, public_data
+from core.data.currency import normalize_currency
 
 SYMBOL_CLASSES = {"share": "Акция", "fund": "Фонд", "bond": "Облигация", "index": "Индекс",
                   "metal": "Металл", "currency": "Валюта"}
@@ -136,7 +137,8 @@ def _primary(boards: list[dict]) -> dict:
 def load_info(secid: str, raw: Optional[dict] = None) -> dict:
     """Шапка страницы (как fetchSecurityInfo): ISS /securities/{id} (description + boards) и эмитент.
     coupon_percent — % годовых (как в ISS), coupon_period — дней (COUPONPERIOD или round(364 / COUPONFREQUENCY)),
-    face_value — в валюте номинала, first_trade_date — самая ранняя history_from режимов того же рынка."""
+    face_value — в валюте номинала, faceunit — ISO валюты номинала (description.FACEUNIT,
+    'SUR' → 'RUB'; нет — 'RUB'), first_trade_date — самая ранняя history_from режимов того же рынка."""
     sid = secid.strip().upper()
     raw = raw or iss.description(sid)          # raw — готовый ответ iss.description (без повторного запроса)
     d, boards = raw["description"], raw["boards"]
@@ -164,6 +166,7 @@ def load_info(secid: str, raw: Optional[dict] = None) -> dict:
         "issuer": iss.issuer(sid),
         "list_level": int(list_level) if list_level is not None else None,
         "currency": _currency(d.get("FACEUNIT") or d.get("CURRENCYID")),
+        "faceunit": normalize_currency(d.get("FACEUNIT")),
         "issue_date": _iso(d.get("ISSUEDATE")),
         "first_trade_date": first,
         "face_value": _pos(d.get("FACEVALUE")),
@@ -180,13 +183,35 @@ def load_info(secid: str, raw: Optional[dict] = None) -> dict:
 
 
 def snapshot(secid: str, ohlc: Optional[pd.DataFrame] = None, boards: Optional[list] = None,
-             fetch_candles: bool = True) -> dict:
+             fetch_candles: bool = True, description: Optional[dict] = None) -> dict:
     """Ключевые цифры (как fetchSnapshot): marketdata + securities (+ marketdata_yields) основного режима;
     high52/low52 — по high/low свечей за 365 дней до последней (нет high/low — по close). ohlc не передан —
     свечи за 380 дней (fetch_candles=False — без свечей, только marketdata). boards — готовые режимы
-    из iss.description (без повторного запроса). change_pct — доля; облигации: цены — % номинала, bond.yield — доля, bond.duration — лет."""
+    из iss.description (без повторного запроса); description — готовый блок description того же ответа
+    (запасной источник FACEUNIT; не передан вместе с boards — FACEUNIT только из securities). change_pct — доля; облигации: цены — % номинала, bond.yield — доля, bond.duration — лет.
+
+    Единицы денежных полей:
+      value_rub — оборот за день в рублях (VALTODAY_RUR; нет — VALTODAY, только если расчёты в RUB; иначе None);
+      value_settle — оборот за день в валюте расчётов режима (VALTODAY);
+      settle_currency — ISO валюты расчётов режима (securities.CURRENCYID, 'SUR' → 'RUB'; нет — 'RUB');
+      market_cap — в рублях (ISS ISSUECAPITALIZATION) либо last × ISSUESIZE в валюте цены.
+    bond (только облигации, иначе None):
+      face_currency — ISO валюты номинала (securities.FACEUNIT; нет — description.FACEUNIT; по умолчанию 'RUB');
+      settle_currency — ISO валюты расчётов (securities.CURRENCYID; нет — 'RUB');
+      face_value — номинал в валюте номинала (securities.FACEVALUE; нет — None);
+      coupon_value — купон в валюте номинала (COUPONVALUE);
+      accrued_int — НКД в валюте расчётов (ACCRUEDINT, как в ISS);
+      accrued_int_face — НКД в валюте номинала: accrued_int × курс(settle) / курс(face);
+      face_value_rub, coupon_value_rub, accrued_int_rub — рублёвые эквиваленты по курсу ЦБ на сегодня
+        (cbr.rates_on; для рублёвых бумаг — те же числа без обращения к ЦБ; нет курса — None);
+      fx_rate — курс ЦБ валюты номинала, руб. за 1 ед. (RUB — 1.0; нет курса — None).
+    Курсы ЦБ запрашиваются одним вызовом cbr.rates_on и только если хотя бы одна валюта не RUB."""
     sid = secid.strip().upper()
-    prim = _primary(boards or iss.description(sid)["boards"])
+    desc = description
+    if not boards:
+        raw = iss.description(sid)
+        desc, boards = desc or raw.get("description") or {}, raw["boards"]
+    prim = _primary(boards)
     engine, market, board = prim.get("engine"), prim.get("market"), prim.get("boardid")
     blocks = iss.board_snapshot(sid, engine, market, board)
     s, md, my = blocks.get("securities") or {}, blocks.get("marketdata") or {}, blocks.get("marketdata_yields") or {}
@@ -233,11 +258,47 @@ def snapshot(secid: str, ohlc: Optional[pd.DataFrame] = None, boards: Optional[l
                 "accrued_int": _num(s.get("ACCRUEDINT")),
                 "coupon_value": _num(s.get("COUPONVALUE")),
                 "next_coupon": _iso(s.get("NEXTCOUPON"))}
+        bond.update(_bond_currency(s, desc))
+    settle = bond["settle_currency"] if bond else normalize_currency(s.get("CURRENCYID"))
     return {"date": date, "last": last, "prev_close": prev_close, "change": change,
             "change_pct": change / prev_close if change is not None and prev_close else None,
             "high52": high52, "low52": low52,
-            "value_rub": _first_num(md.get("VALTODAY_RUR"), md.get("VALTODAY")),
+            "value_rub": _first_num(md.get("VALTODAY_RUR"), md.get("VALTODAY") if settle == "RUB" else None),
+            "value_settle": _num(md.get("VALTODAY")), "settle_currency": settle,
             "market_cap": cap, "bond": bond}
+
+
+def _rate(rates: dict, c: str) -> Optional[float]:
+    """Курс ЦБ (руб. за 1 ед.) из словаря rates_on; RUB — 1.0; нет / NaN / ≤0 — None."""
+    if c == "RUB":
+        return 1.0
+    return _pos(rates.get(c))
+
+
+def _bond_currency(s: dict, desc: Optional[dict] = None) -> dict:
+    """Валюты облигации и пересчёты сумм (стандартный пересчёт по официальному курсу ЦБ):
+    сумма_в_X = сумма_в_Y × курс(Y) / курс(X), курс — руб. за 1 ед., курс(RUB) = 1.
+    ISS: FACEUNIT — валюта номинала (COUPONVALUE, FACEVALUE), CURRENCYID — валюта расчётов (ACCRUEDINT)."""
+    fu = s.get("FACEUNIT") or (desc or {}).get("FACEUNIT")
+    face, settle = normalize_currency(fu), normalize_currency(s.get("CURRENCYID"))
+    nkd, cpn, fv = _num(s.get("ACCRUEDINT")), _num(s.get("COUPONVALUE")), _pos(s.get("FACEVALUE"))
+    rates = {} if face == settle == "RUB" else cbr.rates_on({face, settle})
+    r_face, r_settle = _rate(rates, face), _rate(rates, settle)
+
+    def conv(x, r_from, r_to):
+        if x is None:
+            return None
+        if r_from is None or r_to is None:
+            return None
+        return x * r_from / r_to
+
+    nkd_face = nkd if face == settle else conv(nkd, r_settle, r_face)
+    return {"face_currency": face, "settle_currency": settle, "face_value": fv,
+            "accrued_int_face": nkd_face,
+            "accrued_int_rub": nkd if settle == "RUB" else conv(nkd, r_settle, 1.0),
+            "coupon_value_rub": cpn if face == "RUB" else conv(cpn, r_face, 1.0),
+            "face_value_rub": fv if face == "RUB" else conv(fv, r_face, 1.0),
+            "fx_rate": r_face}
 
 
 def load_dividends(secid: str) -> list[dict]:
@@ -351,7 +412,8 @@ def load_symbol(secid: str, years: Optional[int] = None) -> dict:
                 raise ValueError(f"ISS не вернул истории торгов {sid}.")
             return o
         run("ohlc", _ohlc)
-        run("snapshot", lambda: snapshot(sid, out["ohlc"], boards=raw["boards"], fetch_candles=False))
+        run("snapshot", lambda: snapshot(sid, out["ohlc"], boards=raw["boards"], fetch_candles=False,
+                                                description=raw.get("description")))
     run("dividends", lambda: load_dividends(sid))
     cls = (out["info"] or {}).get("cls")
     if cls == "bond":

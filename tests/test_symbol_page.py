@@ -1518,3 +1518,296 @@ def test_overview_without_symbol_stats(offline, no_pub):
     at = _app("pages/0_Обзор.py")
     assert not at.exception
     assert any("Рейтинг появится после ночного пересчёта" in c.value for c in at.caption)
+
+
+# ====================================================================== валютные облигации в карточке
+# Реальные данные ISS на 20.10.2026: RU000A10DQA8 (TQOY) — FACEUNIT CNY, CURRENCYID CNY, FACEVALUE 10000,
+# COUPONVALUE 349,04, ACCRUEDINT 255,07, VALTODAY 497 023, VALTODAY_RUR 6 156 574; курс CNY ЦБ 12,3869.
+CNY_RATE = 12.3869
+USD_RATE = 83.9153
+
+
+def _patch_bond_snapshot(monkeypatch, securities, marketdata=None, desc=None, rates=None):
+    """iss.description / iss.board_snapshot / cbr.rates_on подменены; вызовы rates_on — в возвращаемом списке."""
+    from core.data import cbr
+    calls: list = []
+    monkeypatch.setattr(iss, "description", lambda s: {"description": dict(desc or {}), "boards": [
+        {"boardid": "TQOY", "engine": "stock", "market": "bonds", "is_primary": 1}]})
+    monkeypatch.setattr(iss, "board_snapshot", lambda *a: {"securities": dict(securities),
+                                                           "marketdata": dict(marketdata or {}),
+                                                           "marketdata_yields": {}})
+
+    def fake_rates(codes, date=None):
+        codes = set(codes)
+        calls.append(codes)
+        return {c: (rates or {}).get(c, float("nan")) if c != "RUB" else 1.0 for c in codes}
+    monkeypatch.setattr(cbr, "rates_on", fake_rates)
+    return calls
+
+
+def test_snapshot_bond_rub_no_cbr_call(monkeypatch):
+    calls = _patch_bond_snapshot(monkeypatch, {"FACEUNIT": "SUR", "CURRENCYID": "SUR", "FACEVALUE": 1000,
+                                               "ACCRUEDINT": 12.5, "COUPONVALUE": 35.4},
+                                 marketdata={"VALTODAY": 1e6})
+    s = sp.snapshot("SU1", _ohlc({"2026-10-19": (1, 2, 1, 98.0)}))
+    b = s["bond"]
+    assert calls == []
+    assert b["face_currency"] == "RUB" and b["settle_currency"] == "RUB"
+    assert b["face_value"] == 1000 and b["face_value_rub"] == 1000
+    assert b["accrued_int_face"] == 12.5 and b["accrued_int_rub"] == 12.5
+    assert b["coupon_value_rub"] == 35.4 and b["fx_rate"] == 1.0
+    assert s["settle_currency"] == "RUB" and s["value_settle"] == 1e6 and s["value_rub"] == 1e6
+
+
+def test_snapshot_bond_cny_cny_real_values(monkeypatch):
+    calls = _patch_bond_snapshot(monkeypatch, {"FACEUNIT": "CNY", "CURRENCYID": "CNY", "FACEVALUE": 10000,
+                                               "ACCRUEDINT": 255.07, "COUPONVALUE": 349.04},
+                                 marketdata={"VALTODAY": 497023, "VALTODAY_RUR": 6156574},
+                                 rates={"CNY": CNY_RATE})
+    s = sp.snapshot("RU000A10DQA8", _ohlc({"2026-10-19": (1, 2, 1, 98.0)}))
+    b = s["bond"]
+    assert calls == [{"CNY"}]
+    assert b["face_currency"] == "CNY" and b["settle_currency"] == "CNY"
+    assert b["face_value"] == 10000 and b["coupon_value"] == 349.04 and b["accrued_int"] == 255.07
+    assert b["accrued_int_face"] == 255.07                      # одна валюта — без пересчёта
+    assert b["accrued_int_rub"] == pytest.approx(255.07 * 12.3869)        # 3159,53
+    assert b["coupon_value_rub"] == pytest.approx(349.04 * 12.3869)       # 4323,52
+    assert b["face_value_rub"] == pytest.approx(123869.0)
+    assert b["fx_rate"] == pytest.approx(CNY_RATE)
+    assert s["value_rub"] == 6156574 and s["value_settle"] == 497023 and s["settle_currency"] == "CNY"
+
+
+def test_snapshot_bond_usd_face_rub_settle(monkeypatch):
+    calls = _patch_bond_snapshot(monkeypatch, {"FACEUNIT": "USD", "CURRENCYID": "SUR", "FACEVALUE": 1000,
+                                               "ACCRUEDINT": 2299.28, "COUPONVALUE": 25.0},
+                                 rates={"USD": USD_RATE})
+    b = sp.snapshot("RU000A0JX2M2", _ohlc({"2026-10-12": (1, 2, 1, 100.0)}))["bond"]
+    assert len(calls) == 1 and calls[0] - {"RUB"} == {"USD"}          # один запрос; рубль ЦБ не нужен
+    assert b["face_currency"] == "USD" and b["settle_currency"] == "RUB"
+    assert b["accrued_int_face"] == pytest.approx(2299.28 / 83.9153)      # 27,40 USD
+    assert b["accrued_int_face"] == pytest.approx(27.40, abs=0.005)
+    assert b["accrued_int_rub"] == 2299.28
+    assert b["coupon_value_rub"] == pytest.approx(25.0 * 83.9153)
+    assert b["face_value_rub"] == pytest.approx(83915.3)
+    assert b["fx_rate"] == pytest.approx(USD_RATE)
+
+
+def test_snapshot_bond_nan_rate_gives_none(monkeypatch):
+    _patch_bond_snapshot(monkeypatch, {"FACEUNIT": "USD", "CURRENCYID": "SUR", "FACEVALUE": 1000,
+                                       "ACCRUEDINT": 2299.28, "COUPONVALUE": 25.0}, rates={})   # курс NaN
+    b = sp.snapshot("RU000A0JX2M2", _ohlc({"2026-10-12": (1, 2, 1, 100.0)}))["bond"]
+    assert b["accrued_int_face"] is None
+    assert b["coupon_value_rub"] is None and b["face_value_rub"] is None and b["fx_rate"] is None
+    assert b["accrued_int_rub"] == 2299.28                      # расчёты в рублях — курс не нужен
+    assert b["face_value"] == 1000 and b["coupon_value"] == 25.0
+    # одна валюта CNY/CNY, курса нет: НКД в валюте номинала есть, рублёвые — None
+    _patch_bond_snapshot(monkeypatch, {"FACEUNIT": "CNY", "CURRENCYID": "CNY", "FACEVALUE": 10000,
+                                       "ACCRUEDINT": 255.07, "COUPONVALUE": 349.04}, rates={})
+    b = sp.snapshot("RU000A10DQA8", _ohlc({"2026-10-19": (1, 2, 1, 98.0)}))["bond"]
+    assert b["accrued_int_face"] == 255.07
+    assert b["accrued_int_rub"] is None and b["coupon_value_rub"] is None
+    assert b["face_value_rub"] is None and b["fx_rate"] is None
+
+
+def test_snapshot_bond_faceunit_from_description(monkeypatch):
+    calls = _patch_bond_snapshot(monkeypatch, {"CURRENCYID": "CNY", "FACEVALUE": 10000, "ACCRUEDINT": 255.07,
+                                               "COUPONVALUE": 349.04},
+                                 desc={"FACEUNIT": "CNY"}, rates={"CNY": CNY_RATE})
+    b = sp.snapshot("RU000A10DQA8", _ohlc({"2026-10-19": (1, 2, 1, 98.0)}))["bond"]
+    assert b["face_currency"] == "CNY" and calls == [{"CNY"}]
+    assert b["face_value_rub"] == pytest.approx(123869.0)
+    # boards переданы — description не запрашивается, FACEUNIT неоткуда взять -> RUB
+    monkeypatch.setattr(iss, "description", lambda s: pytest.fail("description не должен вызываться"))
+    calls.clear()
+    b2 = sp.snapshot("RU000A10DQA8", _ohlc({"2026-10-19": (1, 2, 1, 98.0)}), boards=[
+        {"boardid": "TQOY", "engine": "stock", "market": "bonds", "is_primary": 1}])["bond"]
+    assert b2["face_currency"] == "RUB" and b2["settle_currency"] == "CNY"
+
+
+def test_snapshot_share_settle_currency(monkeypatch):
+    from core.data import cbr
+    monkeypatch.setattr(cbr, "rates_on", lambda *a, **k: pytest.fail("акции не нужен курс ЦБ"))
+    _patch_snapshot(monkeypatch, blocks={"securities": {"CURRENCYID": "SUR"},
+                                         "marketdata": {"LAST": 300.0, "TRADEDATE": "2026-10-20",
+                                                        "VALTODAY": 5e9}, "marketdata_yields": {}})
+    s = sp.snapshot("SBER", _ohlc({"2026-10-19": (1, 2, 1, 299.0)}))
+    assert s["bond"] is None
+    assert s["value_settle"] == 5e9 and s["settle_currency"] == "RUB" and s["value_rub"] == 5e9
+    _patch_snapshot(monkeypatch, blocks={"securities": {"CURRENCYID": "USD"},
+                                         "marketdata": {"VALTODAY": 1000.0, "VALTODAY_RUR": 83915.3},
+                                         "marketdata_yields": {}})
+    s = sp.snapshot("XUSD", _ohlc({"2026-10-19": (1, 2, 1, 1.0)}))
+    assert s["value_settle"] == 1000.0 and s["settle_currency"] == "USD" and s["value_rub"] == 83915.3
+    _patch_snapshot(monkeypatch)                                 # нет CURRENCYID -> RUB, оборота нет -> None
+    s = sp.snapshot("TEST", _ohlc({"2026-10-19": (1, 2, 1, 1.0)}))
+    assert s["value_settle"] is None and s["settle_currency"] == "RUB"
+
+
+def _cny_bond_data():
+    d = _fake_world_data("SU26238RMFS4")
+    d["secid"] = "RU000A10DQA8"
+    d["info"].update(secid="RU000A10DQA8", name="Облигация в юанях", short_name="CNYBOND", currency="CNY",
+                     face_value=10000.0, board="TQOY")
+    snap = d["snapshot"]
+    snap.update(value_rub=6156574.0, value_settle=497023.0, settle_currency="CNY")
+    snap["bond"].update(face_currency="CNY", settle_currency="CNY", face_value=10000.0,
+                        coupon_value=349.04, accrued_int=255.07, accrued_int_face=255.07,
+                        accrued_int_rub=255.07 * CNY_RATE, coupon_value_rub=349.04 * CNY_RATE,
+                        face_value_rub=10000.0 * CNY_RATE, fx_rate=CNY_RATE)
+    cp = d["coupons"].copy()
+    cp["value"] = 349.04
+    cp["value_rub"] = 349.04 * CNY_RATE
+    cp["faceunit"] = "CNY"
+    d["coupons"] = cp
+    return d
+
+
+def _bond_metrics(at):
+    return {mt.label: mt.value for mt in at.metric if mt.label in ("НКД", "Купон", "Номинал")}
+
+
+def test_card_cny_bond_amounts_in_face_currency(live, world):
+    live.setattr(sp, "load_symbol", lambda s, years=None: _cny_bond_data())
+    at = _app(CARD, {"s": "RU000A10DQA8"})
+    _assert_clean(at)
+    vals = _bond_metrics(at)
+    assert vals == {"НКД": "255,07 CNY", "Купон": "349,04 CNY", "Номинал": "10 000,00 CNY"}, vals
+    assert all("₽" not in v for v in vals.values())
+    caps = [c.value for c in at.caption]
+    approx = [c for c in caps if c.startswith("≈") and c.endswith("₽ по курсу ЦБ")]
+    assert "≈ 123 869 ₽ по курсу ЦБ" in approx, approx           # номинал 10 000 × 12,3869
+    assert "≈ 3 160 ₽ по курсу ЦБ" in approx                       # НКД 255,07 × 12,3869 = 3159,53
+    assert "≈ 4 324 ₽ по курсу ЦБ" in approx                       # купон 349,04 × 12,3869 = 4323,52
+    assert any("1 CNY = 12,39 ₽" in c for c in caps), caps
+    cols = [str(c) for df in at.dataframe for c in getattr(df.value, "data", df.value).columns]
+    assert "Купон, CNY" in cols and "Купон, ₽" not in cols, cols
+    assert any("в валюте торгов" in c and "CNY" in c for c in caps), caps   # оборот 497 тыс. CNY
+    texts = " | ".join(_texts(at))
+    assert "Рост 100 CNY" in texts and "Рост 100 ₽" not in texts
+
+
+def test_card_rub_bond_amounts_with_rub_sign(live, world):
+    live.setattr(sp, "load_symbol", lambda s, years=None: _fake_world_data(s))
+    at = _app(CARD, {"s": "SU26238RMFS4"})
+    _assert_clean(at)
+    vals = _bond_metrics(at)
+    assert vals["НКД"] == "12,50 ₽" and vals["Номинал"] == "1 000,00 ₽", vals
+    assert vals["Купон"].endswith(" ₽")
+    caps = [c.value for c in at.caption]
+    assert not any(c.startswith("≈") for c in caps), caps
+    assert not any("в валюте торгов" in c for c in caps)
+    cols = [str(c) for df in at.dataframe for c in getattr(df.value, "data", df.value).columns]
+    assert "Купон, ₽" in cols
+
+
+def test_snapshot_bond_faceunit_from_passed_description(monkeypatch):
+    """boards и description переданы готовыми (как из load_symbol): FACEUNIT нет в securities -> из description."""
+    calls = _patch_bond_snapshot(monkeypatch, {"CURRENCYID": "CNY", "FACEVALUE": 10000, "ACCRUEDINT": 255.07,
+                                               "COUPONVALUE": 349.04}, rates={"CNY": CNY_RATE})
+    monkeypatch.setattr(iss, "description", lambda s: pytest.fail("description не должен запрашиваться"))
+    b = sp.snapshot("RU000A10DQA8", _ohlc({"2026-10-19": (1, 2, 1, 98.0)}), boards=[
+        {"boardid": "TQOY", "engine": "stock", "market": "bonds", "is_primary": 1}],
+        description={"FACEUNIT": "CNY"})["bond"]
+    assert b["face_currency"] == "CNY" and b["settle_currency"] == "CNY" and calls == [{"CNY"}]
+    assert b["face_value_rub"] == pytest.approx(123869.0) and b["fx_rate"] == pytest.approx(CNY_RATE)
+
+
+def test_load_symbol_bond_faceunit_only_in_description(monkeypatch, no_pub):
+    from core.data import cbr
+    boards = [{"boardid": "TQOY", "engine": "stock", "market": "bonds", "is_primary": 1,
+               "history_from": "2025-01-10"}]
+    desc = {"NAME": "Облигация в юанях", "SHORTNAME": "CNYBOND", "TYPE": "exchange_bond", "GROUP": "stock_bonds",
+            "FACEUNIT": "CNY", "FACEVALUE": 10000, "MATDATE": "2028-01-01"}
+    n_desc = []
+    monkeypatch.setattr(iss, "description", lambda s: n_desc.append(s) or {"description": dict(desc),
+                                                                              "boards": list(boards)})
+    monkeypatch.setattr(iss, "issuer", lambda s: None)
+    monkeypatch.setattr(iss, "daily_ohlc", lambda *a, **k: _ohlc({"2026-10-16": (1, 2, 1, 97.0),
+                                                                   "2026-10-19": (1, 2, 1, 98.0)}))
+    monkeypatch.setattr(iss, "board_snapshot", lambda *a: {
+        "securities": {"CURRENCYID": "CNY", "FACEVALUE": 10000, "ACCRUEDINT": 255.07, "COUPONVALUE": 349.04},
+        "marketdata": {"VALTODAY": 497023, "VALTODAY_RUR": 6156574}, "marketdata_yields": {}})
+    monkeypatch.setattr(iss, "coupons", lambda s: pd.DataFrame(
+        {"coupondate": pd.to_datetime(["2027-01-10"]), "value": [349.04], "faceunit": ["CNY"]}))
+    monkeypatch.setattr(cbr, "rates_on", lambda codes, date=None: {c: CNY_RATE for c in codes})
+    d = sp.load_symbol("RU000A10DQA8")
+    assert d["errors"].get("snapshot") is None, d["errors"]
+    assert d["info"]["cls"] == "bond" and n_desc == ["RU000A10DQA8"]          # справочник — один запрос
+    b = d["snapshot"]["bond"]
+    assert b["face_currency"] == "CNY" and b["settle_currency"] == "CNY"
+    assert b["coupon_value_rub"] == pytest.approx(349.04 * CNY_RATE)
+
+
+# ---------------------------------------------------------------------- круг 3: оборот, load_info.faceunit, fx_note
+def test_snapshot_value_rub_only_rub_or_valtoday_rur(monkeypatch):
+    _patch_bond_snapshot(monkeypatch, {"FACEUNIT": "CNY", "CURRENCYID": "CNY", "FACEVALUE": 10000},
+                         marketdata={"VALTODAY": 497023}, rates={"CNY": CNY_RATE})
+    s = sp.snapshot("RU000A10DQA8", _ohlc({"2026-10-19": (1, 2, 1, 98.0)}))
+    assert s["value_rub"] is None                 # VALTODAY в юанях — не рубли
+    assert s["value_settle"] == 497023 and s["settle_currency"] == "CNY"
+    _patch_bond_snapshot(monkeypatch, {"FACEUNIT": "SUR", "CURRENCYID": "SUR", "FACEVALUE": 1000},
+                         marketdata={"VALTODAY": 1.5e6})
+    s = sp.snapshot("SU1", _ohlc({"2026-10-19": (1, 2, 1, 98.0)}))
+    assert s["value_rub"] == 1.5e6 and s["value_settle"] == 1.5e6 and s["settle_currency"] == "RUB"
+
+
+@pytest.mark.parametrize("desc, exp", [({"FACEUNIT": "SUR"}, "RUB"), ({"FACEUNIT": "CNY"}, "CNY"),
+                                       ({}, "RUB"), ({"FACEUNIT": "usd"}, "USD")])
+def test_load_info_faceunit(monkeypatch, desc, exp):
+    monkeypatch.setattr(iss, "issuer", lambda s: None)
+    raw = {"description": {"TYPE": "exchange_bond", "GROUP": "stock_bonds", **desc},
+           "boards": [{"boardid": "TQCB", "engine": "stock", "market": "bonds", "is_primary": 1}]}
+    assert sp.load_info("RU000A0JX2M2", raw)["faceunit"] == exp
+
+
+def _usd_bond_no_rate_data():
+    d = _fake_world_data("SU26238RMFS4")
+    d["secid"] = "RU000A0JX2M2"
+    d["info"].update(secid="RU000A0JX2M2", short_name="USDBOND", currency="USD", faceunit="USD",
+                     face_value=1000.0, board="TQCB")
+    snap = d["snapshot"]
+    snap.update(value_rub=2.5e7, value_settle=2.5e7, settle_currency="RUB")
+    snap["bond"].update(face_currency="USD", settle_currency="RUB", face_value=1000.0, coupon_value=25.0,
+                        accrued_int=2299.28, accrued_int_face=None, accrued_int_rub=2299.28,
+                        coupon_value_rub=None, face_value_rub=None, fx_rate=None)
+    return d
+
+
+def test_card_usd_bond_no_rate_aci_in_settle_currency(live, world):
+    live.setattr(sp, "load_symbol", lambda s, years=None: _usd_bond_no_rate_data())
+    at = _app(CARD, {"s": "RU000A0JX2M2"})
+    _assert_clean(at)
+    vals = _bond_metrics(at)
+    assert vals == {"НКД": "2 299,28 ₽", "Купон": "25,00 USD", "Номинал": "1 000,00 USD"}, vals
+    caps = [c.value for c in at.caption]
+    assert "в валюте расчётов; курс ЦБ недоступен" in caps, caps
+    assert any("Номинал и купон — в валюте номинала (USD), НКД — в валюте расчётов (₽), курс ЦБ недоступен."
+               in c for c in caps), caps
+    assert not any(c.startswith("≈") and "по курсу ЦБ" in c for c in caps), caps    # курса нет — без «≈ ₽»
+    assert not any("1 USD =" in c for c in caps)
+
+
+def test_card_fx_note_and_turnover(live, world):
+    live.setattr(sp, "load_symbol", lambda s, years=None: _cny_bond_data())
+    at = _app(CARD, {"s": "RU000A10DQA8"})
+    _assert_clean(at)
+    caps = [c.value for c in at.caption]
+    fx = [c for c in caps if "сравнение условно" in c]
+    assert fx and all("CNY" in c for c in fx), caps
+    turn = [c for c in caps if "в валюте торгов" in c]
+    assert turn == ["497 тыс. CNY в валюте торгов"], turn          # 497 023 CNY, без «≈»
+    live.setattr(sp, "load_symbol", lambda s, years=None: _fake_world_data(s))
+    at = _app(CARD, {"s": "SU26238RMFS4"})
+    _assert_clean(at)
+    assert not any("сравнение условно" in c.value for c in at.caption)
+
+
+def test_card_coupons_from_value_rub_labeled_rub(live, world):
+    """Нет столбца value — купоны из value_rub, подпись «Купон, ₽» даже у валютной облигации."""
+    d = _cny_bond_data()
+    d["coupons"] = d["coupons"].drop(columns=["value", "faceunit"])
+    live.setattr(sp, "load_symbol", lambda s, years=None: d)
+    at = _app(CARD, {"s": "RU000A10DQA8"})
+    _assert_clean(at)
+    cols = [str(c) for df in at.dataframe for c in getattr(df.value, "data", df.value).columns]
+    assert "Купон, ₽" in cols and "Купон, CNY" not in cols, cols
