@@ -24,7 +24,7 @@ import pandas as pd
 
 from core.analytics import metrics as m
 from core.config import FUNDAMENTALS_CSV
-from core.data import cbr, iss, public_data
+from core.data import cbr, iss, public_data, risk_free
 
 FUND_COLUMNS = ["secid", "period", "net_income", "revenue", "ebitda", "equity", "net_debt",
                 "shares_out", "source"]
@@ -72,7 +72,7 @@ def tinvest_multiples(fund: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _stats_one(secid: str, bench_r: pd.Series, rf: float, start: str) -> dict:
+def _stats_one(secid: str, bench_r: pd.Series, rf: m.RateLike, start: str) -> dict:
     try:
         px = iss.close_series(secid, start)
     except Exception:  # noqa: BLE001
@@ -134,12 +134,28 @@ def _multiples_for(cap_bln: pd.Series) -> Optional[pd.DataFrame]:
     return out[MULT_COLUMNS]
 
 
-def shares_showcase(benchmark: str = "IMOEX", rf: float = 0.16, top: int = 80,
+def _showcase_rf(rf: Optional[m.RateLike], start: str) -> m.RateLike:
+    """rf витрины: число (доля годовых) или ряд годовых ставок — как есть; None — ряд безрисковой
+    ставки платформы (core.data.risk_free.rate_series, доходность коротких ОФЗ) за окно витрины
+    (12 мес. доходностей; ряд начинается с `start`, чтобы у первой доходности была ставка на начало периода).
+    Ряд недоступен (нет risk_free.json, ISS не ответил или офлайн) — NaN: Шарп и Сортино витрины пустые,
+    остальные колонки считаются (витрина не падает из-за ставки)."""
+    if rf is not None:
+        return rf
+    try:
+        return risk_free.rate_series(start, None)
+    except risk_free.RiskFreeUnavailable:
+        return float("nan")
+
+
+def shares_showcase(benchmark: str = "IMOEX", rf: Optional[m.RateLike] = None, top: int = 80,
                     board: str = "TQBR", with_dividends: bool = True,
                     progress: Optional[Callable[[float], None]] = None) -> pd.DataFrame:
+    """Витрина акций; rf — число, ряд годовых ставок или None (ставка коротких ОФЗ за окно, _showcase_rf)."""
     base = iss.stocks(board)
     base = base[base["PRICE"].notna()].sort_values("VALTODAY_RUR", ascending=False).head(top)
     start = (pd.Timestamp.today() - pd.Timedelta(days=400)).date().isoformat()
+    rf = _showcase_rf(rf, (pd.Timestamp.today() - pd.Timedelta(days=366)).date().isoformat())
     bench_r = m.to_returns(iss.close_series(benchmark, start))
     rows = []
     with ThreadPoolExecutor(max_workers=8) as ex:
@@ -168,10 +184,12 @@ def shares_showcase(benchmark: str = "IMOEX", rf: float = 0.16, top: int = 80,
                               "LISTLEVEL": "Листинг"}).drop(columns=["CAP"])
 
 
-def etf_showcase(benchmark: str = "IMOEX", rf: float = 0.16) -> pd.DataFrame:
+def etf_showcase(benchmark: str = "IMOEX", rf: Optional[m.RateLike] = None) -> pd.DataFrame:
+    """Витрина фондов; rf — число, ряд годовых ставок или None (ставка коротких ОФЗ за окно, _showcase_rf)."""
     base = iss.etfs()
     base = base[base["PRICE"].notna()]
     start = (pd.Timestamp.today() - pd.Timedelta(days=400)).date().isoformat()
+    rf = _showcase_rf(rf, (pd.Timestamp.today() - pd.Timedelta(days=366)).date().isoformat())
     bench_r = m.to_returns(iss.close_series(benchmark, start))
     with ThreadPoolExecutor(max_workers=8) as ex:
         st = pd.DataFrame(list(ex.map(lambda s: _stats_one(s, bench_r, rf, start), base["SECID"])))

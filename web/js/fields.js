@@ -76,14 +76,13 @@ export function readDates(fromKey, tillKey) {
   return { from, till };
 }
 
-/** Общие параметры расчёта (шапка). В демо-режиме ряды месячные — частота не выше месячной. */
+/** Общие параметры расчёта (шапка). В демо-режиме ряды месячные — частота не выше месячной.
+ *  Безрисковая ставка вручную не задаётся: ряд по датам периода — riskFree() из riskfree.js. */
 export function globals() {
-  let rf = parseNum(S.get("rf"));
-  if (!Number.isFinite(rf)) rf = 7.86;
   let freq = S.get("freq");
   const freqForced = S.isDemo() && (freq === "D" || freq === "W");
   if (freqForced) freq = "M";
-  return { rf: rf / 100, bench: S.get("bench") || "MCFTR", freq, freqForced };
+  return { bench: S.get("bench") || "MCFTR", freq, freqForced };
 }
 
 export const FREQ_LABELS = { D: "дневные", W: "недельные", M: "месячные", Q: "квартальные", A: "годовые" };

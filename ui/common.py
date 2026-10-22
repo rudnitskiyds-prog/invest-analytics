@@ -11,8 +11,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core.analytics import metrics as m
-from core.config import DEFAULT_BENCHMARK, DEFAULT_FREQ, DEFAULT_RF
-from core.data import iss, universe
+from core.config import DEFAULT_BENCHMARK, DEFAULT_FREQ
+from core.data import universe
+
+try:  # модуль безрисковой ставки (core.data.risk_free); без него — понятное сообщение, а не падение
+    from core.data import risk_free
+except ImportError:  # pragma: no cover
+    risk_free = None
 
 # Категориальная палитра (проверена на различимость при дальтонизме, порядок фиксирован)
 PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
@@ -50,23 +55,11 @@ def page_setup(title: str, icon: str = "📈"):
 
 def sidebar_settings():
     ss = st.session_state
-    ss.setdefault("rf", DEFAULT_RF)
     ss.setdefault("benchmark", DEFAULT_BENCHMARK)
     ss.setdefault("freq", DEFAULT_FREQ)
     with st.sidebar:
         st.markdown("### Параметры расчёта")
-        ss["rf"] = st.number_input("Безрисковая ставка, % годовых", 0.0, 40.0, float(ss["rf"] * 100), 0.01,
-                                   help="По умолчанию — 7,86 %: 15-летняя ставка КБД Мосбиржи на 11.01.2011") / 100
-        c1, c2 = st.columns(2)
-        if c1.button("КБД 15 лет", help="Текущая ставка КБД Мосбиржи на 15 лет"):
-            try:
-                ss["rf"] = iss.kbd_rate(None, 15)
-                st.rerun()
-            except Exception as e:  # noqa: BLE001
-                st.warning(f"КБД недоступна: {e}")
-        if c2.button("Сброс", help="Вернуть 7,86 % — ставку КБД на 15 лет на 11.01.2011"):
-            ss["rf"] = DEFAULT_RF
-            st.rerun()
+        st.caption(rf_sidebar_note())
         bench_opts = ["MCFTR", "IMOEX", "MEBCTR", "RGBITR", "RUONIA", "GOLD_CBR"]
         ss["benchmark"] = st.selectbox("Бенчмарк", bench_opts, bench_opts.index(ss["benchmark"])
                                        if ss["benchmark"] in bench_opts else 0)
@@ -78,6 +71,88 @@ def sidebar_settings():
         elif universe.FALLBACK_USED:
             st.warning("Источник данных не ответил — для " + ", ".join(sorted(universe.FALLBACK_USED)) +
                        " использованы демо-ряды (месячные, по 2025 г.).")
+
+
+# ------------------------------------------------------------------ безрисковая ставка
+RF_UNAVAILABLE = "Безрисковая ставка недоступна — показатели рассчитаны при нулевой ставке, поэтому Шарп, Сортино, Трейнор, альфа, M² и другие показатели с безрисковой ставкой завышены."
+
+
+def _iso(x) -> Optional[str]:
+    """Дата для ключа кэша: 'ГГГГ-ММ-ДД' или None."""
+    if x is None or x == "":
+        return None
+    return pd.Timestamp(x).date().isoformat()
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _rf_series_cached(start: Optional[str], end: Optional[str]) -> pd.Series:
+    return risk_free.rate_series(start, end)
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _rf_mean_cached(start: Optional[str], end: Optional[str]) -> float:
+    return float(risk_free.mean_rate(start, end))
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _rf_describe_cached(start: Optional[str], end: Optional[str]) -> dict:
+    return dict(risk_free.describe(start, end))
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _rf_current_cached() -> tuple:
+    return tuple(risk_free.current())
+
+
+def rf_series(start=None, end=None):
+    """Ряд безрисковой ставки (доли годовых, по датам) за период — для коэффициентов (core.data.risk_free).
+    Источник недоступен — предупреждение и 0.0 (коэффициенты считаются без вычета ставки)."""
+    try:
+        s = _rf_series_cached(_iso(start), _iso(end))
+        if s is None or len(s) == 0:
+            raise ValueError("пустой ряд")
+        return s
+    except Exception:  # noqa: BLE001
+        st.warning(RF_UNAVAILABLE)
+        return 0.0
+
+
+def rf_mean(start=None, end=None) -> float:
+    """Средняя безрисковая ставка за окно (скаляр) — для границы Марковица и CML."""
+    try:
+        v = _rf_mean_cached(_iso(start), _iso(end))
+        if not np.isfinite(v):
+            raise ValueError("нет ставки за период")
+        return v
+    except Exception:  # noqa: BLE001
+        st.warning(RF_UNAVAILABLE)
+        return 0.0
+
+
+def rf_caption(start=None, end=None) -> str:
+    """Подпись к расчёту: «Безрисковая ставка — доходность коротких ОФЗ, в среднем X % за период…»."""
+    try:
+        d = _rf_describe_cached(_iso(start), _iso(end))
+        if not is_num(d.get("mean")):
+            raise ValueError("нет ставки за период")
+    except Exception:  # noqa: BLE001
+        return RF_UNAVAILABLE
+    text = f"Безрисковая ставка — доходность коротких ОФЗ, в среднем {fmt_pct(d.get('mean'), 2)} за период"
+    notes = []
+    if d.get("uses_rgbey"):
+        notes.append("до 2011 — доходность всего рынка ОФЗ")
+    if d.get("before_data"):
+        notes.append("до 2003 — по первому известному значению")
+    return text + (f" ({'; '.join(notes)})" if notes else "") + "."
+
+
+def rf_sidebar_note() -> str:
+    try:
+        rate, date = _rf_current_cached()
+        now = f"сейчас {fmt_pct(rate, 2)} на {fmt_date(date)}"
+    except Exception:  # noqa: BLE001
+        now = "сейчас недоступна"
+    return f"Безрисковая ставка — доходность коротких ОФЗ ({now}); в расчётах — по датам периода."
 
 
 # ------------------------------------------------------------------ cached loaders
@@ -351,7 +426,8 @@ def position_scale(value: float, lo: float, hi: float, name: str, x_title: str,
 
 
 def show_metrics_table(series: dict[str, pd.Series], benchmark_series: Optional[pd.Series],
-                       rf: float, freq: str, key: str = "mt") -> pd.DataFrame:
+                       rf, freq: str, key: str = "mt") -> pd.DataFrame:
+    """rf — ряд безрисковой ставки по датам (rf_series) или годовая ставка в долях."""
     raw = m.metrics_table(series, benchmark_series, rf, freq)
     st.dataframe(m.format_metrics_table(raw), width="stretch", height=min(38 * (len(raw) + 1), 900))
     return raw

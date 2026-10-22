@@ -33,7 +33,7 @@ describe('computeAll: паритет с Python до 1e-9', () => {
   };
 
   for (const key of Object.keys(ref.metrics).filter((k) => !k.startsWith('__'))) {
-    test(`ключ ${key} против MCFTR, rf=7,86 %, M`, () => {
+    test(`ключ ${key} против MCFTR, постоянная rf (эталон), M`, () => {
       check(M.computeAll(win(key), bench, rf, 'M'), ref.metrics[key], key);
     });
   }
@@ -46,7 +46,7 @@ describe('computeAll: паритет с Python до 1e-9', () => {
   test("returnMethod = 'cagr'", () => {
     check(M.computeAll(win('RGBITR'), bench, rf, 'M', { returnMethod: 'cagr' }), ref.metrics.__RGBITR_cagr, 'cagr');
   });
-  test('rf — ряд ставок (ffill, до первой даты — bfill)', () => {
+  test('rf — ряд ставок (на начало периода, ffill; до первой даты — bfill)', () => {
     const c = ref.rf_series;
     check(M.computeAll(win(c.asset), win(c.bench), seriesFromRef(c.rf), 'M'), c.report, 'rf-series');
   });
@@ -145,11 +145,12 @@ describe('граничные случаи', () => {
     close(M.trackingError(r, rb, 12), M.trackingError(x, y, 12), 1e-15, 'TE по общим датам');
   });
 
-  test('rf рядом ставок: ставка на дату ffill, до первой даты — bfill', () => {
+  test('rf рядом ставок: ставка на НАЧАЛО периода (ffill), до первой даты — bfill', () => {
     const rf = { dates: ['2020-03-31', '2020-06-30'], values: [0.12, 0] };
-    const got = M.perPeriodRate(rf, 12, ['2020-01-31', '2020-04-30', '2020-07-31']);
+    // начала периодов: 2019-11-02 (bfill), 2020-01-31 (bfill), 2020-04-30 (12 %), 2020-07-31 (0 %)
+    const got = M.perPeriodRate(rf, 12, ['2020-01-31', '2020-04-30', '2020-07-31', '2020-10-31']);
     const m = 1.12 ** (1 / 12) - 1;
-    closeArr(got, [m, m, 0], EPS, 'per-period');
+    closeArr(got, [m, m, m, 0], EPS, 'per-period');
     // Шарп с рядом ставок = Шарп с теми же ставками, вычтенными вручную
     const p = ser([100, 103, 101, 106, 104, 108]);
     const r = M.toReturns(p);
@@ -266,5 +267,104 @@ describe('справочники', () => {
     assert.equal(M.formatMetric('days_to_recover', null), '—');
     assert.equal(M.formatMetric('cagr', 0.1234), '12,3%');
     assert.equal(M.formatMetric('sharpe', 0.4786), '0,479');
+  });
+});
+
+// ------------------------------------------------------------------ безрисковая ставка рядом: начало периода
+describe('periodStarts / perPeriodRate: ставка на начало периода доходности', () => {
+  const pp = (x, n) => (1 + x) ** (1 / n) - 1;
+  const RATE = { dates: ['2020-01-01', '2020-02-15'], values: [0.10, 0.20] };
+
+  test('periodStarts: месячные даты — шаг назад для первой, далее предыдущая дата', () => {
+    assert.deepEqual(M.periodStarts(['2020-01-31', '2020-02-29', '2020-03-31']), ['2020-01-02', '2020-01-31', '2020-02-29']);
+  });
+  test('periodStarts: дневные даты, одна дата, пусто', () => {
+    assert.deepEqual(M.periodStarts(['2020-02-13', '2020-02-14', '2020-02-17']), ['2020-02-12', '2020-02-13', '2020-02-14']);
+    assert.deepEqual(M.periodStarts(['2020-05-05']), ['2020-05-05']);
+    assert.deepEqual(M.periodStarts([]), []);
+  });
+  test('perPeriodRate: месячные — на 29.02 уже 20 %, но период начался при 10 %', () => {
+    const got = M.perPeriodRate(RATE, 12, ['2020-01-31', '2020-02-29', '2020-03-31']);
+    closeArr(got, [pp(0.10, 12), pp(0.10, 12), pp(0.20, 12)], 1e-15, 'monthly');
+  });
+  test('perPeriodRate: дневные — публикация в день начала периода действует', () => {
+    const rate = { dates: ['2020-01-01', '2020-02-14'], values: [0.10, 0.20] };
+    const got = M.perPeriodRate(rate, 252, ['2020-02-13', '2020-02-14', '2020-02-17', '2020-02-18']);
+    closeArr(got, [pp(0.10, 252), pp(0.10, 252), pp(0.20, 252), pp(0.20, 252)], 1e-15, 'daily');
+  });
+  test('perPeriodRate: число — как раньше', () => {
+    close(M.perPeriodRate(0.12, 12), 1.12 ** (1 / 12) - 1, 1e-15, 'scalar');
+  });
+  test('Шарп с рядом ставок = ручной расчёт (как tests/test_rf_series_metrics.py)', () => {
+    const r = { dates: ['2020-01-31', '2020-02-29', '2020-03-31', '2020-04-30'], values: [0.02, -0.01, 0.03, 0.015] };
+    const rfp = [pp(0.10, 12), pp(0.10, 12), pp(0.20, 12), pp(0.20, 12)];
+    const ex = r.values.map((x, i) => x - rfp[i]);
+    const mean = ex.reduce((s, v) => s + v, 0) / 4;
+    const sd = Math.sqrt(ex.reduce((s, v) => s + (v - mean) ** 2, 0) / 3);
+    close(M.sharpe(r, RATE, 12), mean / sd * Math.sqrt(12), 1e-12, 'Sharpe');
+  });
+  test('постоянный ряд = число', () => {
+    const r = { dates: ['2020-01-31', '2020-02-29', '2020-03-31', '2020-04-30'], values: [0.02, -0.01, 0.03, 0.015] };
+    close(M.sharpe(r, { dates: ['2010-01-01'], values: [0.15] }, 12), M.sharpe(r, 0.15, 12), 1e-12, 'Sharpe const');
+  });
+});
+
+// ------------------------------------------------------------------ ratesAtStarts / annualRf: окно ряда ставок не влияет
+describe('ratesAtStarts / annualRf (как tests/test_rf_series_metrics.py)', () => {
+  test('ставки на начала периодов и их среднее — вручную', () => {
+    const rate = { dates: ['2021-12-15', '2022-02-10', '2022-03-15'], values: [0.08, 0.20, 0.17] };
+    const dates = ['2022-01-31', '2022-02-28', '2022-03-31'];
+    // начала: 2021-12-31 (8 %), 2022-01-31 (8 %), 2022-02-28 (20 %)
+    closeArr(M.ratesAtStarts(rate, dates), [0.08, 0.08, 0.20], 1e-15, 'ratesAtStarts');
+    close(M.annualRf(rate, dates), 0.12, 1e-15, 'annualRf с датами');
+    close(M.annualRf(rate), 0.15, 1e-15, 'annualRf без дат — среднее значений');
+    close(M.annualRf(0.07, dates), 0.07, 1e-15, 'число');
+  });
+
+  // ряд ставок 2014–2026 и его срез с 2021-12-01 (первой точкой — действующая ставка), бумага и бенчмарк с 2022
+  const DAY = 86400000;
+  const iso = (t) => new Date(t).toISOString().slice(0, 10);
+  const longRate = (() => {
+    const dates = [], values = [];
+    for (let t = Date.parse('2014-01-10T00:00:00Z'), i = 0; t <= Date.parse('2026-06-10T00:00:00Z'); t += 61 * DAY, i++) {
+      dates.push(iso(t)); values.push(0.06 + 0.1 * (1 + Math.sin(i / 3)) / 2);
+    }
+    return { dates, values };
+  })();
+  const shortRate = (() => {
+    const start = '2021-12-01';
+    let v = longRate.values[0];
+    const dates = [start], values = [];
+    longRate.dates.forEach((d, i) => { if (d <= start) v = longRate.values[i]; });
+    values.push(v);
+    longRate.dates.forEach((d, i) => { if (d > start) { dates.push(d); values.push(longRate.values[i]); } });
+    return { dates, values };
+  })();
+  const ends = [];
+  for (let y = 2022; y <= 2025; y++) for (let mth = 1; mth <= 12; mth++) ends.push(iso(Date.UTC(y, mth, 0)));
+  const cum = (f) => { let p = 100; return ends.map((_, k) => (p *= 1 + f(k))); };
+  const asset = { dates: ends, values: cum((k) => 0.01 + 0.04 * Math.sin(k * 1.3)) };
+  const bench = { dates: ends, values: cum((k) => 0.008 + 0.03 * Math.cos(k * 0.7)) };
+
+  for (const method of ['arith', 'cagr']) {
+    test(`computeAll (${method}): длинный и короткий ряд ставок дают одинаковые коэффициенты`, () => {
+      assert.ok(Math.abs(M.annualRf(longRate) - M.annualRf(shortRate)) > 1e-4, 'средние всего ряда различны');
+      const a = M.computeAll(asset, bench, longRate, 'M', { returnMethod: method });
+      const b = M.computeAll(asset, bench, shortRate, 'M', { returnMethod: method });
+      for (const f of ['sharpe', 'sortino', 'treynor', 'alpha', 'm2', 'martin', 'omega']) {
+        assert.ok(Number.isFinite(a[f]), f);
+        close(a[f], b[f], 1e-12 * Math.max(1, Math.abs(b[f])), f);
+      }
+    });
+  }
+
+  test('M², Мартин, CAGR-Шарп/Трейнор берут среднее ставок на начала периодов', () => {
+    const r = M.toReturns(asset);
+    const rfa = M.annualRf(longRate, r.dates);
+    const rep = M.computeAll(asset, bench, longRate, 'M');
+    close(rep.martin, M.martin(asset, rfa), 1e-12, 'martin');
+    const cg = M.computeAll(asset, bench, longRate, 'M', { returnMethod: 'cagr' });
+    close(cg.sharpe, (cg.cagr - rfa) / cg.volatility, 1e-12, 'cagr sharpe');
+    close(cg.treynor, (cg.cagr - rfa) / cg.beta, 1e-12, 'cagr treynor');
   });
 });

@@ -556,7 +556,7 @@ def report(data: dict, bench: Optional[pd.Series], rf: m.RateLike) -> dict:
     """Все расчёты блоков страницы бумаги (как web/js/page-symbol.js), формулы — core/analytics/metrics.py.
 
     data  — результат load_symbol; bench — ряд цен бенчмарка (DatetimeIndex) или None (бумага сама бенчмарк /
-            не загрузился); выравнивается по датам бумаги (align_benchmark); rf — годовая ставка, доля.
+            не загрузился); выравнивается по датам бумаги (align_benchmark); rf — годовая ставка в долях: число или ряд ставок по датам (core.data.risk_free.rate_series).
     Ключи: series — ряд для доходностей (для акций с рублёвыми неотменёнными дивидендами — полная доходность,
     metrics.total_return_series, иначе цена закрытия), total_return — флаг, close — цена закрытия,
     benchmark — выровненный бенчмарк | None; periods {security, benchmark} (period_returns); momentum (по close);

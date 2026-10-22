@@ -6,7 +6,7 @@ import { catalogList, engine, entries } from "./engine.js";
 import { fmtDate, fmtDateTime, fmtPct } from "./format.js";
 
 const SOURCE_RU = { iss: "ISS Мосбиржи", cbr: "Банк России", chain: "ISS Мосбиржи (склейка)", iss_tr: "ISS Мосбиржи" };
-const CBR_FILES = ["cbr_gold", "ruonia_index", "ruonia_rate", "key_rate"];
+const CBR_FILES = ["cbr_gold", "ruonia_index", "ruonia_rate", "key_rate", "risk_free"];
 
 let rendered = false;
 
@@ -47,7 +47,7 @@ export function onShow() {
     h("div", { class: "card prose" },
       h("ul", {},
         h("li", {}, h("b", {}, "ISS Московской биржи"), " — индексы (история закрытий), акции, паи и биржевое золото (дневные свечи основного режима). Запросы идут напрямую из браузера, данные с задержкой до 15 минут."),
-        h("li", {}, h("b", {}, "Банк России"), " — учётная цена золота, RUONIA и ключевая ставка. У сайта ЦБ нет доступа из браузера (CORS), поэтому ряды ежедневно собираются сборщиком в файлы JSON."),
+        h("li", {}, h("b", {}, "Банк России"), " — учётная цена золота, RUONIA и ключевая ставка; безрисковая ставка — доходность коротких ОФЗ по данным ISS. У сайта ЦБ нет доступа из браузера (CORS), поэтому ряды ежедневно собираются сборщиком в файлы JSON."),
       ),
       tableWrap(h("table", {},
         h("thead", {}, h("tr", {}, ...["Файл", "Ряд", "Данные по", "Обновлено"].map((t) => h("th", { scope: "col" }, t)))),

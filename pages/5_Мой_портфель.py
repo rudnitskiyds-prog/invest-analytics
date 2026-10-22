@@ -8,10 +8,10 @@ from core.analytics.strategies import STRATEGIES
 from core.data.quotes import get_quotes, price_history_rub
 from core.portfolio.ledger import TX_TYPES, Ledger, external_flows, value_history, valuation
 from ui.common import (PALETTE, color_map, fmt_pct, fmt_rub, line_chart, load_prices, load_series,
-                       page_setup, show_metrics_table, to_excel)
+                       page_setup, rf_caption, rf_series, show_metrics_table, to_excel)
 
 page_setup("Мой портфель — учёт и эффективность", "💼")
-rf, bench, freq = st.session_state["rf"], st.session_state["benchmark"], st.session_state["freq"]
+bench, freq = st.session_state["benchmark"], st.session_state["freq"]
 L = Ledger()
 
 pfs = L.portfolios()
@@ -136,8 +136,9 @@ with t2:
         st.markdown("**Доходность без учёта пополнений (TWR) против бенчмарка**")
         st.plotly_chart(line_chart(comp, bench, "База = 100", hover_fmt=".1f"), width="stretch")
         if len(comp) > 40:
-            show_metrics_table({cur: comp[cur], bench: comp[bench]}, comp[bench], rf,
-                               "D" if len(comp) < 400 else freq)
+            show_metrics_table({cur: comp[cur], bench: comp[bench]}, comp[bench],
+                               rf_series(comp.index[0], comp.index[-1]), "D" if len(comp) < 400 else freq)
+            st.caption(rf_caption(comp.index[0], comp.index[-1]))
         else:
             st.caption("Метрики появятся, когда история портфеля будет длиннее ~2 месяцев.")
 
@@ -164,7 +165,9 @@ with t3:
             cdf = cdf / cdf.iloc[0] * 100
             st.plotly_chart(line_chart(cdf, bench, "База = 100", hover_fmt=".1f"), width="stretch")
             if len(cdf) > 40:
-                show_metrics_table({c: cdf[c] for c in cdf}, cdf[bench], rf, "D" if len(cdf) < 400 else freq)
+                show_metrics_table({c: cdf[c] for c in cdf}, cdf[bench], rf_series(cdf.index[0], cdf.index[-1]),
+                                   "D" if len(cdf) < 400 else freq)
+                st.caption(rf_caption(cdf.index[0], cdf.index[-1]))
 
 with t4:
     show = tx.copy()

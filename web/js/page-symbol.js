@@ -7,10 +7,11 @@ import { barChart, colorOf, destroyChart, heatStyle, lineChart, priceDigits } fr
 import { DATA_BASE } from "./config.js";
 import { $, h, notice, put, tableWrap } from "./dom.js";
 import { assetLabel, engine, libFn, requireSymbol, toSet, UserError } from "./engine.js";
-import { FREQ_LABELS, globals } from "./fields.js";
+import { FREQ_LABELS } from "./fields.js";
 import { fmtDate, fmtMetric, fmtNum, fmtPct, fmtRub } from "./format.js";
 import { go, href, setQuery } from "./router.js";
 import { attachSearch, classLabel } from "./search.js";
+import { riskFree } from "./riskfree.js";
 import { getSeries } from "./source.js";
 import * as S from "./state.js";
 import * as backtest from "./tab-backtest.js";
@@ -323,7 +324,7 @@ function renderToolbar(box, t, benchKey, cmp) {
     h("div", { class: "field" }, h("label", { for: "sym-bench" }, "Бенчмарк"), sel),
     field,
     cmp ? h("button", { type: "button", class: "btn btn-sm", onclick: () => apply("") }, `Убрать ${cmp}`) : null,
-    h("p", { class: "hint" }, `Коэффициенты — по дневным доходностям, безрисковая ставка ${fmtPct(globals().rf, 2)} годовых (меняется в параметрах выше).`),
+    h("p", { class: "hint" }, "Коэффициенты — по дневным доходностям; безрисковая ставка — доходность коротких ОФЗ на те же даты."),
   );
   attachSearch(cmpInput, { onPick: apply });
 }
@@ -335,8 +336,10 @@ function buildBlocks(root, ctx) {
   const pPrice = priceOf(t, cls);
   const pBench = pPrice.then((p) => benchOf(benchKey, p.ret.dates[0]));
   pBench.catch(() => {});
-  const g = globals();
-  const pReports = Promise.all([pPrice, pBench.catch((e) => ({ error: e }))]).then(([p, b]) => {
+  // безрисковая ставка — ряд доходности коротких ОФЗ по датам периода коэффициентов (web/lib/data.js)
+  // период ставки — даты цен, по которым считаются коэффициенты (как _report в pages/2_Карточка_бумаги.py)
+  const rfFor = async (s) => riskFree(s.dates[0], s.dates.at(-1));
+  const pReports = Promise.all([pPrice, pBench.catch((e) => ({ error: e }))]).then(async ([p, b]) => {
     const bench = b && !b.error ? b : null;
     const computeAll = engine.metrics.computeAll;
     // С бенчмарком коэффициенты бумаги и бенчмарка — за один период: только даты, где есть оба ряда
@@ -352,13 +355,17 @@ function buildBlocks(root, ctx) {
         bc.dates.push(d); bc.values.push(bv.get(d));
       });
       if (sc.dates.length >= 3) {
-        return { sec: computeAll(sc, bc, g.rf, "D"), bm: computeAll(bc, bc, g.rf, "D"), common: true,
-          bench, benchError: null, p };
+        const RF = await rfFor(sc);
+        return { sec: computeAll(sc, bc, RF.rf, "D"), bm: computeAll(bc, bc, RF.rf, "D"), common: true,
+          bench, benchError: null, p, rfNote: RF.note };
       }
-      return { sec: computeAll(p.ret, null, g.rf, "D"), bm: null, common: false, bench: null,
-        benchError: new Error(`у ${t} и ${benchKey} меньше трёх общих дат`), p };
+      const RF = await rfFor(p.close);
+      return { sec: computeAll(p.ret, null, RF.rf, "D"), bm: null, common: false, bench: null,
+        benchError: new Error(`у ${t} и ${benchKey} меньше трёх общих дат`), p, rfNote: RF.note };
     }
-    return { sec: computeAll(p.ret, null, g.rf, "D"), bm: null, common: false, bench, benchError: b?.error ?? null, p };
+    const RF = await rfFor(p.close);
+    return { sec: computeAll(p.ret, null, RF.rf, "D"), bm: null, common: false, bench, benchError: b?.error ?? null, p,
+      rfNote: RF.note };
   });
   pReports.catch(() => {});
   const withDivsNote = (p) => (p.withDivs ? "С учётом дивидендов (реинвестирование в дату отсечки)." : p.divNote || "");
@@ -535,7 +542,7 @@ function buildBlocks(root, ctx) {
     setSub(it
       ? `Перцентиль 0–100 среди ${it.class === "fund" ? "фондов" : "акций"}${n ? ` (${fmtNum(n)} ${papers(n)})` : ""}, торгуемых сейчас; 100 — лучший показатель класса. ` +
         `Рейтинг — по месячным доходностям ${it.tr ? "с реинвестированием дивидендов (T-Invest)" : "по цене"}; цены — месячные свечи ISS, скорректированные биржей на сплиты и консолидации; ` +
-        `Rf — средняя ключевая ставка ЦБ за период истории бумаги в окне; поэтому значения могут отличаться от коэффициентов ниже, рассчитанных по дневным данным. ${src}`
+        `Rf — средняя доходность коротких ОФЗ за период бумаги; поэтому значения могут отличаться от коэффициентов ниже, рассчитанных по дневным данным. ${src}`
       : src);
     if (!it) {
       put(body, h("p", { class: "muted no-data" },
@@ -573,7 +580,7 @@ function buildBlocks(root, ctx) {
     if (!live()) return;
     const cols = [[t, R.sec, false]];
     if (R.bm) cols.push([benchKey, R.bm, true]);
-    setSub(`Rf = ${fmtPct(g.rf, 2)}, доходности ${FREQ_LABELS.D}, ${R.common ? "общий период бумаги и бенчмарка" : "период"} ${fmtDate(R.sec.start)} — ${fmtDate(R.sec.end)}. ${withDivsNote(R.p)}`);
+    setSub(`${R.rfNote} Доходности ${FREQ_LABELS.D}, ${R.common ? "общий период бумаги и бенчмарка" : "период"} ${fmtDate(R.sec.start)} — ${fmtDate(R.sec.end)}. ${withDivsNote(R.p)}`);
     put(body,
       R.bench ? null : notice("warn", `Бенчмарк ${benchKey}: ${humanize(R.benchError)}`),
       tableWrap(h("table", { class: "metrics-table" },

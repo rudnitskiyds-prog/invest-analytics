@@ -274,7 +274,7 @@ def test_total_return_series_by_hand():
     assert m.total_return_series(s, None).to_numpy() == pytest.approx(s.to_numpy())
 
 
-# ---------------------------------------------------------------- инвариант 3: формулы в методике
+# ---------------------------------------------------------------- инвариант 2: формулы в методике
 def test_methodology_pages_describe_stage1_metrics():
     """Новые коэффициенты описаны в обеих методиках: Streamlit (pages/7_Методика.py) и веб (web/index.html
     + web/js/tab-method.js)."""

@@ -168,7 +168,7 @@ p { margin: 0 0 0.6em; }
 .global-params { display: flex; gap: 12px 16px; flex-wrap: wrap; align-items: flex-start; }
 .global-params .hint { margin: 3px 0 0; font-size: 12px; max-width: 220px; }
 .field-compact input, .field-compact select { min-width: 150px; }
-#g-rf { width: 150px; }
+#g-rf { max-width: 240px; }
 
 /* ---------------------------------------------------------------- баннеры */
 #banners { padding-top: 12px; }
@@ -230,6 +230,7 @@ fieldset.group > legend {
 .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .field-wide { max-width: 520px; margin-top: 12px; }
 .field label { font-size: 13px; font-weight: 600; color: var(--text); }
+.field .label { font-size: 13px; font-weight: 600; color: var(--text); }
 
 input[type="text"], input[type="search"], input[type="date"], input[type="number"], select {
   font: inherit; font-size: 14px; color: var(--text);
@@ -533,6 +534,7 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
   .kpi-range { font-size: 15px; }
   .facts { grid-template-columns: 1fr 1fr; gap: 8px 12px; }
   .params-bar .hint { display: none; }
+  .params-bar #g-rf-hint { display: block; }   /* подпись о безрисковой ставке — вместо поля ввода */
   .global-params { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
   .global-params .field-compact:first-child { grid-column: 1 / -1; }
   .global-params .hint { max-width: none; }

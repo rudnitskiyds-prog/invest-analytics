@@ -194,7 +194,7 @@ describe('Банк России: файлы сборщика', () => {
 });
 
 describe('демо-фрейм', () => {
-  test('loadDemoFrame совпадает с reproduce_nir.load_fixture (все столбцы, NaN, CORP_CHAIN)', async () => {
+  test('loadDemoFrame совпадает с tests/web/fixture_loader.load_fixture (все столбцы, NaN, CORP_CHAIN)', async () => {
     const ref = frameFromRef(reference().demo_frame);
     const f = fixtureFetch();
     const df = await D.loadDemoFrame({ base: '../tests/fixtures', fetchImpl: f });
@@ -291,5 +291,65 @@ describe('каталог', () => {
   test('ключи как в core/data/universe.py', () => {
     assert.deepEqual(D.CATALOG.map((a) => a.key), ['MCFTR', 'IMOEX', 'MEBCTR', 'IRDIVTR', 'MOEXEU', 'RGBITR',
       'RUGBITR1Y', 'RUGBITR5+', 'RUGBITR10Y', 'RUCBITR', 'RUCBTRNS', 'CORP_CHAIN', 'GOLD_CBR', 'GLDRUB_TOM', 'RUONIA']);
+  });
+});
+
+// ------------------------------------------------------------------ безрисковая ставка (как tests/test_risk_free.py)
+describe('безрисковая ставка: rateSlice / timeMean / loadRiskFree', () => {
+  const RATE = { dates: ['2002-12-30', '2003-01-10', '2011-01-11', '2011-01-20'], values: [0.10, 0.12, 0.05, 0.06] };
+
+  test('rateSlice: start между публикациями — первой точкой start со ставкой на эту дату', () => {
+    assert.deepEqual(D.rateSlice(RATE, '2003-01-05', '2003-01-31'), { dates: ['2003-01-05', '2003-01-10'], values: [0.10, 0.12] });
+  });
+  test('rateSlice: start на дате публикации — без дубля', () => {
+    assert.deepEqual(D.rateSlice(RATE, '2003-01-10', null),
+      { dates: ['2003-01-10', '2011-01-11', '2011-01-20'], values: [0.12, 0.05, 0.06] });
+  });
+  test('rateSlice: start до первой даты — первое значение (bfill)', () => {
+    assert.deepEqual(D.rateSlice(RATE, '2000-01-01', '2003-01-05'), { dates: ['2000-01-01', '2002-12-30'], values: [0.10, 0.10] });
+  });
+  test('rateSlice: срез по end и start > end', () => {
+    assert.deepEqual(D.rateSlice(RATE, null, '2003-01-09'), { dates: ['2002-12-30'], values: [0.10] });
+    assert.deepEqual(D.rateSlice(RATE, '2011-01-12', '2011-01-19'), { dates: ['2011-01-12'], values: [0.05] });
+    assert.deepEqual(D.rateSlice(RATE, '2011-01-20', '2011-01-01').dates, []);
+  });
+  test('rateSlice не меняет исходный ряд', () => {
+    D.rateSlice(RATE, '2003-01-05', null);
+    assert.deepEqual(RATE.dates, ['2002-12-30', '2003-01-10', '2011-01-11', '2011-01-20']);
+  });
+  test('timeMean: по календарным дням, ffill, до первой даты — bfill', () => {
+    close(D.timeMean(RATE, '2003-01-05', '2003-01-14'), 0.11, 1e-12, '5 дн. по 10 % + 5 дн. по 12 %');
+    close(D.timeMean(RATE, '2011-01-01', '2011-01-31'), (1.2 + 0.45 + 0.72) / 31, 1e-12, 'январь 2011');
+    close(D.timeMean(RATE, '2002-12-25', '2002-12-31'), 0.10, 1e-12, 'bfill');
+    close(D.timeMean(RATE, '2011-01-15', '2011-01-15'), 0.05, 1e-12, 'один день');
+    close(D.timeMean(RATE, '2011-01-25', '2011-03-01'), 0.06, 1e-12, 'после последней даты');
+  });
+  test('timeMean: пусто — NaN', () => {
+    assert.ok(Number.isNaN(D.timeMean(RATE, '2011-01-15', '2011-01-14')));
+    assert.ok(Number.isNaN(D.timeMean({ dates: [], values: [] }, '2020-01-01', '2020-12-31')));
+  });
+
+  const FILE = { id: 'risk_free', unit: 'доля годовых', splice_date: '2011-01-11',
+    data: [['2002-12-30', 0.10], ['2003-01-10', 0.12], ['2003-01-12', 0], ['2003-01-13', null],
+      ['2011-01-11', 0.05], ['2011-01-20', 0.06]] };
+
+  test('loadRiskFree: нули и пустые значения отброшены, метаданные без data', async () => {
+    const f = routeFetch((url) => (url.endsWith('/risk_free.json') ? FILE : undefined));
+    const { meta, series } = await D.loadRiskFree({ base: 'data', fetchImpl: f });
+    assert.deepEqual(series.dates, ['2002-12-30', '2003-01-10', '2011-01-11', '2011-01-20']);
+    assert.equal(meta.splice_date, '2011-01-11');
+    assert.equal(meta.data, undefined);
+    assert.ok(f.calls.every((u) => !/^https?:/.test(u)));
+  });
+  test('riskFreeSeries / riskFreeMean поверх файла', async () => {
+    const f = routeFetch((url) => (url.endsWith('/risk_free.json') ? FILE : undefined));
+    assert.deepEqual(await D.riskFreeSeries('2003-01-05', '2003-01-31', { base: 'data', fetchImpl: f }),
+      { dates: ['2003-01-05', '2003-01-10'], values: [0.10, 0.12] });
+    close(await D.riskFreeMean('2003-01-05', '2003-01-14', { base: 'data', fetchImpl: f }), 0.11, 1e-12, 'mean');
+  });
+  test('loadRiskFree: нет файла или пустой ряд — ошибка', async () => {
+    await assert.rejects(D.loadRiskFree({ base: 'data', fetchImpl: routeFetch(() => undefined) }));
+    const empty = routeFetch(() => ({ id: 'risk_free', data: [['2020-01-01', 0]] }));
+    await assert.rejects(D.loadRiskFree({ base: 'data', fetchImpl: empty }), /Пустой ряд/);
   });
 });

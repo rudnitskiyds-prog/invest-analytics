@@ -234,6 +234,81 @@ export async function loadCbrFile(id, { base = DEFAULT_DATA_BASE, fetchImpl } = 
   return { meta, series: pairsToSeries(data || [], { positive: false }) };
 }
 
+// ------------------------------------------------------------------ безрисковая ставка
+/**
+ * Безрисковая ставка платформы (как core/data/risk_free.py): файл сборщика public/data/risk_free.json —
+ * доходность к погашению коротких ОФЗ (RUGBITR1Y, поле YIELD ISS), до splice_date (11.01.2011) — RGBEY
+ * (эффективная доходность рынка ОФЗ), до 30.12.2002 — первое известное значение. Значения — доля годовых.
+ * @returns {Promise<{meta: Object, series: Series}>}  meta: id, title, unit, source, updated, first, last,
+ *          splice_date, sources
+ */
+export async function loadRiskFree({ base = DEFAULT_DATA_BASE, fetchImpl } = {}) {
+  const b = base.endsWith('/') ? base : base + '/';
+  const json = await getCached(`${b}risk_free.json`, fetchImpl);
+  const { data, ...meta } = json || {};
+  const series = pairsToSeries(data || []);          // только конечные > 0
+  if (!series.dates.length) throw new Error('Пустой ряд безрисковой ставки (risk_free.json)');
+  return { meta, series };
+}
+
+/**
+ * Срез ступенчатого ряда ставок на [start, end] (rate_series в Python): если start не совпадает
+ * с датой публикации, первой точкой ставится start со ставкой, действовавшей на эту дату
+ * (последняя публикация ≤ start; раньше первой даты — первое значение). Чистая функция.
+ * @returns {Series}
+ */
+export function rateSlice(rate, start = null, end = null) {
+  const out = sliceSeries(rate, start, end);
+  if (start && (!end || start <= end) && out.dates[0] !== start && rate.dates.length) {
+    let v = rate.values[0];
+    for (let i = 0; i < rate.dates.length && rate.dates[i] <= start; i++) v = rate.values[i];
+    out.dates.unshift(start);
+    out.values.unshift(v);
+  }
+  return out;
+}
+
+/**
+ * Средняя по календарным дням ставка ступенчатого ряда на [start, end] (risk_free.time_mean):
+ * значение действует до следующей публикации, до первой даты — первое значение. Пусто — NaN.
+ */
+export function timeMean(rate, start, end) {
+  if (!rate.dates.length || !start || !end || start > end) return NaN;
+  const day = 86400000;
+  const ms = (d) => Date.parse(d + 'T00:00:00Z');
+  const a = ms(start), z = ms(end);
+  let sum = 0, j = 0, v = rate.values[0];
+  while (j < rate.dates.length && ms(rate.dates[j]) <= a) { v = rate.values[j]; j++; }
+  let t = a;
+  while (t <= z) {
+    const next = j < rate.dates.length ? Math.min(ms(rate.dates[j]), z + day) : z + day;
+    sum += v * Math.round((next - t) / day);
+    t = next;
+    if (j < rate.dates.length && ms(rate.dates[j]) === t) { v = rate.values[j]; j++; }
+  }
+  return sum / (Math.round((z - a) / day) + 1);
+}
+
+/**
+ * Ряд безрисковой ставки (доля годовых) на [start, end] — rf для computeAll / metricsTable
+ * (perPeriodRate берёт ставку на начало каждого периода). start/end — "YYYY-MM-DD" или null.
+ * @returns {Promise<Series>}
+ */
+export async function riskFreeSeries(start = null, end = null, opts = {}) {
+  const { series } = await loadRiskFree(opts);
+  return rateSlice(series, start, end);
+}
+
+/**
+ * Средняя по календарным дням безрисковая ставка (доля годовых) за [start, end] — скаляр rf для
+ * границы Марковица и CML. Без дат — весь ряд.
+ * @returns {Promise<number>}
+ */
+export async function riskFreeMean(start = null, end = null, opts = {}) {
+  const { series } = await loadRiskFree(opts);
+  return timeMean(series, start || series.dates[0], end || series.dates[series.dates.length - 1]);
+}
+
 // ------------------------------------------------------------------ ряды
 /** Ряд без NaN. */
 export function dropNaN(s) {

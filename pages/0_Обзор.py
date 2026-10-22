@@ -20,6 +20,8 @@ KEY_INDICES = {"IMOEX": "Индекс МосБиржи", "MCFTR": "МосБир�
                "RTSI": "Индекс РТС"}
 
 try:
+    if is_offline():   # демо-режим — без запросов к ISS
+        raise RuntimeError("демо-режим")
     idx = iss.indices().set_index("SECID")
     cols = st.columns(len(KEY_INDICES))
     for c, (k, name) in zip(cols, KEY_INDICES.items()):
@@ -51,6 +53,8 @@ with left:
 with right:
     st.subheader("Кривая бескупонной доходности (КБД)")
     try:
+        if is_offline():
+            raise RuntimeError("демо-режим")
         cur = iss.zcyc()
         yr = iss.zcyc((pd.Timestamp.today() - pd.DateOffset(years=1)).date().isoformat())
         fig = go.Figure()

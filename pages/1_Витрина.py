@@ -4,22 +4,25 @@ import streamlit as st
 from core.analytics import screener
 from core.config import FUNDAMENTALS_CSV
 from core.data import iss, public_data
-from ui.common import fmt_date, page_setup, to_excel
+from ui.common import fmt_date, page_setup, rf_caption, rf_series, to_excel
 
 page_setup("Витрина данных по бумагам", "🗂")
-rf = st.session_state["rf"]
+# окно коэффициентов витрины — 12 мес. (366 дней, как screener._showcase_rf)
+RF_START = (pd.Timestamp.today() - pd.Timedelta(days=366)).date().isoformat()
 
 PCT = ["1М", "3М", "YTD", "1Г", "Волатильность", "Макс. просадка 1Г", "Див. доходность", "ROE"]
 
 
 @st.cache_data(ttl=3600, show_spinner="Загружаю котировки и считаю метрики…")
-def _shares(top, rf, bench):
-    return screener.shares_showcase(bench, rf, top)
+def _shares(top, bench):
+    # ряд безрисковой ставки (core.data.risk_free) — внутри, в ключ кэша не входит;
+    # недоступен — предупреждение и нулевая ставка, витрина всё равно строится
+    return screener.shares_showcase(bench, rf_series(RF_START), top)
 
 
 @st.cache_data(ttl=3600, show_spinner="Загружаю фонды…")
-def _etfs(rf, bench):
-    return screener.etf_showcase(bench, rf)
+def _etfs(bench):
+    return screener.etf_showcase(bench, rf_series(RF_START))
 
 
 @st.cache_data(ttl=900, show_spinner="Загружаю облигации…")
@@ -105,11 +108,11 @@ with tab_sh:
     c1, c2, c3 = st.columns([1, 1, 2])
     top = c1.slider("Самые ликвидные акции, шт.", 20, 250, 80, 10)
     bench = c2.selectbox("Бета к", ["IMOEX", "MCFTR"], key="sh_b")
-    c3.caption("Доходности и риск — за последние 12 мес. по дневным данным; Шарп/Сортино годовые "
-               "при текущей безрисковой ставке из боковой панели. Дивидендная доходность — "
+    c3.caption("Доходности и риск — за последние 12 мес. по дневным данным; Шарп/Сортино годовые. "
+               + rf_caption(RF_START) + " Дивидендная доходность — "
                "выплаты с датой реестра за 12 мес. / цена.")
     try:
-        df = add_rating(_shares(top, rf, bench))
+        df = add_rating(_shares(top, bench))
         q = st.text_input("Поиск по тикеру/названию", key="sh_q")
         if q:
             df = df[df["SECID"].str.contains(q.upper(), regex=False)
@@ -133,7 +136,7 @@ with tab_sh:
 
 with tab_etf:
     try:
-        df = add_rating(_etfs(rf, "IMOEX"))
+        df = add_rating(_etfs("IMOEX"))
         has_fee = "Комиссия, %" in df.columns
         # колонки RusETFs появляются, только если данные есть
         cat_filters = [(c, k) for c, k in [("УК", "etf_uk"), ("Класс активов", "etf_class")] if c in df.columns]

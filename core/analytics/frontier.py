@@ -62,6 +62,11 @@ def ledoit_wolf(returns: pd.DataFrame) -> pd.DataFrame:
 
 def estimate_inputs(prices: pd.DataFrame, freq: str = "M", rf: float = 0.0,
                     mu_method: str = "arith", shrink: bool = False) -> FrontierInputs:
+    """Годовые μ и ковариации по ценам `prices` с частотой `freq`.
+
+    rf — скаляр, годовая ставка в долях (для Шарпа точек, касательного портфеля и CML).
+    Вызывающий передаёт среднюю безрисковую ставку за окно цен:
+    core.data.risk_free.mean_rate(prices.index[0], prices.index[-1]) (доходность коротких ОФЗ)."""
     p = resample_prices(prices.dropna(how="all").ffill(), freq).dropna()
     r = p.pct_change().dropna()
     n = PERIODS[freq]

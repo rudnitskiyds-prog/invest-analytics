@@ -161,11 +161,13 @@ class FakeLoader:
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    """OUT -> tmp, key_rate.json с постоянной ставкой 10 %, только источник symbol_stats."""
+    """OUT -> tmp, risk_free.json (безрисковая ставка — доходность коротких ОФЗ) с постоянной ставкой 10 %,
+    только источник symbol_stats."""
     monkeypatch.setattr(cd, "OUT", tmp_path)
     days = pd.bdate_range("2013-09-17", dt.date.today())
-    (tmp_path / "key_rate.json").write_text(json.dumps(
-        {"id": "key_rate", "data": [[d.strftime("%Y-%m-%d"), 0.1] for d in days]}), encoding="utf-8")
+    (tmp_path / "risk_free.json").write_text(json.dumps(
+        {"id": "risk_free", "unit": "доля годовых", "splice_date": "2011-01-11",
+         "data": [[d.strftime("%Y-%m-%d"), 0.1] for d in days]}), encoding="utf-8")
     loader = FakeLoader()
     monkeypatch.setattr(cd, "_symbol_stats_loader", lambda: loader)
     return tmp_path, loader
@@ -318,11 +320,11 @@ def test_symbol_stats_failure_share_over_20pct(env):
     assert (out / "symbol_stats.json").read_text(encoding="utf-8") == before
 
 
-def test_symbol_stats_without_key_rate(env):
+def test_symbol_stats_without_risk_free(env):
     out, loader = env
-    (out / "key_rate.json").unlink()
+    (out / "risk_free.json").unlink()
     assert cd.main(["--only", "symbol_stats"]) == 1
-    assert "key_rate" in _read(out, "status")["symbol_stats"]["error"]
+    assert "risk_free" in _read(out, "status")["symbol_stats"]["error"]
     assert loader.calls == []
     assert not (out / "symbol_stats.json").exists()
 
@@ -513,7 +515,7 @@ def test_monthly_closes_empty_has_datetime_index(monkeypatch):
 
 
 def test_symbol_stats_rf_per_security_period():
-    """rf бумаги — средняя ключевая ставка за её собственный период, а не за всё окно."""
+    """rf бумаги — средняя безрисковая ставка за её собственный период, а не за всё окно."""
     rate = pd.Series([0.07, 0.21], index=pd.to_datetime(["2016-01-01", "2022-01-01"]))
     whole = ranking.mean_rate(rate, "2016-09-30", "2026-09-30")
     recent = ranking.mean_rate(rate, "2022-06-30", "2026-09-30")

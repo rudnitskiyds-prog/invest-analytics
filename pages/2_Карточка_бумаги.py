@@ -18,7 +18,7 @@ from core.analytics import metrics as m
 from ui.common import (MONTHS_RU, asset_label, bar_chart, catalog_options, esc, fmt_big_rub, fmt_date, fmt_metric,
                        fmt_num,
                        fmt_pct, fmt_signed_pct, is_num, is_offline, line_chart, load_series, monthly_heatmap,
-                       page_setup, position_scale, show_metrics_table)
+                       page_setup, position_scale, rf_caption, rf_series, show_metrics_table)
 
 
 def _papers(n) -> str:
@@ -33,7 +33,6 @@ def _papers(n) -> str:
 
 page_setup("Карточка бумаги", "🔎")
 ss = st.session_state
-rf = ss["rf"]
 bench = ss["benchmark"]   # демо-режим — из боковой панели; на живых данных — выбор на странице (ниже)
 OFFLINE = is_offline()
 TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9_.-]{0,31}$")
@@ -198,8 +197,10 @@ def _prices(key: str, start: Optional[str]) -> pd.Series:
 
 
 @st.cache_data(ttl=15 * 60, show_spinner=False, max_entries=32)
-def _report(secid: str, bench_key: Optional[str], rf: float) -> tuple[dict, Optional[str]]:
-    """(отчёт, причина, по которой бенчмарка нет | None). Бенчмарк — только symbol_page.load_benchmark."""
+def _report(secid: str, bench_key: Optional[str]) -> tuple[dict, Optional[str]]:
+    """(отчёт, причина, по которой бенчмарка нет | None). Бенчмарк — только symbol_page.load_benchmark.
+    Безрисковая ставка — ряд core.data.risk_free за всю историю бумаги, берётся здесь (в ключ кэша не входит);
+    метрики сами выравнивают ставку по своим датам (в т. ч. общего периода с бенчмарком)."""
     from core.analytics import symbol_page
     data = _load(secid)
     ohlc = data.get("ohlc")
@@ -211,7 +212,8 @@ def _report(secid: str, bench_key: Optional[str], rf: float) -> tuple[dict, Opti
             bser = _prices(bench_key, str(pd.Timestamp(ohlc.index[0]).date()))
         except Exception as e:  # noqa: BLE001
             bser, berr = None, humanize(e)
-    rep = symbol_page.report(data, bser, rf)
+    first, last = str(pd.Timestamp(ohlc.index[0]).date()), str(pd.Timestamp(ohlc.index[-1]).date())
+    rep = symbol_page.report(data, bser, rf_series(first, last))
     berr = berr or (rep.get("errors") or {}).get("benchmark")
     if bench_key and bench_key != secid and rep.get("benchmark") is None and not berr:
         berr = "нет общих дат с бумагой"
@@ -294,7 +296,7 @@ def block_rating(sec: str, rating: Optional[dict] = None, err: Optional[str] = N
     upd = fmt_date((stats or {}).get("updated") or it.get("updated"))
     st.caption(f"Перцентиль 0–100 среди {peers}{f' ({fmt_num(n)} {_papers(n)})' if is_num(n) else ''}, торгуемых сейчас; "
                f"100 — лучший показатель класса. Рейтинг ночной, по месячным доходностям {basis}; "
-               "Rf — средняя ключевая ставка ЦБ за окно, поэтому значения могут отличаться от коэффициентов "
+               "Rf — средняя доходность коротких ОФЗ за период бумаги, поэтому значения могут отличаться от коэффициентов "
                "ниже (они — по дневным данным). "
                f"Источник: {(stats or {}).get('source') or 'ISS MOEX (расчёт ИнвестАналитики)'}"
                f"{f', обновлено {upd}' if upd != '—' else ''}.")
@@ -315,7 +317,7 @@ def block_rating(sec: str, rating: Optional[dict] = None, err: Optional[str] = N
 
 # ------------------------------------------------------------------ демо-режим
 if OFFLINE:
-    st.caption(f"Бенчмарк ({bench}) и безрисковая ставка ({fmt_pct(rf, 2)} годовых) — в боковой панели.")
+    st.caption(f"Бенчмарк ({bench}) — в боковой панели.")
     st.info("**Карточка бумаги работает на живых данных ISS Мосбиржи**: ей нужны дневные свечи, текущие котировки "
             "и справочник бумаги. В демо-режиме есть только месячные ряды индексов и активов каталога — "
             "ниже показаны они и рейтинг из ночного пересчёта (если бумага в нём есть).")
@@ -337,7 +339,9 @@ if OFFLINE:
             st.plotly_chart(line_chart(df / df.iloc[0] * 100, bench if bench in df else None,
                                        "Стоимость, база = 100", hover_fmt=".1f"), width="stretch")
             st.caption(f"Рост 100 ₽ вложений, {fmt_date(df.index[0])} — {fmt_date(df.index[-1])}; месячные данные.")
-            show_metrics_table({c: df[c] for c in df.columns}, df[bench] if bench in df else None, rf, "M")
+            show_metrics_table({c: df[c] for c in df.columns}, df[bench] if bench in df else None,
+                               rf_series(df.index[0], df.index[-1]), "M")
+            st.caption(rf_caption(df.index[0], df.index[-1]))
         card("График и коэффициенты (демо, месячные данные)", _demo)
     card("Рейтинг риск/доходность", block_rating, secid)
     st.stop()
@@ -389,7 +393,7 @@ def _bench_chosen():
 c3.selectbox("Бенчмарк", bench_opts, key="sym_bench_sel", on_change=_bench_chosen, format_func=asset_label,
              help=f"По умолчанию — по классу бумаги ({default_bench}).")
 st.caption(f"Бенчмарк — {'выбран на странице' if ss.get('sym_bench_user') else 'по классу бумаги'}; "
-           f"безрисковая ставка ({fmt_pct(rf, 2)} годовых) — в боковой панели. "
+           "безрисковая ставка — доходность коротких ОФЗ на те же даты. "
            "Коэффициенты на этой странице считаются по дневным доходностям.")
 
 title = info.get("name") or info.get("short_name") or secid
@@ -417,7 +421,7 @@ rep, berr, rep_err = {}, None, None
 if not load_err:
     with st.spinner("Считаю показатели…"):
         try:
-            rep, berr = _report(secid, bench, rf)
+            rep, berr = _report(secid, bench)
         except Exception as e:  # noqa: BLE001
             rep_err = str(e) if isinstance(e, NoData) else humanize(e)
 if rep_err:
@@ -460,6 +464,13 @@ def bench_warn():
     if bench != secid and not has_bench:
         why = bench_unavailable()
         st.warning(why + ("." if "сравнение не показано" in why else " — бумага показана без него."))
+
+
+def period_bounds() -> tuple:
+    """Границы периода коэффициентов (как в period_note): общий период или вся история бумаги."""
+    if mcommon:
+        return rep.get("common_from") or g(msec, "start"), rep.get("common_to") or g(msec, "end")
+    return g(msec, "start"), g(msec, "end")
 
 
 def period_note() -> str:
@@ -654,7 +665,7 @@ def block_riskret():
     bench_warn()
     if msec is None:
         raise NoData(esc(rep_errors.get("metrics") or ""))
-    st.caption(f"Rf = {fmt_pct(rf, 2)}, дневные доходности, {period_note()}. {divs_note()}".strip())
+    st.caption(f"{rf_caption(*period_bounds())} Дневные доходности, {period_note()}. {divs_note()}".strip())
     fx_note()
     df = pd.DataFrame({"Показатель": list(RISK_LABELS.values()),
                        secid: [fmt_metric(k, g(msec, k)) for k in RISK_LABELS]})

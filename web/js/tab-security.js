@@ -4,7 +4,8 @@ import { colorOf, destroyChart, lineChart } from "./charts.js";
 import { $, errorNotice, h, notice, tableWrap, withBusy } from "./dom.js";
 import { assetLabel, engine, requireEngine, UserError } from "./engine.js";
 import { bindValue, globals, readDates, FREQ_LABELS } from "./fields.js";
-import { fmtDate, fmtPct } from "./format.js";
+import { fmtDate } from "./format.js";
+import { riskFree } from "./riskfree.js";
 import { getMany } from "./source.js";
 import * as S from "./state.js";
 import { buildMetricsTable } from "./tab-backtest.js";
@@ -40,7 +41,7 @@ async function run() {
     await withBusy($("#sec-run"), $("#sec-status"), async (status) => {
       try {
         const E = requireEngine();
-        const g = globals();
+        let g = globals();
         const { from, till } = readDates("sfrom", "still");
         const key = S.get("sec").trim().toUpperCase();
         if (!key) throw new UserError("Введите тикер или ключ индекса, например MCFTR или SBER.");
@@ -62,6 +63,9 @@ async function run() {
           b = s;
         }
         if (s.dates.length < 3) throw new UserError(`${key}: слишком мало данных за выбранный период.`);
+        // безрисковая ставка — ряд доходности коротких ОФЗ по датам периода расчёта
+        const RF = await riskFree(s.dates[0], s.dates.at(-1));
+        g = { ...g, rf: RF.rf, rfNote: RF.note };
         last = { key, s, b, g, from, till, warn, offerDemo: !!errors[g.bench]?.offerDemo };
         S.set({ sc: "1" });
         render();
@@ -113,7 +117,7 @@ function render() {
   const cols = Object.keys(reports);
   out.append(h("section", { class: "card" },
     h("h3", { class: "card-title" }, "Показатели эффективности"),
-    h("p", { class: "card-sub" }, `Rf = ${fmtPct(g.rf, 2)}, доходности ${FREQ_LABELS[g.freq]}, бенчмарк ${g.bench}.`),
+    h("p", { class: "card-sub" }, `${g.rfNote} Доходности ${FREQ_LABELS[g.freq]}, бенчмарк ${g.bench}.`),
     tableWrap(buildMetricsTable(cols, reports, (c) => colorOf(c, { bench: c === g.bench })))));
 }
 

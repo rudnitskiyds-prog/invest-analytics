@@ -22,6 +22,6 @@ TTL_REFERENCE = 7 * 24 * 3600  # справочники
 
 # Параметры по умолчанию
 DEFAULT_CAPITAL = 1_000_000
-DEFAULT_RF = 0.0786            # 15-летняя ставка КБД Мосбиржи на 11.01.2011
+# безрисковой ставки-константы нет: Rf — ряд доходности коротких ОФЗ, core/data/risk_free.py
 DEFAULT_BENCHMARK = "MCFTR"
 DEFAULT_FREQ = "M"

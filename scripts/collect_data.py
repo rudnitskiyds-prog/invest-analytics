@@ -12,6 +12,12 @@
     {"id": ..., "title": ..., "unit": ..., "source": ..., "updated": ISO-время,
      "first": "YYYY-MM-DD", "last": "YYYY-MM-DD", "data": [["YYYY-MM-DD", value], ...]}
 
+Источник risk_free (ISS, собирается вместе с рядами ЦБ) — безрисковая ставка платформы
+(core/data/risk_free.py), unit "доля годовых": доходность к погашению индекса коротких ОФЗ RUGBITR1Y
+(поле YIELD), до его первой даты — RGBEY (эффективная доходность рынка ОФЗ, engine state) без поправки
+на спред. Дополнительные поля: "splice_date" (первая дата RUGBITR1Y) и
+"sources": [{"id": "RGBEY", …, "from", "till"}, {"id": "RUGBITR1Y", …, "from"}].
+
 Источники T-Invest API (kind = "tinvest") требуют токена в переменной окружения
 TINVEST_TOKEN (только чтение). Их файлы — {"updated", "source": "T-Invest API", "data": ...}:
     tinvest_shares.json  — акции TQBR: тикер, ISIN, сектор, лот, uid, asset_uid, флаги;
@@ -53,7 +59,7 @@ import pandas as pd
 import requests
 
 from core.config import ROOT, RUSETFS_URL
-from core.data import cbr, rusetfs, tinvest
+from core.data import cbr, risk_free, rusetfs, tinvest
 
 OUT = ROOT / "public" / "data"
 START = "2008-01-01"
@@ -96,6 +102,17 @@ SOURCES: dict[str, dict] = {
         "load": lambda: cbr.key_rate("2013-09-13"),
         "digits": 4,
         "min_rows": 2000,
+    },
+    # безрисковая ставка платформы (core/data/risk_free.py): YIELD RUGBITR1Y, до 11.01.2011 — RGBEY;
+    # данные ISS, а не ЦБ, но формат и порядок сбора — как у рядов ЦБ (файл нужен шагу «Рейтинги»)
+    "risk_free": {
+        "title": risk_free.TITLE,
+        "unit": risk_free.UNIT,
+        "source": risk_free.SOURCE,
+        "load": lambda: risk_free.build(),
+        "meta": risk_free.file_meta,      # splice_date, sources
+        "digits": 4,
+        "min_rows": 5000,
     },
 }
 
@@ -389,14 +406,15 @@ def _symbol_stats_loader():
     return _IssStatsLoader()
 
 
-def _key_rate_series() -> pd.Series:
-    """Ключевая ставка ЦБ (доля годовых) из public/data/key_rate.json, собранного шагом «Сбор».
-    Нет файла или он пуст — ошибка: рейтинги без безрисковой ставки не считаем."""
-    rows = _previous("key_rate").get("data")
+def _risk_free_series() -> pd.Series:
+    """Безрисковая ставка (доля годовых; доходность коротких ОФЗ RUGBITR1Y, до 11.01.2011 — RGBEY)
+    из public/data/risk_free.json, собранного шагом «Сбор». Нет файла или он пуст — ошибка:
+    рейтинги без безрисковой ставки не считаем (живой загрузки с ISS здесь нет намеренно)."""
+    rows = _previous("risk_free").get("data")
     if not isinstance(rows, list) or not rows:
-        raise ValueError("нет public/data/key_rate.json — ключевая ставка для rf недоступна")
+        raise ValueError("нет public/data/risk_free.json — безрисковая ставка для rf недоступна")
     s = pd.Series({pd.Timestamp(d): float(v) for d, v in rows if d and v is not None}, dtype=float)
-    return s.sort_index()
+    return s[s > 0].sort_index()
 
 
 def symbol_stats(spec: dict) -> tuple:
@@ -406,7 +424,8 @@ def symbol_stats(spec: dict) -> tuple:
     Сплиты: месячные свечи ISS уже скорректированы биржей задним числом — отдельной корректировки нет,
     "split_adjusted": true по источнику; дивиденды T-Invest — в текущих акциях.
     Месячные цены — свечи ISS interval=31 (один запрос на бумагу), окно — до 10 лет полных месяцев
-    (текущий месяц не входит); rf — средняя по времени ключевая ставка за период бумаги (item "rf"),
+    (текущий месяц не входит); rf — средняя по времени безрисковая ставка (доходность коротких ОФЗ,
+    risk_free.json) за период бумаги (item "rf"),
     верхнее "rf" — за всё окно (справочно).
     Сбои по отдельным бумагам — пропуск; источник — сбой, если сбоев > MAX_FAIL_SHARE,
     MAX_CONSECUTIVE_FAILS подряд, исчерпан бюджет времени или акций в рейтинге < min_rows."""
@@ -417,10 +436,10 @@ def symbol_stats(spec: dict) -> tuple:
     till = today.replace(day=1) - dt.timedelta(days=1)                   # конец прошлого месяца
     first = (pd.Timestamp(till) - pd.DateOffset(months=12 * SYMBOL_STATS_YEARS)).to_period("M")
     start = first.to_timestamp().date()                                  # 1-е число месяца базовой цены
-    key_rate = _key_rate_series()
-    rf = ranking.mean_rate(key_rate, first.to_timestamp("M"), till)      # за всё окно (справочно в файле)
+    rf_rate = _risk_free_series()
+    rf = ranking.mean_rate(rf_rate, first.to_timestamp("M"), till)       # за всё окно (справочно в файле)
     if not math.isfinite(rf):
-        raise ValueError("ключевая ставка за окно не определена")
+        raise ValueError("безрисковая ставка за окно не определена")
 
     # полная доходность акций: дивиденды из dividends.json (T-Invest), собранного шагом «Сбор» или ранее;
     # нет файла — акции по ценам, "total_return": false (сайт покажет пометку)
@@ -470,9 +489,9 @@ def symbol_stats(spec: dict) -> tuple:
         tr = classes[sec] == "share" and div_data is not None
         if tr:
             s = total_return_series(s, ranking.ex_dividends(div_data.get(sec)))
-        # rf — средняя ключевая ставка за период самой бумаги (а не за всё окно): иначе у бумаг с короткой
+        # rf — средняя безрисковая ставка за период самой бумаги (а не за всё окно): иначе у бумаг с короткой
         # историей (2022–2026, ставка выше средней за 10 лет) Шарп/Сортино/Омега/Мартин завышены
-        rf_sec = ranking.mean_rate(key_rate, s.index[0], s.index[-1])
+        rf_sec = ranking.mean_rate(rf_rate, s.index[0], s.index[-1])
         rf_sec = rf_sec if math.isfinite(rf_sec) else rf
         items[sec] = {"class": classes[sec], "tr": tr, "rf": round(rf_sec, 6), **ranking.symbol_metrics(s, rf_sec)}
     if len(failed) > 20:
@@ -524,6 +543,7 @@ def collect(name: str, spec: dict) -> dict:
         "id": name, "title": spec["title"], "unit": spec["unit"], "source": spec["source"],
         "updated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "first": s.index.min().strftime("%Y-%m-%d"), "last": s.index.max().strftime("%Y-%m-%d"),
+        **(spec["meta"](s) if spec.get("meta") else {}),
         "data": _rows(s, spec["digits"]),
     }
     _write(name, payload)

@@ -18,9 +18,12 @@
 * Все функции принимают ряд ЦЕН (стоимости портфеля) или ДОХОДНОСТЕЙ
   pandas.Series с DatetimeIndex. Периодичность определяется автоматически
   (день / неделя / месяц / квартал / год) либо задаётся явно `periods_per_year`.
-* Безрисковая ставка `rf` — годовая в долях (0.0786 = 7,86 %) или ряд
-  годовых ставок по датам (например, RUONIA / КБД), приводится к ставке
-  за период: (1 + rf) ** (1 / n) − 1.
+* Безрисковая ставка `rf` — годовая в долях (0.14 = 14 %) или ряд годовых
+  ставок по датам публикации (ставка платформы — core.data.risk_free.rate_series:
+  доходность коротких ОФЗ), приводится к ставке за период: (1 + rf) ** (1 / n) − 1.
+  Для ряда берётся ставка, действовавшая на НАЧАЛО периода доходности
+  (см. per_period_rate). Годовая средняя ставка (annual_rf: M², Мартин, CAGR-вариант
+  Шарпа/Трейнора) — среднее ставок на начала периодов доходностей, попавших в расчёт.
 * Годовая «средняя» доходность для Шарпа / Трейнора / Дженсена / M²
   по умолчанию арифметическая: mean(r) × n (классическая формула CAPM).
   Параметр `return_method="cagr"` включает геометрический вариант.
@@ -69,18 +72,53 @@ def resample_prices(prices: pd.Series | pd.DataFrame, freq: str) -> pd.Series | 
     return prices.resample(rule).last().dropna(how="all")
 
 
+def period_starts(index: pd.Index) -> pd.DatetimeIndex:
+    """Начала периодов доходностей с датами окончания index: для i ≥ 1 — index[i−1];
+    для первой — index[0] − (index[1] − index[0]) (один шаг назад; при одной дате — index[0])."""
+    idx = pd.DatetimeIndex(index)
+    if len(idx) == 0:
+        return idx
+    first = idx[0] - (idx[1] - idx[0]) if len(idx) > 1 else idx[0]
+    return pd.DatetimeIndex([first, *idx[:-1]])
+
+
+def rates_at_starts(rf: pd.Series, index: pd.Index) -> pd.Series:
+    """Годовые ставки ряда rf (даты публикации), действовавшие на начало каждого периода доходности
+    с датами окончания index (period_starts): последняя публикация ≤ начала; раньше первой даты —
+    первое значение (bfill). Series с индексом index."""
+    s = rf.dropna().astype(float).sort_index()
+    s = s[~s.index.duplicated(keep="last")]
+    starts = period_starts(index)
+    v = s.reindex(s.index.union(starts)).ffill().bfill().reindex(starts)
+    return pd.Series(v.to_numpy(), index=index)
+
+
 def per_period_rate(rf: RateLike, n: int, index: Optional[pd.Index] = None) -> Union[float, pd.Series]:
-    """Годовая ставка -> ставка за период. Для ряда — выравнивание по index."""
+    """Годовая ставка -> ставка за период: (1 + rf) ** (1 / n) − 1 (стандартное определение).
+
+    Для ряда годовых ставок (даты публикации) и index дат доходностей: каждой доходности
+    сопоставляется ставка, действовавшая на начало её периода (rates_at_starts).
+    Ставка известна инвестору заранее (ex ante), поэтому берётся на начало, а не на конец периода.
+    Возвращается Series с индексом index."""
     if isinstance(rf, pd.Series):
-        s = rf.sort_index()
         if index is not None:
-            s = s.reindex(s.index.union(index)).ffill().bfill().reindex(index)
+            s = rates_at_starts(rf, index)
+        else:
+            s = rf.dropna().astype(float).sort_index()
         return (1 + s) ** (1.0 / n) - 1
     return (1 + float(rf)) ** (1.0 / n) - 1
 
 
-def annual_rf(rf: RateLike) -> float:
-    return float(rf.mean()) if isinstance(rf, pd.Series) else float(rf)
+def annual_rf(rf: RateLike, index: Optional[pd.Index] = None) -> float:
+    """Средняя годовая безрисковая ставка для формул с годовым Rf (M², Мартин, CAGR-вариант Шарпа
+    и Трейнора). Скаляр — как есть. Ряд с index дат доходностей — среднее годовых ставок на начала
+    периодов, реально попавших в расчёт (то же выравнивание, что в per_period_rate); ряд без index —
+    среднее значений ряда (прежнее поведение)."""
+    if not isinstance(rf, pd.Series):
+        return float(rf)
+    if index is not None and len(index):
+        return float(rates_at_starts(rf, index).mean())
+    return float(rf.dropna().mean())
 
 
 def _as_returns(x: pd.Series, is_prices: bool) -> pd.Series:
@@ -215,7 +253,7 @@ def modigliani_m2(returns: pd.Series, market: pd.Series, rf: RateLike = 0.0,
                   n: Optional[int] = None) -> float:
     """M² = Sp × σм + Rf."""
     n = n or infer_periods_per_year(returns.index)
-    return float(sharpe(returns, rf, n) * volatility(market.dropna(), n) + annual_rf(rf))
+    return float(sharpe(returns, rf, n) * volatility(market.dropna(), n) + annual_rf(rf, returns.dropna().index))
 
 
 def calmar(prices: pd.Series) -> float:
@@ -751,10 +789,10 @@ def compute_all(prices: pd.Series, benchmark: Optional[pd.Series] = None,
         positive_share=float((r > 0).mean()), best_period=float(r.max()),
         worst_period=float(r.min()),
         days_to_recover=max_drawdown_info(p)["days_to_recover"],
-        martin=martin(p, annual_rf(rf)), ulcer_index=ulcer_index(p),
+        martin=martin(p, annual_rf(rf, r.index)), ulcer_index=ulcer_index(p),
     )
     if return_method == "cagr":
-        rep.sharpe = (rep.cagr - annual_rf(rf)) / rep.volatility if rep.volatility else np.nan
+        rep.sharpe = (rep.cagr - annual_rf(rf, r.index)) / rep.volatility if rep.volatility else np.nan
     if benchmark is not None and len(benchmark.dropna()) > 3:
         b = resample_prices(benchmark.dropna(), freq)
         rb = to_returns(b)
@@ -764,8 +802,8 @@ def compute_all(prices: pd.Series, benchmark: Optional[pd.Series] = None,
         rep.alpha = jensen_alpha(rr, rbb, rf, n)
         rep.treynor = treynor(rr, rbb, rf, n)
         if return_method == "cagr" and rep.beta:
-            rep.treynor = (rep.cagr - annual_rf(rf)) / rep.beta
-        rep.m2 = rep.sharpe * volatility(rbb, n) + annual_rf(rf)
+            rep.treynor = (rep.cagr - annual_rf(rf, r.index)) / rep.beta
+        rep.m2 = rep.sharpe * volatility(rbb, n) + annual_rf(rf, r.index)
         rep.tracking_error = tracking_error(rr, rbb, n)
         rep.information_ratio = information_ratio(rr, rbb, n)
         rep.correlation = correlation(rr, rbb)
