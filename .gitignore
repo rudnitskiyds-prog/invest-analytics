@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 data/cache.sqlite
 data/portfolio.sqlite
+# временные файлы атомарной записи сборщика
+public/data/*.tmp
+.*.tmp

@@ -1,0 +1,22 @@
+{
+ "dividends": [
+  {"dividendNet": {"currency": "rub", "units": "12", "nano": 340000000},
+   "paymentDate": "2025-07-30T00:00:00Z", "declaredDate": "2025-04-20T00:00:00Z",
+   "lastBuyDate": "2025-07-16T00:00:00Z", "dividendType": "Regular Cash",
+   "recordDate": "2025-07-17T21:00:00Z", "regularity": "Annual",
+   "closePrice": {"currency": "rub", "units": "150", "nano": 0},
+   "yieldValue": {"units": "8", "nano": 230000000}, "createdAt": "2025-04-21T08:15:00.123456789Z"},
+  {"dividendNet": {"currency": "rub", "units": "40", "nano": 0},
+   "paymentDate": "1970-01-01T00:00:00Z", "declaredDate": "2022-04-01T00:00:00Z",
+   "lastBuyDate": "2022-06-08T00:00:00Z", "dividendType": "Cancelled",
+   "recordDate": "2022-06-10T00:00:00Z", "regularity": "Annual",
+   "closePrice": {"currency": "rub", "units": "100", "nano": 0},
+   "yieldValue": {}, "createdAt": "2022-04-02T00:00:00Z"},
+  {"dividendNet": {"currency": "rub", "units": "5", "nano": 500000000},
+   "paymentDate": "2024-01-25T00:00:00Z", "declaredDate": "2023-11-10T00:00:00Z",
+   "lastBuyDate": "2024-01-10T00:00:00Z", "dividendType": "Regular Cash",
+   "recordDate": "2024-01-11T21:00:00Z", "regularity": "Semi-Anl",
+   "closePrice": {"currency": "rub", "units": "110", "nano": 0},
+   "yieldValue": {"units": "5", "nano": 0}, "createdAt": "2023-11-11T00:00:00Z"}
+ ]
+}

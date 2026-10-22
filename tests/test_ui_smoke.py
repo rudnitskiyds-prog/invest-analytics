@@ -76,7 +76,8 @@ def test_frontier_page_builds_on_first_open():
 def test_security_page_without_demo_data():
     at = run_page("pages/2_Карточка_бумаги.py")   # SBER по умолчанию, в демо-данных его нет
     assert not at.exception, at.exception
-    assert any("Нет данных" in w.value for w in at.warning)
+    # новая карточка: без живых данных — спокойное пояснение, а не трейсбек
+    assert any("живых данных" in i.value for i in at.info)
 
 
 def test_portfolio_pages_empty(tmp_path, monkeypatch):

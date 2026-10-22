@@ -14,22 +14,37 @@ rf, bench, freq = st.session_state["rf"], st.session_state["benchmark"], st.sess
 custom = st.session_state.setdefault("custom_portfolios", {})
 
 # ------------------------------------------------------------------ собственные портфели
-with st.expander("Собственные портфели (добавить свой состав)", expanded=False):
-    name = st.text_input("Название портфеля", "Мой портфель")
+# портфель из карточки бумаги («Собрать портфель с этой бумагой»): {"name", "weights"}
+# bt_prefill удаляется сразу; состав живёт в pf_init, пока портфель не сохранён или не очищен
+if "bt_prefill" in st.session_state:
+    st.session_state["pf_init"] = st.session_state.pop("bt_prefill")
+prefill = st.session_state.get("pf_init")
+prefill_msg = st.session_state.pop("bt_prefill_msg", None)
+if prefill_msg:
+    st.success(prefill_msg)   # текст собирает карточка (тикер уже экранирован)
+with st.expander("Собственные портфели (добавить свой состав)", expanded=bool(prefill_msg)):
+    name = st.text_input("Название портфеля", prefill["name"] if prefill else "Мой портфель")
     st.caption("Ключи — из каталога (MCFTR, RGBITR, GOLD_CBR, RUONIA, CORP_CHAIN…) или любые тикеры ISS "
                "(SBER, EQMX, GLDRUB_TOM). Доли в %, нормируются к 100.")
-    init = pd.DataFrame({"Актив": ["MCFTR", "RGBITR", "GOLD_CBR"], "Доля, %": [50.0, 30.0, 20.0]})
-    ed = st.data_editor(init, num_rows="dynamic", key="pf_editor", width="stretch")
+    if prefill:
+        init = pd.DataFrame({"Актив": list(prefill["weights"]),
+                             "Доля, %": [float(v) * 100 for v in prefill["weights"].values()]})
+    else:
+        init = pd.DataFrame({"Актив": ["MCFTR", "RGBITR", "GOLD_CBR"], "Доля, %": [50.0, 30.0, 20.0]})
+    ed = st.data_editor(init, num_rows="dynamic", width="stretch",
+                        key=f"pf_editor_{prefill['name']}" if prefill else "pf_editor")
     if st.button("Сохранить портфель"):
         ed = ed.dropna()
         w = {str(a).strip().upper(): float(v) / 100
              for a, v in zip(ed["Актив"], ed["Доля, %"]) if v and str(a).strip()}
         custom[name] = w
+        st.session_state.pop("pf_init", None)
         st.success(f"Сохранён «{name}»")
     if custom:
         st.write({k: {a: f"{v:.1%}" for a, v in w.items()} for k, w in custom.items()})
         if st.button("Очистить собственные портфели"):
             custom.clear()
+            st.session_state.pop("pf_init", None)
             st.rerun()
 
 # ------------------------------------------------------------------ параметры
@@ -61,7 +76,7 @@ if run:
                                       cfreq=cfreq, tax=tax, log_y=log_y, same=same_rebal)
 req = st.session_state.get("bt_req")
 if not req or not req["picked"]:
-    st.info("Методика по умолчанию — как в НИР: 1 000 000 руб., 2011–2025, ежегодная ребалансировка "
+    st.info("По умолчанию: 1 000 000 руб., 2011–2025, ежегодная ребалансировка "
             "в последний торговый день декабря, без комиссий и налогов, бенчмарк MCFTR.")
     st.stop()
 
@@ -103,7 +118,7 @@ cols = st.columns(min(len(results), 6))
 for c, (k, r) in zip(cols * 3, results.items()):
     c.metric(k, fmt_rub(r.final_value), f"{m.cagr(r.equity) * 100:.1f}% CAGR".replace(".", ","))
 
-t1, t2, t3, t4, t5 = st.tabs(["Стоимость", "Просадки", "Показатели (табл. 4 НИР)", "По годам", "Структура и сделки"])
+t1, t2, t3, t4, t5 = st.tabs(["Стоимость", "Просадки", "Показатели эффективности", "По годам", "Структура и сделки"])
 with t1:
     st.plotly_chart(line_chart(eq, bench, "Стоимость, руб.", log_y=req["log_y"], height=520), width="stretch")
     if req["contrib"]:

@@ -22,5 +22,47 @@
   "rows": 3285,
   "last": "2026-10-22",
   "checked": "2026-10-22T08:32:30+00:00"
+ },
+ "tinvest_shares": {
+  "ok": true,
+  "rows": 255,
+  "last": "2026-10-08",
+  "checked": "2026-10-08T18:58:22+00:00"
+ },
+ "tinvest_etfs": {
+  "ok": true,
+  "rows": 61,
+  "last": "2026-10-08",
+  "checked": "2026-10-08T18:58:22+00:00"
+ },
+ "dividends": {
+  "ok": true,
+  "rows": 201,
+  "last": "2026-10-08",
+  "checked": "2026-10-08T19:00:04+00:00"
+ },
+ "fundamentals": {
+  "ok": true,
+  "rows": 253,
+  "last": "2026-10-08",
+  "checked": "2026-10-08T19:00:06+00:00"
+ },
+ "rusetfs_funds": {
+  "ok": true,
+  "rows": 206,
+  "last": "2026-10-08",
+  "with_commission": 206,
+  "checked": "2026-10-08T18:58:19+00:00"
+ },
+ "symbol_stats": {
+  "ok": true,
+  "rows": 268,
+  "last": "2026-09-30",
+  "shares": 226,
+  "funds": 42,
+  "short_history": 240,
+  "failed": 0,
+  "total_return": true,
+  "checked": "2026-10-08T19:03:17+00:00"
  }
 }

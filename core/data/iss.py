@@ -7,9 +7,12 @@
 Что умеет:
   * resolve(secid)              — движок / рынок / основной режим бумаги;
   * candles(secid, …)           — свечи (день/неделя/месяц) с пагинацией;
+  * monthly_closes(secid, …)    — месячные цены закрытия режима TQBR одним запросом (рейтинги);
+  * splits(secid)               — сплиты и консолидации (statistics/engines/stock/splits);
   * close_series(secid, …)      — ряд цен закрытия для любой бумаги/индекса/металла;
   * shares() / etfs() / bonds() / metals() — витрины инструментов с котировками;
   * dividends(secid), coupons(secid);
+  * description / issuer / board_snapshot / daily_ohlc — данные страницы бумаги (core/analytics/symbol_page.py);
   * zcyc(date) / kbd_rate(date, years) — кривая бескупонной доходности (КБД);
   * index_constituents('IMOEX') — состав индекса и веса;
   * search(query).
@@ -171,6 +174,95 @@ def candles(secid: str, start: str = "2000-01-01", end: Optional[str] = None,
     return df.set_index("date")[["open", "high", "low", "close", "value", "volume"]]
 
 
+def _splits_frame(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or not {"tradedate", "secid", "before", "after"} <= set(df.columns):
+        return pd.DataFrame(columns=["date", "secid", "before", "after"])
+    out = pd.DataFrame({"date": pd.to_datetime(df["tradedate"], errors="coerce"), "secid": df["secid"].astype(str),
+                        "before": pd.to_numeric(df["before"], errors="coerce"),
+                        "after": pd.to_numeric(df["after"], errors="coerce")})
+    out = out.dropna()
+    out = out[(out["before"] > 0) & (out["after"] > 0)]
+    return out.drop_duplicates().sort_values(["secid", "date"]).reset_index(drop=True)
+
+
+@lru_cache(maxsize=1)
+def _all_splits() -> pd.DataFrame:
+    """Все сплиты/консолидации фондового рынка: /statistics/engines/stock/splits (блок splits:
+    tradedate, secid, before, after). Пагинация — по splits.cursor, если он есть, иначе по start, пока
+    страница приносит новые строки."""
+    frames, start, seen = [], 0, 0
+    for _ in range(100):
+        data = get_json("/statistics/engines/stock/splits", {"start": start}, ttl=TTL_REFERENCE)
+        df = block(data, "splits")
+        if df.empty:
+            break
+        frames.append(df)
+        cur = block(data, "splits.cursor")
+        if not cur.empty:
+            idx, total, size = (int(cur.iloc[0][k]) for k in ("INDEX", "TOTAL", "PAGESIZE"))
+            if idx + size >= total:
+                break
+            start = idx + size
+            continue
+        n_new = len(pd.concat(frames).drop_duplicates())
+        if n_new == seen or len(df) < 100:
+            break
+        seen, start = n_new, start + len(df)
+    return _splits_frame(pd.concat(frames, ignore_index=True) if frames else pd.DataFrame())
+
+
+def splits(secid: Optional[str] = None) -> pd.DataFrame:
+    """Сплиты и консолидации [date, secid, before, after] (сплит 1:100 — before=1, after=100; date — первый день
+    торгов в новых акциях). Для рядов из /history (не скорректированы); свечи ISS уже скорректированы биржей.
+    secid=None — все бумаги (общий список); иначе — строки бумаги из общего списка, при его недоступности —
+    /statistics/engines/stock/splits/{secid}. Оба недоступны — ISSError."""
+    try:
+        df = _all_splits()
+    except ISSError:
+        if secid is None:
+            raise
+        df = _splits_frame(block(get_json(f"/statistics/engines/stock/splits/{secid}", ttl=TTL_REFERENCE), "splits"))
+        return df[df["secid"] == secid].reset_index(drop=True)
+    return df if secid is None else df[df["secid"] == secid].reset_index(drop=True)
+
+
+def monthly_closes(secid: str, start: str, end: Optional[str] = None, board: str = "TQBR",
+                   engine: str = "stock", market: str = "shares", legacy_boards: tuple = (),
+                   adjust_splits: bool = False) -> pd.Series:
+    """Месячные цены закрытия режима `board` — свечи interval=31, без resolve() (один запрос на режим
+    при окне до 500 месяцев). legacy_boards — прежние режимы того же рынка, склеиваются перед основным
+    (фонды: ("TQTF",) — до июня 2026 г. торговались в TQTF); месяц, который есть в обоих, берётся из основного.
+    Индекс — последний календарный день месяца свечи; цены ≤ 0 отброшены.
+    Свечи ISS (interval 24 и 31; TQBR, EQBR, TQTF) уже скорректированы биржей на сплиты задним числом
+    (проверено 08.10.2026: GMKN 03.2024 ≈ 151 при сплите 1:100 от 08.04.2024), поэтому по умолчанию
+    adjust_splits=False и s.attrs["split_adjusted"] = True. adjust_splits=True дополнительно применяет
+    splits(secid) — для свечей это двойная корректировка (оставлено для рядов из /history и отладки).
+    Используется ночным расчётом рейтингов (scripts/collect_data.py, источник symbol_stats)."""
+    parts = []
+    for b in [*legacy_boards, board]:
+        c = candles(secid, start, end, "M", engine, market, b)
+        if not c.empty:
+            s = c["close"].astype(float)
+            s.index = s.index.to_period("M").to_timestamp("M")
+            parts.append(s)
+    if not parts:                            # нет свечей за окно — пустой ряд с индексом дат (не RangeIndex)
+        s = pd.Series(dtype=float, name=secid, index=pd.DatetimeIndex([]))
+        s.attrs["split_adjusted"] = True
+        return s
+    s = pd.concat(parts)
+    s = s[~s.index.duplicated(keep="last")].sort_index()
+    s = s[s > 0]
+    if adjust_splits:
+        from core.analytics.metrics import adjust_splits as _adjust
+        try:
+            s = _adjust(s, splits(secid))
+        except (ISSError, requests.RequestException):
+            pass
+    s.name = secid
+    s.attrs["split_adjusted"] = True        # свечи ISS скорректированы биржей
+    return s
+
+
 def history(secid: str, start: str = "2000-01-01", end: Optional[str] = None,
             engine: Optional[str] = None, market: Optional[str] = None,
             board: Optional[str] = None) -> pd.DataFrame:
@@ -200,9 +292,12 @@ def index_history(secid: str, start: str = "2000-01-01", end: Optional[str] = No
 
 
 def close_series(secid: str, start: str = "2000-01-01", end: Optional[str] = None,
-                 interval: str = "D") -> pd.Series:
+                 interval: str = "D", adjust_splits: bool = False) -> pd.Series:
     """Ряд цен закрытия. Для индексов — значение индекса; для облигаций — % от номинала.
-    Для бумаг с историей в нескольких режимах (EQBR → TQBR) ряды склеиваются."""
+    Для бумаг с историей в нескольких режимах (EQBR → TQBR) ряды склеиваются.
+    adjust_splits=True — корректировка на сплиты (по умолчанию выключена: прежнее поведение приложения).
+    Свечи ISS уже скорректированы биржей — для акций и фондов включать не нужно (двойная корректировка);
+    индексы (history) сплитов не имеют."""
     info = resolve(secid)
     if info["market"] == "index":
         s = index_history(secid, start, end)
@@ -220,8 +315,170 @@ def close_series(secid: str, start: str = "2000-01-01", end: Optional[str] = Non
             parts.append(c["close"])
         s = pd.concat(parts).sort_index() if parts else pd.Series(dtype=float)
     s = s[~s.index.duplicated(keep="last")].astype(float)
+    s = s[s > 0]
+    if adjust_splits and info["market"] != "index" and not s.empty:
+        from core.analytics.metrics import adjust_splits as _adjust
+        try:
+            s = _adjust(s, splits(secid))
+        except (ISSError, requests.RequestException):
+            pass
     s.name = secid
-    return s[s > 0]
+    return s
+
+
+# --------------------------------------------------------------------- страница бумаги
+# Прежние основные режимы для подклейки дневных свечей страницы бумаги: как LEGACY_MAIN_BOARDS
+# и TQTF (фонды до июня 2026 г.) — тот же набор, что LEGACY_MAIN_BOARDS в web/lib/symbol.js.
+LEGACY_OHLC_BOARDS = LEGACY_MAIN_BOARDS | {"TQTF"}
+
+
+def description(secid: str) -> dict:
+    """ISS /securities/{secid}: {"description": {NAME (верхний регистр): value}, "boards": [dict строк boards]}.
+    Тот же запрос, что resolve() (кэш общий). Нет режимов торгов — ISSError."""
+    data = get_json(f"/securities/{secid}", ttl=TTL_REFERENCE)
+    desc = block(data, "description")
+    boards = block(data, "boards")
+    if boards.empty:
+        raise ISSError(f"Инструмент {secid} не найден на ISS")
+    d = {}
+    if not desc.empty and {"name", "value"} <= set(desc.columns):
+        d = {str(k).upper(): v for k, v in zip(desc["name"], desc["value"]) if k}
+    rows = boards.astype(object).where(boards.notna(), None).to_dict("records")
+    return {"description": d, "boards": rows}
+
+
+def issuer(secid: str) -> Optional[str]:
+    """Эмитент: поле emitent_title точного совпадения secid в /securities?q= (как issuerOf в web/lib/symbol.js).
+    Ошибка или нет записи — None."""
+    try:
+        data = get_json("/securities", {"q": secid, "limit": 100, "securities.columns": "secid,emitent_title"},
+                        ttl=TTL_REFERENCE)
+    except ISSError:
+        return None
+    df = block(data, "securities")
+    if df.empty or "secid" not in df.columns or "emitent_title" not in df.columns:
+        return None
+    row = df[df["secid"] == secid]
+    v = row["emitent_title"].iloc[0] if not row.empty else None
+    return str(v) if v else None
+
+
+def board_snapshot(secid: str, engine: str, market: str, board: str) -> dict:
+    """Текущие данные режима: /engines/{e}/markets/{m}/boards/{b}/securities/{secid} (блоки securities,
+    marketdata, marketdata_yields) -> {имя блока: dict первой строки | {}}."""
+    data = get_json(f"/engines/{engine}/markets/{market}/boards/{board}/securities/{secid}",
+                    {"iss.only": "securities,marketdata,marketdata_yields"}, ttl=TTL_MARKET)
+    out = {}
+    for name in ("securities", "marketdata", "marketdata_yields"):
+        df = block(data, name)
+        out[name] = ({} if df.empty else
+                     {k: (None if (isinstance(v, float) and np.isnan(v)) else v)
+                      for k, v in df.iloc[0].to_dict().items()})
+    return out
+
+
+# secid -> время отказа candleborders: отказ (недоступен / нет строки interval 24) помнится на процесс
+_BORDERS_FAIL: dict[str, float] = {}
+BORDERS_FAIL_TTL = 600.0
+
+
+def index_candle_begin(secid: str) -> Optional[str]:
+    """Начало дневных свечей индекса: candleborders (строка interval = 24, поле begin) -> 'YYYY-MM-DD';
+    недоступно / нет строки — None (одна попытка, как indexCandleBegin в web/lib/symbol.js). Отказ запоминается
+    на BORDERS_FAIL_TTL секунд (10 мин) — повторно не запрашивается; успешный ответ кэширует HttpCache."""
+    t0 = _BORDERS_FAIL.get(secid)
+    if t0 is not None and time.time() - t0 < BORDERS_FAIL_TTL:
+        return None
+    try:
+        data = get_json(f"/engines/stock/markets/index/securities/{secid}/candleborders", ttl=TTL_REFERENCE,
+                        retries=1)
+    except (ISSError, requests.RequestException):
+        data = {}
+    df = block(data, "borders")
+    row = (df[pd.to_numeric(df["interval"], errors="coerce") == 24]
+           if not df.empty and {"interval", "begin"} <= set(df.columns) else pd.DataFrame())
+    if row.empty or not row["begin"].iloc[0]:
+        _BORDERS_FAIL[secid] = time.time()
+        return None
+    _BORDERS_FAIL.pop(secid, None)
+    return str(row["begin"].iloc[0])[:10]
+
+
+def _iso(v) -> Optional[str]:
+    s = str(v)[:10] if v else ""
+    return s if len(s) == 10 and s[4] == "-" and not s.startswith("0000") else None
+
+
+def daily_ohlc(secid: str, start: str = "1990-01-01", end: Optional[str] = None,
+               boards: Optional[list] = None) -> pd.DataFrame:
+    """Дневные OHLC основного режима (порт fetchOHLC из web/lib/symbol.js) -> DataFrame
+    (индекс — даты, колонки open, high, low, close, volume).
+    Акции, фонды, облигации, металлы: свечи interval=24 основного режима и прежних режимов того же рынка до
+    history_from основного (LEGACY_OHLC_BOARDS — EQBR и др., TQTF у фондов — или та же board_group_id);
+    при совпадении даты — основной режим. Индексы: дневные свечи рынка index с начала (candleborders),
+    history (OPEN/HIGH/LOW/CLOSE) — только до него; candleborders недоступен — только history; volume — NaN.
+    Свечи ISS уже скорректированы биржей на сплиты (web/CONTRACT.md) — не корректируются повторно.
+    Индексы: history запрашивается только с start (глубину задаёт вызывающий, напр. years страницы бумаги).
+    boards — готовый список режимов из description(secid)["boards"] (без повторного запроса).
+    Строки без close > 0 отбрасываются, O/H/L ≤ 0 — NaN. attrs["split_adjusted"] = True."""
+    if not boards:
+        boards = description(secid)["boards"]
+    prim = next((b for b in boards if str(b.get("is_primary")) in ("1", "1.0")), boards[0])
+    engine, market = prim.get("engine"), prim.get("market")
+    f = start or "1990-01-01"
+    t = end or dt.date.today().isoformat()
+    parts: list[pd.DataFrame] = []
+    if market == "index":
+        begin = index_candle_begin(secid)
+        hist_till = t if begin is None else min(t, (pd.Timestamp(begin) - pd.Timedelta(days=1)).date().isoformat())
+        if f <= hist_till:
+            h = _paged(f"/history/engines/stock/markets/index/securities/{secid}",
+                       {"from": f, "till": hist_till, "history.columns": "TRADEDATE,OPEN,HIGH,LOW,CLOSE"},
+                       "history", ttl=_ttl_for(hist_till))
+            if not h.empty:
+                h = h.rename(columns=str.lower)
+                h.index = pd.to_datetime(h["tradedate"]).dt.normalize()
+                parts.append(h[["open", "high", "low", "close"]].assign(volume=np.nan))
+        if begin is not None and max(begin, f) <= t:
+            c = candles(secid, max(begin, f), t, "D", "stock", "index", None)
+            if not c.empty:
+                parts.append(c[["open", "high", "low", "close"]].assign(volume=np.nan))
+    else:
+        prim_from = _iso(prim.get("history_from"))
+        segs = []
+        for b in boards:
+            if b is prim or b.get("engine") != engine or b.get("market") != market:
+                continue
+            hf, ht = _iso(b.get("history_from")), _iso(b.get("history_till"))
+            if not hf or not prim_from or hf >= prim_from:
+                continue
+            same_group = b.get("board_group_id") is not None and b.get("board_group_id") == prim.get("board_group_id")
+            if b.get("boardid") not in LEGACY_OHLC_BOARDS and not same_group:
+                continue
+            a, z = max(hf, f), min(t, ht or t, prim_from)
+            if a <= z:
+                segs.append((hf, b["boardid"], a, z))
+        segs.sort()
+        segs.append(("", prim["boardid"], max(prim_from, f) if prim_from else f, t))
+        for _, board, a, z in segs:
+            if a > z:
+                continue
+            c = candles(secid, a, z, "D", engine, market, board)
+            if not c.empty:
+                parts.append(c[["open", "high", "low", "close", "volume"]])
+    cols = ["open", "high", "low", "close", "volume"]
+    if not parts:
+        df = pd.DataFrame(columns=cols, index=pd.DatetimeIndex([], name="date"), dtype=float)
+    else:
+        df = pd.concat(parts).apply(pd.to_numeric, errors="coerce").astype(float)
+        df = df[~df.index.duplicated(keep="last")].sort_index()
+        df = df[df["close"] > 0]
+        for k in ("open", "high", "low"):
+            df[k] = df[k].where(df[k] > 0)
+        df.index = pd.DatetimeIndex(df.index, name="date")
+        df = df[cols]
+    df.attrs["split_adjusted"] = True
+    return df
 
 
 # --------------------------------------------------------------------- showcases
@@ -343,8 +600,17 @@ def index_constituents(index_id: str = "IMOEX") -> pd.DataFrame:
 # --------------------------------------------------------------------- cash flows
 def dividends(secid: str) -> pd.DataFrame:
     """Дивиденды по данным ISS. В 2026 г. публичный метод перестал отдавать блок dividends —
-    в этом случае используется локальный файл data/dividends.csv (secid, registryclosedate, value)."""
-    df = block(get_json(f"/securities/{secid}/dividends", ttl=TTL_REFERENCE), "dividends")
+    тогда берутся выплаты T-Invest API из файла сборщика public/data/dividends.json
+    (без отменённых), а если там бумаги нет — локальный data/dividends.csv. Так же и при
+    недоступности ISS
+    (secid, registryclosedate, value)."""
+    try:
+        df = block(get_json(f"/securities/{secid}/dividends", ttl=TTL_REFERENCE), "dividends")
+    except (ISSError, requests.RequestException):
+        df = pd.DataFrame()              # ISS недоступен — локальные источники ниже
+    if df.empty:
+        from core.data import public_data
+        df = public_data.dividends(secid)
     if df.empty:
         from core.config import DATA_DIR
         f = DATA_DIR / "dividends.csv"
@@ -405,7 +671,7 @@ def zcyc(date: Optional[str] = None) -> pd.DataFrame:
 
 
 def kbd_rate(date: Optional[str] = None, years: float = 15.0) -> float:
-    """Ставка КБД для срока `years` (доля). В НИР: 15 лет на 11.01.2011 = 7,86 %."""
+    """Ставка КБД для срока `years` (доля). Пример: 15 лет на 11.01.2011 = 7,86 %."""
     c = zcyc(date)
     if c.empty:
         raise ISSError("КБД недоступна на эту дату")
