@@ -47,7 +47,7 @@
 ```js
 export const CATALOG                       // [{key, name, assetClass, source:'iss'|'cbr'|'chain', etf}]
                                            // ключи как в core/data/universe.py: MCFTR, IMOEX, MEBCTR,
-                                           // IRDIVTR, MOEXEU, RGBITR, RUGBITR1Y, RUGBITR5+, RUGBITR10Y,
+                                           // IRDIVTR, MOEXEU, MEEUTR, RGBITR, RUGBITR1Y, RUGBITR5+, RUGBITR10Y,
                                            // RUCBITR, RUCBTRNS, CORP_CHAIN, GOLD_CBR, GLDRUB_TOM, RUONIA
 export async function fetchIssIndex(secid, from, till, {fetchImpl}={}) -> Series
 export async function fetchIssSecurity(secid, from, till, {fetchImpl}={}) -> Series   // close

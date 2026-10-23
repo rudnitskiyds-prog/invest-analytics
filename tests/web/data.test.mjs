@@ -289,7 +289,7 @@ describe('resample против pandas (W-FRI, ME, QE, YE)', () => {
 
 describe('каталог', () => {
   test('ключи как в core/data/universe.py', () => {
-    assert.deepEqual(D.CATALOG.map((a) => a.key), ['MCFTR', 'IMOEX', 'MEBCTR', 'IRDIVTR', 'MOEXEU', 'RGBITR',
+    assert.deepEqual(D.CATALOG.map((a) => a.key), ['MCFTR', 'IMOEX', 'MEBCTR', 'IRDIVTR', 'MOEXEU', 'MEEUTR', 'RGBITR',
       'RUGBITR1Y', 'RUGBITR5+', 'RUGBITR10Y', 'RUCBITR', 'RUCBTRNS', 'CORP_CHAIN', 'GOLD_CBR', 'GLDRUB_TOM', 'RUONIA']);
   });
 });

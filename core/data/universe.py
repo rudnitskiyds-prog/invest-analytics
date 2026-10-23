@@ -34,6 +34,8 @@ CATALOG: dict[str, AssetSpec] = {s.key: s for s in [
     AssetSpec("MEBCTR", "Индекс голубых фишек полной доходности", "Акции", "iss", "SBBC"),
     AssetSpec("IRDIVTR", "Индекс дивидендных акций полной доходности", "Акции", "iss", "DIVD"),
     AssetSpec("MOEXEU", "Индекс электроэнергетики", "Акции", "iss", "ОПИФ ГПБ-Электроэнергетика"),
+    AssetSpec("MEEUTR", "Индекс электроэнергетики полной доходности", "Акции", "iss", "",
+              "История с 30.12.2013; прямого БПИФ нет"),
     AssetSpec("RGBITR", "Индекс гособлигаций полной доходности", "Облигации гос.", "iss", "SBGB"),
     AssetSpec("RUGBITR1Y", "Гособлигации до 1 года (TR)", "Облигации гос.", "iss", "SUGB"),
     AssetSpec("RUGBITR5+", "Гособлигации 5+ лет (TR)", "Облигации гос.", "iss", "SBLB"),
@@ -104,14 +106,15 @@ def _offline_series(key: str, start: str, end: Optional[str]) -> pd.Series:
 
 
 def load_series(key: str, start: str = "2008-01-01", end: Optional[str] = None,
-                total_return: bool = False) -> pd.Series:
-    """Живые данные ISS / ЦБ; если источник недоступен — демо-ряд (месячный), если он есть."""
+                total_return: bool = False, fallback: bool = True) -> pd.Series:
+    """Живые данные ISS / ЦБ; если источник недоступен — демо-ряд (месячный), если он есть.
+    fallback=False — без подмены демо-рядом: ошибка источника пробрасывается (сборщик public/data)."""
     if os.environ.get("IP_OFFLINE") == "1":
         return _offline_series(key, start, end)
     try:
         return _load_live(key, start, end, total_return)
     except Exception:
-        if key in _offline_frame():
+        if fallback and key in _offline_frame():
             FALLBACK_USED.add(key)
             return _offline_series(key, start, end)
         raise

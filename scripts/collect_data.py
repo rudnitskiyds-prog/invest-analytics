@@ -36,7 +36,15 @@ TINVEST_TOKEN (только чтение). Их файлы — {"updated", "sour
                             "classes": {"share": {"n"}, "fund": {"n"}}, "items": {"SBER": {"class",
                             sharpe, sortino, omega, calmar, martin, cagr, volatility, max_drawdown, months,
                             "rank": {…}, "score"}}}; котировки в файл не пишутся.
-Порядок сбора: ряды ЦБ -> RusETFs -> T-Invest -> ISS (рейтинги).
+Источник portfolios (kind = "portfolios", default = False — только явно: --only portfolios) — портфели
+каталога core/analytics/portfolios.py по индексам полной доходности ISS и рядам ЦБ (без демо-данных):
+    portfolios.json      — {"updated", "source", "initial": 100000, "groups", "items": {slug: {"row": строка
+                            portfolios_table, "report": portfolio_report, "stale"?, "stale_date"?}},
+                            "series": {slug: [[дата, стоимость], ...] месячные}, "series_benchmark": {slug:
+                            бенчмарк на тех же датах}, "risk_return": {"1Y"|"5Y"|"10Y": [{id, name, group, ret,
+                            volatility, from, to}]}, "skipped": {slug: причина}, "stale": {slug: {stale_date,
+                            reason}}, "last"}; доли — в долях.
+Порядок сбора: ряды ЦБ -> RusETFs -> T-Invest -> ISS (рейтинги) -> портфели.
     python -m scripts.collect_data --skip symbol_stats   # исключить источник
 
 Если источник не ответил, прежний файл остаётся нетронутым, а в status.json
@@ -534,6 +542,48 @@ SOURCES["symbol_stats"] = {"kind": "iss", "default": False,
                            "budget_min": SYMBOL_STATS_BUDGET_MIN}
 
 
+# ------------------------------------------------------------------ портфели и стратегии
+PORTFOLIOS_SOURCE = "ISS MOEX, Банк России, RusETFs (расчёт ИнвестАналитики)"
+
+
+def portfolios(spec: dict) -> tuple:
+    """Портфели каталога core/analytics/portfolios.py: стоимость 100 000 ₽ по индексам полной доходности
+    (ISS) и рядам ЦБ без подмены демо-данными, коэффициенты со ставкой risk_free.json, комиссии фондов
+    из rusetfs_funds.json / tinvest_etfs.json. Портфель без данных — пропуск (skipped в файле); источник —
+    сбой, если заново посчитано меньше min_rows портфелей. Пропущенные портфели, которые есть в прежнем
+    файле, переносятся оттуда с "stale": true и "stale_date" и перечисляются в "stale" (не в "skipped";
+    core.analytics.portfolios.build_file),
+    ранг — по полному набору."""
+    from core.analytics import portfolios as pf
+    body, info = pf.build_file(fallback=False, previous=_previous("portfolios"))
+    for pid, why in info["skipped"].items():
+        print(f"  пропуск портфеля {pid}: {why[:200]}", file=sys.stderr)
+    for pid, st in (body.get("stale") or {}).items():
+        print(f"  портфель {pid} перенесён из прежнего файла (на {st['stale_date']}): {st['reason'][:200]}",
+              file=sys.stderr)
+    _check("портфелей", info["n"], spec["min_rows"])
+    stale = info.get("stale", 0)
+    return body, info["n"] + stale, {"skipped": len(info["skipped"]), "stale": stale}
+
+
+def collect_portfolios(name: str, spec: dict) -> dict:
+    """Атомарная запись portfolios.json; updated меняется только при изменении содержимого;
+    при сбое прежний файл не трогается."""
+    body, n, extra = spec["collect"](spec)
+    prev = _previous(name)
+    same = all(prev.get(k) == body[k] for k in body)
+    updated = prev.get("updated") if same and prev.get("updated") else _now()
+    _write(name, {"updated": updated, "source": PORTFOLIOS_SOURCE, **body})
+    return {"ok": True, "rows": n, "last": body.get("last"), **extra}
+
+
+# kind "portfolios": после рядов ЦБ / risk_free, RusETFs и рейтингов; default=False — только явно
+# (--only portfolios), отдельным шагом workflow «Портфели»: полный прогон без аргументов его не запускает
+SOURCES["portfolios"] = {"kind": "portfolios", "default": False,
+                         "title": "Портфели и стратегии (расчёт по ISS и ЦБ)",
+                         "collect": portfolios, "min_rows": 10}
+
+
 # ------------------------------------------------------------------ ряды ЦБ
 def collect(name: str, spec: dict) -> dict:
     s: pd.Series = spec["load"]()
@@ -576,7 +626,7 @@ def main(argv: list[str] | None = None) -> int:
     # ЦБ — первым, затем RusETFs, T-Invest — последним: долгий или упавший T-Invest
     # не должен помешать сохранить остальное (сортировка устойчивая — порядок внутри группы прежний)
     is_ti = lambda n: SOURCES[n].get("kind") == "tinvest"   # noqa: E731
-    order = {"rusetfs": 1, "tinvest": 2, "iss": 3}
+    order = {"rusetfs": 1, "tinvest": 2, "iss": 3, "portfolios": 4}
     names = sorted(names, key=lambda n: order.get(SOURCES[n].get("kind"), 0))
     failed = skipped = ti_tried = ti_failed = 0
     ctx: dict = {"budget_min": args.tinvest_budget}   # общий клиент T-Invest и список акций на прогон
@@ -589,6 +639,8 @@ def main(argv: list[str] | None = None) -> int:
                 res = collect_rusetfs(name, spec)
             elif spec.get("kind") == "iss":
                 res = collect_symbol_stats(name, spec)
+            elif spec.get("kind") == "portfolios":
+                res = collect_portfolios(name, spec)
             else:
                 res = collect(name, spec)
             print(f"OK   {name}: {res['rows']} строк, до {res['last']}")

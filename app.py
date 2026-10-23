@@ -21,6 +21,10 @@ pages = {
         st.Page("pages/1_Витрина.py", title="Витрина бумаг", icon=":material/table_view:"),
         st.Page("pages/2_Карточка_бумаги.py", title="Карточка бумаги", icon=":material/search:"),
     ],
+    "Портфели": [
+        st.Page("pages/8_Портфели.py", title="Портфели и стратегии", icon=":material/workspaces:",
+                url_path="portfolios"),
+    ],
     "Моделирование": [
         st.Page("pages/3_Граница_Марковица.py", title="Граница Марковица", icon=":material/scatter_plot:"),
         st.Page("pages/4_Бэктест.py", title="Бэктест", icon=":material/history:"),
