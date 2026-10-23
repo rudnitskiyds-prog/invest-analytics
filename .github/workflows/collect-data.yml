@@ -15,7 +15,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 45      # Сбор 25 + Рейтинги 15 + подготовка и сохранение
+    timeout-minutes: 55      # Сбор 25 + Рейтинги 15 + Портфели 10 + подготовка и сохранение
     steps:
       - uses: actions/checkout@v4
 
@@ -89,6 +89,14 @@ jobs:
         # 10 мин, шаг — 15 мин. rf — ключевая ставка из key_rate.json. Сбой не трогает прежний файл; сохранение ниже — всегда
         timeout-minutes: 15
         run: python -m scripts.collect_data --only symbol_stats
+
+      - name: Портфели
+        # портфели и стратегии (public/data/portfolios.json): стоимость по индексам полной доходности ISS
+        # и рядам ЦБ, коэффициенты со ставкой risk_free.json, комиссии фондов из rusetfs_funds.json.
+        # Выполняется и при сбое предыдущих шагов; сбой не трогает прежний файл
+        if: success() || failure()
+        timeout-minutes: 10
+        run: python -m scripts.collect_data --only portfolios
 
       - name: Сохранить изменения
         if: always()          # уже записанные файлы (ЦБ, status.json) коммитим и при сбое/таймауте сбора и рейтингов

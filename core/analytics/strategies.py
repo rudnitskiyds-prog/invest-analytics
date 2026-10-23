@@ -9,43 +9,18 @@
   денежный рынок   -> индекс RUONIA
 Подклассы (рост/дивиденды) заменяются единым индексом с равными долями.
 
-Веса — редактируемые шаблоны по умолчанию.
+Веса — редактируемые шаблоны по умолчанию. Источник составов — каталог
+core/analytics/portfolios.py (PORTFOLIOS, записи с полем strategy).
 """
 from __future__ import annotations
 
+from core.analytics.portfolios import PORTFOLIOS
+
+# Составы — из каталога портфелей core/analytics/portfolios.py (ленивые портфели с полем strategy);
+# имена, порядок, веса и частота ребалансировки прежние (web/lib/strategies.js — копия).
 STRATEGIES: dict[str, dict] = {
-    "Лежебока плюс (Спирин)": {
-        "weights": {"MCFTR": 0.30, "CORP_CHAIN": 0.30, "GOLD_CBR": 0.30, "RUONIA": 0.10},
-        "rebalance": "A",
-        "note": "30% EQMX / 30% OBLG / 30% GOLD / 10% LQDT",
-    },
-    "Портфель 60/40": {
-        "weights": {"MCFTR": 0.60, "RGBITR": 0.40},
-        "rebalance": "A",
-        "note": "60% акции / 40% облигации",
-    },
-    "Постоянный портфель (Браун)": {
-        "weights": {"MCFTR": 0.25, "RUGBITR10Y": 0.25, "GOLD_CBR": 0.25, "RUONIA": 0.25},
-        "rebalance": "A",
-        "note": "25% акции / 25% длинные облигации / 25% золото / 25% денежный рынок",
-    },
-    "Всепогодный портфель (Далио)": {
-        "weights": {"MCFTR": 0.30, "RUGBITR10Y": 0.40, "RUGBITR5+": 0.15, "GOLD_CBR": 0.075,
-                    "MOEXEU": 0.075},
-        "rebalance": "A",
-        "note": "30% акции / 40% длинные / 15% среднесрочные облигации / 7,5% золото / "
-                "7,5% сырьё -> индекс электроэнергетики MOEXEU (замена по умолчанию, состав можно изменить)",
-    },
-    "Портфель 40/40/20": {
-        "weights": {"MCFTR": 0.40, "CORP_CHAIN": 0.40, "GOLD_CBR": 0.20},
-        "rebalance": "A",
-        "note": "40% акции (рост + дивиденды -> MCFTR) / 40% облигации -> корп. облигации / 20% золото",
-    },
-    "Завещание Баффетта 90/10": {
-        "weights": {"MCFTR": 0.90, "RUGBITR1Y": 0.10},
-        "rebalance": "A",
-        "note": "90% акции / 10% краткосрочные гособлигации",
-    },
+    p["strategy"]: {"weights": dict(p["weights"]), "rebalance": p["rebalance"], "note": p["note"]}
+    for p in PORTFOLIOS.values() if p.get("strategy")
 }
 
 BENCHMARKS = {

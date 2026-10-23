@@ -21,6 +21,7 @@ export const CATALOG = [
   { key: 'MEBCTR', name: 'Индекс голубых фишек полной доходности', assetClass: 'Акции', source: 'iss', etf: 'SBBC', note: '' },
   { key: 'IRDIVTR', name: 'Индекс дивидендных акций полной доходности', assetClass: 'Акции', source: 'iss', etf: 'DIVD', note: '' },
   { key: 'MOEXEU', name: 'Индекс электроэнергетики', assetClass: 'Акции', source: 'iss', etf: 'ОПИФ ГПБ-Электроэнергетика', note: '' },
+  { key: 'MEEUTR', name: 'Индекс электроэнергетики полной доходности', assetClass: 'Акции', source: 'iss', etf: '', note: 'История с 30.12.2013; прямого БПИФ нет' },
   { key: 'RGBITR', name: 'Индекс гособлигаций полной доходности', assetClass: 'Облигации гос.', source: 'iss', etf: 'SBGB', note: '' },
   { key: 'RUGBITR1Y', name: 'Гособлигации до 1 года (TR)', assetClass: 'Облигации гос.', source: 'iss', etf: 'SUGB', note: '' },
   { key: 'RUGBITR5+', name: 'Гособлигации 5+ лет (TR)', assetClass: 'Облигации гос.', source: 'iss', etf: 'SBLB', note: '' },
@@ -34,7 +35,7 @@ export const CATALOG = [
 ];
 
 /** Индексы каталога (ряд берётся из ISS history рынка index). */
-export const INDEX_KEYS = new Set(['MCFTR', 'IMOEX', 'MEBCTR', 'IRDIVTR', 'MOEXEU', 'RGBITR', 'RUGBITR1Y',
+export const INDEX_KEYS = new Set(['MCFTR', 'IMOEX', 'MEBCTR', 'IRDIVTR', 'MOEXEU', 'MEEUTR', 'RGBITR', 'RUGBITR1Y',
   'RUGBITR5+', 'RUGBITR10Y', 'RUCBITR', 'RUCBTRNS']);
 
 /** Склейки: ключ -> [старый, новый, дата переключения] (universe.CHAIN_SWITCH). */
