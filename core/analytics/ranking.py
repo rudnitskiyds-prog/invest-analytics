@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from core.analytics import metrics as m
+from core.data.risk_free import time_mean
 
 RANK_METRICS = ("sharpe", "sortino", "omega", "calmar", "martin")
 STAT_FIELDS = ("sharpe", "sortino", "omega", "calmar", "martin", "cagr", "volatility", "max_drawdown")
@@ -117,12 +118,6 @@ def ex_dividends(rows) -> list[dict]:
 
 def mean_rate(rate: pd.Series, start, end) -> float:
     """Средняя по времени (по календарным дням) годовая ставка ступенчатого ряда на [start, end]:
-    значение действует до следующей даты (ffill); до первой даты ряда — первое значение."""
-    s = rate.dropna().astype(float).sort_index()
-    if s.empty:
-        return float("nan")
-    days = pd.date_range(pd.Timestamp(start), pd.Timestamp(end), freq="D")
-    if not len(days):
-        return float("nan")
-    daily = s.reindex(s.index.union(days)).ffill().bfill().reindex(days)
-    return float(daily.mean())
+    значение действует до следующей даты (ffill); до первой даты ряда — первое значение.
+    Обёртка над core.data.risk_free.time_mean (логика живёт там)."""
+    return time_mean(rate, start, end)

@@ -9,8 +9,8 @@
     core/data/universe.chain, ui/common.annual_returns — и JS-порт меняется вместе с ней;
   * меняются фикстуры tests/fixtures/*.csv;
   * в этом файле добавляются новые эталонные случаи.
-Если после перегенерации меняются цифры сверки с табл. 4 НИР — это изменение методики
-(инвариант 2 CLAUDE.md), а не «починка эталона».
+Эталоны проверяют паритет формул JS ↔ Python, а не методику: безрисковая ставка здесь — условная
+константа RF (на платформе Rf — ряд доходности коротких ОФЗ, core/data/risk_free.py).
 
 Сеть не нужна: данные — только месячные фикстуры и синтетика с фиксированным seed.
 """
@@ -28,11 +28,11 @@ from core.analytics.backtest import BacktestConfig, run_backtest
 from core.analytics.frontier import estimate_inputs, max_sharpe, min_variance
 from core.analytics.strategies import BENCHMARKS, STRATEGIES
 from core.data.universe import chain
-from scripts.reproduce_nir import load_fixture
+from tests.web.fixture_loader import load_fixture
 
 OUT = Path(__file__).resolve().parent.parent / "fixtures" / "web_reference.json"
 
-RF = 0.0786
+RF = 0.0786                  # условная постоянная ставка для проверки формул (доля годовых)
 START, END = "2011-01-31", "2025-12-31"
 FRONTIER_ASSETS = ["MCFTR", "CORP_CHAIN", "RGBITR", "GOLD_CBR"]
 FRONTIER_BOUNDS = [(0.0, 1.0), (0.05, 0.6)]
@@ -74,7 +74,7 @@ def annual_returns(prices: pd.DataFrame) -> pd.DataFrame:
 
 
 def metrics_block(fx: pd.DataFrame) -> dict:
-    """compute_all по каждому столбцу фикстуры на окне НИР (бенчмарк MCFTR, rf=7,86 %, M)."""
+    """compute_all по каждому столбцу фикстуры на окне 2011–2025 (бенчмарк MCFTR, постоянная rf = RF, M)."""
     px = fx.loc[START:END]
     bench = px["MCFTR"]
     out = {}

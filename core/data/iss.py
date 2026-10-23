@@ -10,6 +10,7 @@
   * monthly_closes(secid, …)    — месячные цены закрытия режима TQBR одним запросом (рейтинги);
   * splits(secid)               — сплиты и консолидации (statistics/engines/stock/splits);
   * close_series(secid, …)      — ряд цен закрытия для любой бумаги/индекса/металла;
+  * index_history(secid, …, engine, field) — история индекса (CLOSE / YIELD; engine state — архив RGBEY);
   * shares() / etfs() / bonds() / metals() — витрины инструментов с котировками;
   * dividends(secid), coupons(secid);
   * description / issuer / board_snapshot / daily_ohlc — данные страницы бумаги (core/analytics/symbol_page.py);
@@ -266,7 +267,9 @@ def monthly_closes(secid: str, start: str, end: Optional[str] = None, board: str
 def history(secid: str, start: str = "2000-01-01", end: Optional[str] = None,
             engine: Optional[str] = None, market: Optional[str] = None,
             board: Optional[str] = None) -> pd.DataFrame:
-    """Итоги торгов (history) — для облигаций даёт доходность, НКД, дюрацию."""
+    """Итоги торгов (history) — для облигаций даёт доходность, НКД, дюрацию.
+    engine/market/board можно задать явно (без запроса resolve), напр. engine="state",
+    market="index" — архивные индексы гособлигаций ММВБ (RGBEY)."""
     if engine is None:
         info = resolve(secid)
         engine, market, board = info["engine"], info["market"], board or info["board"]
@@ -280,15 +283,22 @@ def history(secid: str, start: str = "2000-01-01", end: Optional[str] = None,
     return df.set_index("TRADEDATE").sort_index()
 
 
-def index_history(secid: str, start: str = "2000-01-01", end: Optional[str] = None) -> pd.Series:
-    """Индексы: свечи ISS по многим индексам начинаются лишь с 2016 г., история — полная."""
+def index_history(secid: str, start: str = "2000-01-01", end: Optional[str] = None,
+                  engine: str = "stock", field: str = "CLOSE") -> pd.Series:
+    """Индексы: свечи ISS по многим индексам начинаются лишь с 2016 г., история — полная.
+
+    engine — движок ISS: "stock" (индексы фондового рынка, по умолчанию) или "state"
+    (архивные индексы гособлигаций ММВБ, напр. RGBEY — эффективная доходность рынка ОФЗ, режим GNDX).
+    field — поле history: "CLOSE" (значение индекса, по умолчанию) или, напр., "YIELD"
+    (доходность к погашению индексов облигаций, % годовых). Пустые значения отбрасываются."""
     end = end or dt.date.today().isoformat()
-    df = _paged(f"/history/engines/stock/markets/index/securities/{secid}",
-                {"from": start, "till": end, "history.columns": "TRADEDATE,CLOSE"},
+    df = _paged(f"/history/engines/{engine}/markets/index/securities/{secid}",
+                {"from": start, "till": end, "history.columns": f"TRADEDATE,{field}"},
                 "history", ttl=_ttl_for(end))
-    if df.empty:
-        return pd.Series(dtype=float)
-    return pd.Series(df["CLOSE"].values, index=pd.to_datetime(df["TRADEDATE"]), dtype=float).dropna()
+    if df.empty or field not in df:
+        return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+    return pd.Series(pd.to_numeric(df[field], errors="coerce").values,
+                     index=pd.to_datetime(df["TRADEDATE"]), dtype=float).dropna()
 
 
 def close_series(secid: str, start: str = "2000-01-01", end: Optional[str] = None,
@@ -671,7 +681,7 @@ def zcyc(date: Optional[str] = None) -> pd.DataFrame:
 
 
 def kbd_rate(date: Optional[str] = None, years: float = 15.0) -> float:
-    """Ставка КБД для срока `years` (доля). Пример: 15 лет на 11.01.2011 = 7,86 %."""
+    """Ставка КБД для срока `years` (доля), линейная интерполяция по срокам кривой."""
     c = zcyc(date)
     if c.empty:
         raise ISSError("КБД недоступна на эту дату")

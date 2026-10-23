@@ -2,12 +2,13 @@
  * Коэффициенты эффективности — порт core/analytics/metrics.py с теми же конвенциями.
  *
  * Набор показателей — стандартные коэффициенты эффективности портфеля (классические формулы).
- * Формулы меняются только вместе с core/analytics/metrics.py и страницей «Методика» (инвариант 3).
+ * Формулы меняются только вместе с core/analytics/metrics.py и страницей «Методика» (инвариант 2).
  *
  * Соглашения (как в Python):
  *  * ряды — {dates, values}; функции доходностей принимают Series доходностей (или number[] —
  *    тогда считается, что ряды уже выровнены);
- *  * rf — годовая ставка в долях или Series годовых ставок; за период: (1 + rf)^(1/n) − 1;
+ *  * rf — годовая ставка в долях или Series годовых ставок (ставка платформы — riskFreeSeries из data.js);
+ *    за период: (1 + rf)^(1/n) − 1; для ряда — ставка на начало периода доходности (periodStarts);
  *  * стандартные отклонения — выборочные (ddof = 1);
  *  * пары рядов выравниваются по общим датам (inner join, как pd.concat(join='inner'));
  *  * асимметрия/эксцесс — как pandas .skew()/.kurt(); перцентили — линейные, как numpy.
@@ -61,29 +62,60 @@ export function inferPeriodsPerYear(dates) {
 const nOf = (r, n) => n || inferPeriodsPerYear(isSeries(r) ? r.dates : null);
 
 /**
+ * Начала периодов доходностей (period_starts): для i ≥ 1 — dates[i−1]; для первой —
+ * dates[0] − (dates[1] − dates[0]) в календарных днях (при одной дате — dates[0]).
+ * @param {string[]} dates  "YYYY-MM-DD" по возрастанию
+ * @returns {string[]}
+ */
+export function periodStarts(dates) {
+  if (!dates.length) return [];
+  const ms = (d) => Date.parse(d + 'T00:00:00Z');
+  let first = dates[0];
+  if (dates.length > 1) {
+    first = new Date(2 * ms(dates[0]) - ms(dates[1])).toISOString().slice(0, 10);
+  }
+  return [first, ...dates.slice(0, -1)];
+}
+
+/**
  * Годовая ставка -> ставка за период (per_period_rate): (1 + rf)^(1/n) − 1.
- * Для ряда ставок — значение на дату (ffill, до первой даты — bfill), длина = dates.length.
+ * Для ряда ставок (даты публикации) — ставка, действовавшая на НАЧАЛО периода доходности
+ * (periodStarts: последняя публикация ≤ начала, раньше первой даты — первое значение),
+ * длина = dates.length. Как core/analytics/metrics.py.
  * @returns {number | number[]}
  */
 export function perPeriodRate(rf, n, dates = null) {
   if (isSeries(rf)) {
     if (!dates) throw new Error('Для ряда ставок нужны даты доходностей');
-    const s = clean(rf);
-    const out = [];
-    let j = -1;
-    for (const d of dates) {
-      while (j + 1 < s.dates.length && s.dates[j + 1] <= d) j++;
-      const v = j >= 0 ? s.values[j] : s.values[0];
-      out.push((1 + v) ** (1 / n) - 1);
-    }
-    return out;
+    return ratesAtStarts(rf, dates).map((v) => (1 + v) ** (1 / n) - 1);
   }
   return (1 + Number(rf)) ** (1 / n) - 1;
 }
 
-/** Средняя годовая ставка (annual_rf). */
-export function annualRf(rf) {
-  return isSeries(rf) ? mean(clean(rf).values) : Number(rf);
+/**
+ * Годовые ставки ряда rf, действовавшие на начало каждого периода доходности (rates_at_starts):
+ * последняя публикация ≤ periodStarts(dates)[i], раньше первой даты — первое значение.
+ * @returns {number[]}
+ */
+export function ratesAtStarts(rf, dates) {
+  const s = clean(rf);
+  const out = [];
+  let j = -1;
+  for (const d of periodStarts(dates)) {
+    while (j + 1 < s.dates.length && s.dates[j + 1] <= d) j++;
+    out.push(j >= 0 ? s.values[j] : s.values[0]);
+  }
+  return out;
+}
+
+/**
+ * Средняя годовая ставка (annual_rf): число — как есть; ряд с dates доходностей — среднее ставок
+ * на начала периодов, попавших в расчёт; ряд без dates — среднее значений ряда.
+ */
+export function annualRf(rf, dates = null) {
+  if (!isSeries(rf)) return Number(rf);
+  if (dates && dates.length) return mean(ratesAtStarts(rf, dates));
+  return mean(clean(rf).values);
 }
 
 /** Избыточные доходности r − rf за период. */
@@ -286,7 +318,7 @@ export function informationRatio(r, rm, n) {
 /** M² Модильяни = Sp · σм + Rf. */
 export function modiglianiM2(r, rm, rf = 0, n) {
   n = nOf(r, n);
-  return sharpe(r, rf, n) * volatility(clean(rm), n) + annualRf(rf);
+  return sharpe(r, rf, n) * volatility(clean(rm), n) + annualRf(rf, isSeries(r) ? clean(r).dates : null);
 }
 
 /** Омега Ω = Σ max(r − L, 0) / Σ max(L − r, 0) (стандартное определение). */
@@ -783,7 +815,7 @@ export function computeAll(series, benchmark = null, rf = 0, freq = 'M', { retur
     best_period: rv.length ? Math.max(...rv) : NaN,
     worst_period: rv.length ? Math.min(...rv) : NaN,
     days_to_recover: maxDrawdownInfo(p).days_to_recover,
-    martin: martin(p, annualRf(rf)),
+    martin: martin(p, annualRf(rf, r.dates)),
     ulcer_index: ulcerIndex(p),
     beta: NaN,
     alpha: NaN,
@@ -797,7 +829,7 @@ export function computeAll(series, benchmark = null, rf = 0, freq = 'M', { retur
     down_capture: NaN,
   };
   if (returnMethod === 'cagr') {
-    rep.sharpe = rep.volatility ? (rep.cagr - annualRf(rf)) / rep.volatility : NaN;
+    rep.sharpe = rep.volatility ? (rep.cagr - annualRf(rf, r.dates)) / rep.volatility : NaN;
   }
   if (benchmark && clean(benchmark).values.length > 3) {
     const rb = toReturns(resample(clean(benchmark), freq));
@@ -806,8 +838,8 @@ export function computeAll(series, benchmark = null, rf = 0, freq = 'M', { retur
     rep.beta = beta(rr, rbb);
     rep.alpha = jensenAlpha(rr, rbb, rf, n);
     rep.treynor = treynor(rr, rbb, rf, n);
-    if (returnMethod === 'cagr' && rep.beta) rep.treynor = (rep.cagr - annualRf(rf)) / rep.beta;
-    rep.m2 = rep.sharpe * volatility(rbb, n) + annualRf(rf);
+    if (returnMethod === 'cagr' && rep.beta) rep.treynor = (rep.cagr - annualRf(rf, r.dates)) / rep.beta;
+    rep.m2 = rep.sharpe * volatility(rbb, n) + annualRf(rf, r.dates);
     rep.tracking_error = trackingError(rr, rbb, n);
     rep.information_ratio = informationRatio(rr, rbb, n);
     rep.correlation = correlation(rr, rbb);

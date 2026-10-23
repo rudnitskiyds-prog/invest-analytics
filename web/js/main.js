@@ -3,11 +3,11 @@
 import { applyChartDefaults, registerEntities } from "./charts.js";
 import { $, $$, h, notice } from "./dom.js";
 import { catalogList, engine, entries, loadEngine } from "./engine.js";
-import { bindNumber } from "./fields.js";
 import * as home from "./page-home.js";
 import * as stub from "./page-stub.js";
 import * as symbol from "./page-symbol.js";
 import * as tools from "./page-tools.js";
+import { rfHeaderNote } from "./riskfree.js";
 import * as R from "./router.js";
 import { attachSearch } from "./search.js";
 import * as S from "./state.js";
@@ -61,7 +61,8 @@ function show(route) {
 }
 
 function setupGlobals() {
-  bindNumber("g-rf", "rf", { min: -10, max: 100, onChange: () => activePage().onGlobalChange() });
+  // безрисковая ставка не вводится: подпись с текущей доходностью коротких ОФЗ (web/lib/data.js)
+  rfHeaderNote().then((t) => { $("#g-rf-hint").textContent = t; });
   const bench = $("#g-bench");
   const labels = engine.ok ? Object.fromEntries(entries(engine.strategies.BENCHMARKS)) : {};
   const keys = [...new Set([...BENCH_KEYS, S.get("bench")])];

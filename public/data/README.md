@@ -9,6 +9,7 @@
 | `ruonia_rate.json` | Ставка RUONIA, % годовых |
 | `ruonia_index.json` | Накопленный индекс денежного рынка по RUONIA (база 100) |
 | `key_rate.json` | Ключевая ставка, доля годовых, с 13.09.2013 |
+| `risk_free.json` | Безрисковая ставка: доходность коротких ОФЗ (ISS RUGBITR1Y, YIELD), до 11.01.2011 — RGBEY; доля годовых, с 30.12.2002; поля `splice_date`, `sources` |
 | `tinvest_shares.json` | Акции TQBR по справочнику T-Invest API: ISIN, сектор, лот, uid, флаги |
 | `tinvest_etfs.json` | Фонды TQBR/TQTF: тип активов, комиссия (`fixed_commission`, % годовых), ребалансировка |
 | `dividends.json` | Дивиденды по тикерам (T-Invest `GetDividends`), с 2008 г. и объявленные на год вперёд |

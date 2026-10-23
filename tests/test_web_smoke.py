@@ -250,7 +250,7 @@ def test_params_bar_by_route(demo, hash_, visible):
 
 
 def test_demo_docs_has_stage1_formulas(demo):
-    """Инвариант 3: новые коэффициенты описаны во вкладке «Методика» веб-версии."""
+    """Инвариант 2: новые коэффициенты описаны во вкладке «Методика» веб-версии."""
     demo.goto("?demo=1", "#/docs")
     text = demo.page.locator("#panel-method").inner_text()
     for word in ("Мартин", "язвы", "R²", "capture", "Паркинсон", "Гарман", "Роджерс", "Янг", "моментум"):

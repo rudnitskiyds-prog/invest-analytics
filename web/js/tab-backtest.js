@@ -5,6 +5,7 @@ import { $, downloadCsv, errorNotice, h, nextFrame, notice, tableWrap, withBusy 
 import { assetLabel, engine, entries, requireEngine, toSet, UserError } from "./engine.js";
 import { bindCheckbox, bindNumber, bindValue, globals, readDates, readNumber, FREQ_LABELS } from "./fields.js";
 import { csvNum, fmtDate, fmtMetric, fmtNum, fmtPct, fmtRub, parseNum } from "./format.js";
+import { riskFree } from "./riskfree.js";
 import { getMany } from "./source.js";
 import * as S from "./state.js";
 
@@ -216,7 +217,7 @@ async function run() {
     await withBusy($("#bt-run"), $("#bt-status"), async (status) => {
       try {
         const E = requireEngine();
-        const g = globals();
+        let g = globals();
         const p = readParams();
         const ports = collectPortfolios();
         const keys = [...new Set([...Object.values(ports).flatMap((w) => Object.keys(w)), g.bench])];
@@ -284,6 +285,9 @@ async function run() {
             offerDemo: errors[g.bench]?.offerDemo });
         }
 
+        // безрисковая ставка — ряд доходности коротких ОФЗ по датам периода бэктеста
+        const RF = await riskFree(starts[0], ends.at(-1));
+        g = { ...g, rf: RF.rf, rfNote: RF.note };
         last = { results, bench, g, p, warnings };
         S.set({ bt: "1" });
         render();
@@ -383,7 +387,7 @@ function render() {
       h("div", {},
         h("h3", { class: "card-title" }, "Показатели эффективности"),
         h("p", { class: "card-sub" },
-          `Rf = ${fmtPct(g.rf, 2)}, доходности ${FREQ_LABELS[g.freq]}, бенчмарк ${benchName}.`)),
+          `${g.rfNote} Доходности ${FREQ_LABELS[g.freq]}, бенчмарк ${benchName}.`)),
       h("div", { class: "toolbar" },
         h("button", { type: "button", class: "btn btn-sm", onclick: () => csvMetrics(cols, reports) }, "Скачать CSV — показатели"),
         h("button", { type: "button", class: "btn btn-sm", onclick: () => csvEquity(lineSeries) }, "Скачать CSV — стоимость"))),

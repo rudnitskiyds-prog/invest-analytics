@@ -25,13 +25,14 @@
   `/iss/engines/{e}/markets/{m}/boards/{b}/securities/{SECID}/candles.json?interval=24&from=&till=&start=N`
   (страницы по 500 строк, без cursor).
 * **Банк России** — у cbr.ru нет CORS. Ряды берутся из файлов сборщика `public/data/*.json`
-  (`cbr_gold`, `ruonia_index`, `ruonia_rate`, `key_rate`), формат:
+  (`cbr_gold`, `ruonia_index`, `ruonia_rate`, `key_rate`; безрисковая ставка `risk_free` — по данным ISS,
+  но тоже файлом сборщика), формат:
   `{"id","title","unit","source","updated","first","last","data":[["YYYY-MM-DD", value], …]}`.
   Базовый путь — `DATA_BASE` из `web/js/config.js` (по умолчанию `"../public/data/"`; при выкладке
   подменяется).
 * **Демо-режим** `?demo=1` (только локально, при запуске сервера из корня репозитория): месячные
   ряды из `../tests/fixtures/iss_monthly.csv`, `cbr_monthly.csv`, `iss_monthly_extra.csv`.
-  Котировки Мосбиржи в `web/` не коммитим (инвариант 5 CLAUDE.md).
+  Котировки Мосбиржи в `web/` не коммитим (инвариант 4 CLAUDE.md).
 
 ## Типы
 
@@ -62,8 +63,34 @@ export function alignFrame(seriesByKey, {mode='common'}={}) -> Frame
                                            // до даты, когда есть все ряды
 export function resample(frameOrSeries, freq) -> same type   // 'D' | 'W' | 'M' | 'Q' | 'A': последнее значение периода
 export function sliceFrame(frame, from, till) -> Frame
+// безрисковая ставка (как core/data/risk_free.py)
+export async function loadRiskFree({base, fetchImpl}={}) -> {meta, series: Series}   // risk_free.json
+export async function riskFreeSeries(start=null, end=null, {base, fetchImpl}={}) -> Series
+       // годовые ставки в ДОЛЯХ по датам публикации на [start, end] — rf для computeAll/metricsTable;
+       // если start не дата публикации — первой точкой ставится start со ставкой, действовавшей на него
+       // (раньше 30.12.2002 — первое значение)
+export async function riskFreeMean(start=null, end=null, {base, fetchImpl}={}) -> number
+       // средняя по календарным дням (доля) — скаляр rf для границы Марковица и CML
+export function rateSlice(rate, start, end) -> Series, timeMean(rate, start, end) -> number   // чистые помощники
 ```
 Кэш ответов — в памяти (Map) на время сессии.
+
+### Безрисковая ставка: `public/data/risk_free.json`
+
+Константы 7,86 % больше нет. Rf — ряд: доходность к погашению индекса коротких ОФЗ RUGBITR1Y (ISS, поле
+`YIELD` истории индекса), до первой даты RUGBITR1Y (`splice_date` = 2011-01-11) — RGBEY, эффективная
+доходность всего рынка ОФЗ ММВБ (ISS engine `state`, market `index`, режим GNDX, поле `CLOSE`) без поправки
+на спред; до 30.12.2002 — первое известное значение. Нулевые значения RGBEY (сбои архива) отброшены.
+Файл — общий формат сборщика, `unit: "доля годовых"` (значения / 100, 4 знака), плюс:
+```json
+{"id":"risk_free", "unit":"доля годовых", "first":"2002-12-30", "last":"…", "splice_date":"2011-01-11",
+ "sources":[{"id":"RGBEY","from":"2002-12-30","till":"2010-12-30", …}, {"id":"RUGBITR1Y","from":"2011-01-11", …}],
+ "data":[["2002-12-30",0.1359], …]}
+```
+Ряд ставок в `metrics.js`/`metrics.py` выравнивается на даты доходностей по **началу периода**
+(`periodStarts`: для i ≥ 1 — предыдущая дата, для первой — на один шаг раньше): берётся последняя
+публикация ≤ начала периода. `annualRf` (M², Мартин) — среднее значений переданного ряда, поэтому
+передавайте ряд за окно расчёта. Python: `core.data.risk_free.rate_series / mean_rate / describe / current`.
 
 ## web/lib/metrics.js  (`api`)
 
@@ -74,6 +101,7 @@ export function sliceFrame(frame, from, till) -> Frame
 export const PERIODS = {D:252, W:52, M:12, Q:4, A:1}
 export function toReturns(values) -> number[]
 export function totalReturn(s), cagr(s), maxDrawdown(s), drawdownSeries(s) -> Series, calmar(s)
+export function perPeriodRate(rf, n, dates=null), periodStarts(dates)   // ставка за период; ряд — на начало периода
 export function volatility(r, n), sharpe(r, rf, n), downsideDeviation(r, mar, n), sortino(r, rf, n)
 export function beta(r, rm), correlation(r, rm), jensenAlpha(r, rm, rf, n), treynor(r, rm, rf, n)
 export function trackingError(r, rm, n), informationRatio(r, rm, n), omega(r, threshold, n), schwager(r)
@@ -121,7 +149,7 @@ export function efficientFrontier(inputs, {nPoints=40, wMin=0, wMax=1, nRandom=4
 ## Интерфейс (`site`)
 
 Одна страница, вкладки: **Бэктест**, **Граница Марковица**, **Коэффициенты бумаги** (тикер/индекс
-против бенчмарка), **Методика**. Параметры: безрисковая ставка (по умолчанию 7,86 %), бенчмарк
+против бенчмарка), **Методика**. Параметры: безрисковая ставка (ряд доходности коротких ОФЗ за период — `riskFreeSeries`), бенчмарк
 (MCFTR), частота метрик (M). Состояние — в URL-параметрах (можно поделиться ссылкой).
 Графики — библиотека в `web/vendor/` (не CDN: внешние CDN в России работают нестабильно).
 
@@ -173,7 +201,7 @@ export function totalReturnSeries(close, dividends)  // dividends: [{exDate, val
 ```
 `computeAll` дополнительно отдаёт `martin, ulcer_index, r_squared, up_capture, down_capture`
 (без бенчмарка последние три — NaN); `LABELS_RU`/`PERCENT_FIELDS` дополнены. Формулы — в четырёх местах
-(инвариант 3 CLAUDE.md): методику (`pages/7_Методика.py`, вкладка «Методика» в `web/`) обновляет `site`.
+(инвариант 2 CLAUDE.md): методику (`pages/7_Методика.py`, вкладка «Методика» в `web/`) обновляет `site`.
 
 Уточнения реализации (api, 08.10.2026):
 * Порядок ключей `MetricsReport`/`computeAll`: …, `days_to_recover`, **`martin`, `ulcer_index`**, `beta`, …,
@@ -325,8 +353,9 @@ export async function loadSymbolStats({base, fetchImpl}={}) -> {updated, items: 
   Python: `iss.splits(secid=None)` (утилита для /history), `iss.monthly_closes(secid, start, end=None, board="TQBR",
   engine, market, legacy_boards=(), adjust_splits=False)` (s.attrs["split_adjusted"] = True), `iss.close_series(…,
   adjust_splits=False)` — поведение по умолчанию прежнее.
-* `rf` — средняя по календарным дням ключевая ставка (доля) за окно из `public/data/key_rate.json`; нет файла — сбой источника.
-  Одна ставка на всё окно, в т. ч. для бумаг с более короткой историей.
+* `rf` — средняя по календарным дням безрисковая ставка (доля; доходность коротких ОФЗ) из
+  `public/data/risk_free.json`; нет файла — сбой источника. Верхнее `rf` — за всё окно (справочно),
+  `items[*].rf` — за период самой бумаги (по нему и считаются её коэффициенты).
 * Ранг: `(средний ранг по возрастанию − 1) / (N − 1) × 100` внутри класса, 1 знак; одна бумага — 50; нет значения — null.
   `score` — среднее доступных рангов. Коэффициенты округлены до 6 знаков, `months` — число месячных доходностей.
 * Python: `core/analytics/ranking.py` (`symbol_metrics, percentile_ranks, rank_items, mean_rate, ex_dividends`),
@@ -337,7 +366,7 @@ export async function loadSymbolStats({base, fetchImpl}={}) -> {updated, items: 
 ## Страница бумаги в Streamlit: `core/analytics/symbol_page.py` (api) ↔ `pages/2_Карточка_бумаги.py` (site)
 
 Python-аналог `web/lib/symbol.js` + расчётов `web/js/page-symbol.js`; интерфейс только вызывает эти функции
-(инвариант 4) и кэширует их результаты сам (`st.cache_data`) — результаты picklable, функции без Streamlit.
+(инвариант 3) и кэширует их результаты сам (`st.cache_data`) — результаты picklable, функции без Streamlit.
 ```python
 symbol_page.load_symbol(secid, years=None) -> {secid, info, ohlc, snapshot, dividends, coupons, fund, rating, errors}
 symbol_page.load_benchmark(key, start=None) -> pd.Series      # только живые данные, сбой — исключение

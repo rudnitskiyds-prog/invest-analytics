@@ -5,12 +5,12 @@ import streamlit as st
 from core.analytics import metrics as m
 from core.analytics.backtest import REBAL_LABELS, BacktestConfig, run_backtest
 from core.analytics.strategies import STRATEGIES
-from ui.common import (annual_returns, asset_label, base_layout, catalog_options, color_map,
+from ui.common import (FREQ_LABELS, annual_returns, asset_label, base_layout, catalog_options, color_map,
                        drawdown_chart, fmt_rub, heatmap_returns, line_chart, load_prices,
-                       load_series, page_setup, to_excel)
+                       load_series, page_setup, rf_caption, rf_series, to_excel)
 
 page_setup("Бэктест портфелей и стратегий", "⏱")
-rf, bench, freq = st.session_state["rf"], st.session_state["benchmark"], st.session_state["freq"]
+bench, freq = st.session_state["benchmark"], st.session_state["freq"]
 custom = st.session_state.setdefault("custom_portfolios", {})
 
 # ------------------------------------------------------------------ собственные портфели
@@ -113,6 +113,7 @@ eq = pd.DataFrame({k: r.equity for k, r in results.items()})
 b = prices[bench].loc[eq.index[0]:eq.index[-1]].dropna()
 eq[bench] = b / b.iloc[0] * req["capital"]
 eq = eq.ffill()
+rf = rf_series(eq.index[0], eq.index[-1])   # безрисковая ставка по датам периода бэктеста
 
 cols = st.columns(min(len(results), 6))
 for c, (k, r) in zip(cols * 3, results.items()):
@@ -130,7 +131,8 @@ with t2:
 with t3:
     raw = m.metrics_table({k: eq[k] for k in eq.columns}, eq[bench], rf, freq)
     st.dataframe(m.format_metrics_table(raw), width="stretch", height=900)
-    st.caption(f"Rf = {rf:.2%}, доходности — {freq}; бенчмарк {bench}. Оборот и издержки: " +
+    st.caption(rf_caption(eq.index[0], eq.index[-1]) + f" Доходности — {FREQ_LABELS.get(freq, freq).lower()}; бенчмарк {bench}. "
+               "Оборот и издержки: " +
                "; ".join(f"{k}: оборот {r.turnover:.1f}×, комиссии {fmt_rub(r.costs)}, налог {fmt_rub(r.taxes)}"
                          for k, r in results.items()))
 with t4:

@@ -5,10 +5,9 @@ import streamlit as st
 
 from core.analytics.frontier import efficient_frontier, estimate_inputs
 from ui.common import (PALETTE, SEQ_BLUE, asset_label, base_layout, catalog_options, fmt_pct,
-                       load_prices, page_setup)
+                       load_prices, page_setup, rf_caption, rf_mean)
 
 page_setup("Граница эффективности Марковица", "🎯")
-rf = st.session_state["rf"]
 
 with st.form("frontier"):
     c1, c2 = st.columns([3, 2])
@@ -55,6 +54,9 @@ st.caption(f"Общий период данных: {prices.index[0].date()} — 
            f"(ограничен самым «молодым» активом: "
            f"{max(info.items(), key=lambda kv: kv[1]['first'] or pd.Timestamp(0))[0]})")
 
+# безрисковая ставка — средняя за окно оценки (скаляр: точка начала CML и знаменатель Шарпа)
+rf = rf_mean(prices.index[0], prices.index[-1])
+st.caption(rf_caption(prices.index[0], prices.index[-1]) + " От неё начинается линия CML.")
 inp = estimate_inputs(prices, freq, rf, mu_method, shrink)
 fr = efficient_frontier(inp, 50, w_min, w_max, n_rand)
 

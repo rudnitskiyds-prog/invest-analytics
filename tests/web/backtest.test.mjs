@@ -131,7 +131,7 @@ describe('пополнения, комиссия, налог, веса', () => {
 });
 
 describe('паритет с Python', () => {
-  test('квартальная ребалансировка + коридор + комиссия + пополнения + НДФЛ (окно НИР)', () => {
+  test('квартальная ребалансировка + коридор + комиссия + пополнения + НДФЛ (окно 2011–2025)', () => {
     const ref = reference();
     const c = ref.backtest.complex;
     const px = sliceFrame(frameFromRef(ref.demo_frame), ref.params.start, ref.params.end);

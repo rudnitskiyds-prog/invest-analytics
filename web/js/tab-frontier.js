@@ -5,6 +5,7 @@ import { $, errorNotice, h, nextFrame, notice, tableWrap, withBusy } from "./dom
 import { assetLabel, catalogList, engine, requireEngine, UserError } from "./engine.js";
 import { bindNumber, bindValue, globals, readDates, readNumber } from "./fields.js";
 import { fmtCoef, fmtDate, fmtNum, fmtPct } from "./format.js";
+import { riskFree } from "./riskfree.js";
 import { getMany } from "./source.js";
 import * as S from "./state.js";
 
@@ -87,7 +88,7 @@ async function run() {
     await withBusy($("#fr-run"), $("#fr-status"), async (status) => {
       try {
         const E = requireEngine();
-        const g = globals();
+        let g = globals();
         const { from, till } = readDates("ffrom", "ftill");
         const wMin = readNumber("wmin", "Мин. доля", { min: 0, max: 50 }) / 100;
         const wMax = readNumber("wmax", "Макс. доля", { min: 5, max: 100 }) / 100;
@@ -118,6 +119,9 @@ async function run() {
         frame = E.data.sliceFrame(frame, from, till);
         if (frame.dates.length < 6) throw new UserError("Слишком короткий общий период данных для оценки ковариаций.");
         const youngest = ok.reduce((a, k) => (series[k].dates[0] > series[a].dates[0] ? k : a), ok[0]);
+        // безрисковая ставка — средняя доходность коротких ОФЗ за окно оценки (одна цифра: Шарп и начало CML)
+        const RF = await riskFree(frame.dates[0], frame.dates.at(-1));
+        g = { ...g, rf: RF.mean, rfNote: RF.note };
         const inputs = E.frontier.estimateInputs(frame, { freq, rf: g.rf, muMethod });
         const fr = E.frontier.efficientFrontier(inputs, { nPoints: 50, wMin, wMax, nRandom });
         last = { fr, inputs, frame, youngest, warnings, g, freq };
@@ -187,8 +191,8 @@ function render() {
 
   out.append(notice("info",
     `Общий период данных: ${fmtDate(frame.dates[0])} — ${fmtDate(frame.dates.at(-1))} ` +
-    `(ограничен самым «молодым» активом: ${youngest}). Rf = ${fmtPct(g.rf, 2)}; ` +
-    `доходности ${({ M: "месячные", W: "недельные", D: "дневные" })[freq]}.`));
+    `(ограничен самым «молодым» активом: ${youngest}). ${g.rfNote} ` +
+    `Доходности ${({ M: "месячные", W: "недельные", D: "дневные" })[freq]}.`));
 
   const front = [...fr.frontier].sort((a, b) => a.vol - b.vol);
   const mv = fr.minVar;

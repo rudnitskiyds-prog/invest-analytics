@@ -7,7 +7,7 @@ import * as S from "./state.js";
 /**
  * Маршруты из web/CONTRACT.md (этап 1).
  * page — имя модуля страницы (main.js), panel — id секции без «panel-», nav — пункт меню,
- * paramsScope — какие общие параметры показывать: "all" (инструменты) | "rf" (страница бумаги) | null.
+ * paramsScope — какие общие параметры показывать: "all" (инструменты) | "rf" (страница бумаги: только подпись о безрисковой ставке) | null.
  */
 export const ROUTES = [
   { re: /^\/$/, page: "home", panel: "home", nav: "home", title: "Главная" },
