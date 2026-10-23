@@ -3,56 +3,56 @@
   "ok": true,
   "rows": 4652,
   "last": "2026-10-23",
-  "checked": "2026-10-23T08:02:15+00:00"
+  "checked": "2026-10-23T08:28:35+00:00"
  },
  "ruonia_rate": {
   "ok": true,
   "rows": 4135,
   "last": "2026-10-21",
-  "checked": "2026-10-23T08:02:16+00:00"
+  "checked": "2026-10-23T08:28:36+00:00"
  },
  "ruonia_index": {
   "ok": true,
   "rows": 4135,
   "last": "2026-10-21",
-  "checked": "2026-10-23T08:02:16+00:00"
+  "checked": "2026-10-23T08:28:36+00:00"
  },
  "key_rate": {
   "ok": true,
   "rows": 3286,
   "last": "2026-10-23",
-  "checked": "2026-10-23T08:02:16+00:00"
+  "checked": "2026-10-23T08:28:36+00:00"
  },
  "tinvest_shares": {
   "ok": true,
   "rows": 254,
   "last": "2026-10-23",
-  "checked": "2026-10-23T08:02:39+00:00"
+  "checked": "2026-10-23T08:28:58+00:00"
  },
  "tinvest_etfs": {
   "ok": true,
   "rows": 61,
   "last": "2026-10-23",
-  "checked": "2026-10-23T08:02:39+00:00"
+  "checked": "2026-10-23T08:28:58+00:00"
  },
  "dividends": {
   "ok": true,
   "rows": 200,
   "last": "2026-10-23",
-  "checked": "2026-10-23T08:04:25+00:00"
+  "checked": "2026-10-23T08:30:44+00:00"
  },
  "fundamentals": {
   "ok": true,
   "rows": 252,
   "last": "2026-10-23",
-  "checked": "2026-10-23T08:04:27+00:00"
+  "checked": "2026-10-23T08:30:45+00:00"
  },
  "rusetfs_funds": {
   "ok": true,
   "rows": 211,
   "last": "2026-10-23",
   "with_commission": 211,
-  "checked": "2026-10-23T08:02:36+00:00"
+  "checked": "2026-10-23T08:28:55+00:00"
  },
  "symbol_stats": {
   "ok": true,
@@ -63,12 +63,12 @@
   "short_history": 244,
   "failed": 0,
   "total_return": true,
-  "checked": "2026-10-23T08:08:10+00:00"
+  "checked": "2026-10-23T08:33:42+00:00"
  },
  "risk_free": {
   "ok": true,
   "rows": 5943,
   "last": "2026-10-22",
-  "checked": "2026-10-23T08:02:34+00:00"
+  "checked": "2026-10-23T08:28:54+00:00"
  }
 }
