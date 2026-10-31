@@ -1,58 +1,62 @@
 {
  "cbr_gold": {
-  "ok": true,
-  "rows": 4657,
-  "last": "2026-10-30",
-  "checked": "2026-10-30T09:55:58+00:00"
+  "ok": false,
+  "error": "HTTPError: 502 Server Error: Bad Gateway for url: https://www.cbr.ru/scripts/xml_metall.asp?date_req1=01%2F01%2F2008&date_req2=31%2F12%2F2012",
+  "where": "cbr.py:82 _fetch <- cbr.py:117 metal_price <- cbr.py:135 gold_price",
+  "checked": "2026-10-31T09:33:36+00:00",
+  "last": "2026-10-30"
  },
  "ruonia_rate": {
-  "ok": true,
-  "rows": 4140,
-  "last": "2026-10-28",
-  "checked": "2026-10-30T09:55:59+00:00"
+  "ok": false,
+  "error": "HTTPError: 502 Server Error: Bad Gateway for url: https://www.cbr.ru/DailyInfoWebServ/DailyInfo.asmx",
+  "where": "cbr.py:82 _fetch <- cbr.py:143 _soap <- cbr.py:157 ruonia_rates",
+  "checked": "2026-10-31T09:33:50+00:00",
+  "last": "2026-10-28"
  },
  "ruonia_index": {
-  "ok": true,
-  "rows": 4140,
-  "last": "2026-10-28",
-  "checked": "2026-10-30T09:55:59+00:00"
+  "ok": false,
+  "error": "HTTPError: 502 Server Error: Bad Gateway for url: https://www.cbr.ru/DailyInfoWebServ/DailyInfo.asmx",
+  "where": "cbr.py:82 _fetch <- cbr.py:143 _soap <- cbr.py:157 ruonia_rates",
+  "checked": "2026-10-31T09:34:06+00:00",
+  "last": "2026-10-28"
  },
  "key_rate": {
-  "ok": true,
-  "rows": 3291,
-  "last": "2026-10-30",
-  "checked": "2026-10-30T09:55:59+00:00"
+  "ok": false,
+  "error": "HTTPError: 502 Server Error: Bad Gateway for url: https://www.cbr.ru/DailyInfoWebServ/DailyInfo.asmx",
+  "where": "cbr.py:82 _fetch <- cbr.py:143 _soap <- cbr.py:185 key_rate",
+  "checked": "2026-10-31T09:34:21+00:00",
+  "last": "2026-10-30"
  },
  "tinvest_shares": {
   "ok": true,
   "rows": 254,
-  "last": "2026-10-30",
-  "checked": "2026-10-30T09:56:20+00:00"
+  "last": "2026-10-31",
+  "checked": "2026-10-31T09:34:41+00:00"
  },
  "tinvest_etfs": {
   "ok": true,
   "rows": 61,
-  "last": "2026-10-30",
-  "checked": "2026-10-30T09:56:20+00:00"
+  "last": "2026-10-31",
+  "checked": "2026-10-31T09:34:41+00:00"
  },
  "dividends": {
   "ok": true,
   "rows": 200,
-  "last": "2026-10-30",
-  "checked": "2026-10-30T09:58:02+00:00"
+  "last": "2026-10-31",
+  "checked": "2026-10-31T09:36:23+00:00"
  },
  "fundamentals": {
   "ok": true,
   "rows": 252,
-  "last": "2026-10-30",
-  "checked": "2026-10-30T09:58:03+00:00"
+  "last": "2026-10-31",
+  "checked": "2026-10-31T09:36:25+00:00"
  },
  "rusetfs_funds": {
   "ok": true,
   "rows": 212,
-  "last": "2026-10-30",
+  "last": "2026-10-31",
   "with_commission": 212,
-  "checked": "2026-10-30T09:56:18+00:00"
+  "checked": "2026-10-31T09:34:38+00:00"
  },
  "symbol_stats": {
   "ok": true,
@@ -63,20 +67,20 @@
   "short_history": 245,
   "failed": 0,
   "total_return": true,
-  "checked": "2026-10-30T10:01:58+00:00"
+  "checked": "2026-10-31T09:39:27+00:00"
  },
  "risk_free": {
   "ok": true,
-  "rows": 5948,
-  "last": "2026-10-29",
-  "checked": "2026-10-30T09:56:16+00:00"
+  "rows": 5949,
+  "last": "2026-10-30",
+  "checked": "2026-10-31T09:34:37+00:00"
  },
  "portfolios": {
   "ok": true,
   "rows": 18,
-  "last": "2026-10-29",
+  "last": "2026-10-30",
   "skipped": 0,
-  "stale": 0,
-  "checked": "2026-10-30T10:05:21+00:00"
+  "stale": 6,
+  "checked": "2026-10-31T09:42:56+00:00"
  }
 }
