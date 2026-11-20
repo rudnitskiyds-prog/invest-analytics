@@ -18,7 +18,10 @@ export const ROUTES = [
   { re: /^\/docs$/, page: "method", panel: "method", nav: "docs", title: "Методика" },
   { re: /^\/symbol\/([^/]+)$/, page: "symbol", panel: "symbol", nav: null, paramsScope: "rf", title: (m) => m[1] },
   { re: /^\/screener\/(stocks|funds|bonds)$/, page: "stub", panel: "stub", nav: "screener", title: "Скринеры" },
-  { re: /^\/portfolios\/lazy$/, page: "stub", panel: "stub", nav: "portfolios", title: "Ленивые портфели" },
+  // портфели и стратегии: список (фильтр группы — ?g=lazy|theme), старый адрес #/portfolios/lazy — список с фильтром «Ленивые»
+  { re: /^\/portfolios$/, page: "portfolios", panel: "portfolios", nav: "portfolios", title: "Портфели и стратегии" },
+  { re: /^\/portfolios\/lazy$/, page: "portfolios", panel: "portfolios", nav: "portfolios", title: "Портфели и стратегии", legacyGroup: "lazy" },
+  { re: /^\/portfolios\/([^/]+)$/, page: "portfolio", panel: "portfolio", nav: "portfolios", title: "Портфель" },
 ];
 
 const NOT_FOUND = { page: "stub", panel: "stub", nav: null, title: "Страница не найдена", notFound: true };
@@ -53,6 +56,7 @@ export function match(path) {
       const params = {};
       if (r.page === "symbol") params.ticker = m[1].trim().toUpperCase();
       if (r.page === "stub") params.kind = path.slice(1);
+      if (r.page === "portfolio") params.id = m[1].trim();
       return { ...r, params, title: typeof r.title === "function" ? r.title(m) : r.title };
     }
   }
@@ -74,11 +78,15 @@ export function symbolHref(ticker) {
   return href(`/symbol/${encodeURIComponent(String(ticker).trim().toUpperCase())}`);
 }
 
-/** Перейти на маршрут (новая запись истории → сработает hashchange). */
+/**
+ * Перейти на маршрут: новая запись истории и сразу (синхронно) обработчик hashchange —
+ * страница сменяется в том же такте, без ожидания асинхронного события браузера.
+ * «Назад» по-прежнему работает: при обходе истории браузер сам присылает hashchange.
+ */
 export function go(path, query = null) {
   const target = href(path, query);
-  if (location.hash === target) window.dispatchEvent(new HashChangeEvent("hashchange"));
-  else location.hash = target;
+  if (location.hash !== target) history.pushState(null, "", `${location.pathname}${location.search}${target}`);
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
 }
 
 /** Обновить query внутри hash без перехода (состояние страницы — ссылкой можно поделиться). */

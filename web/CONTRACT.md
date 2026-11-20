@@ -394,3 +394,30 @@ public_data.symbol_stats() -> dict | None                     # public/data/symb
   Роджерс–Сатчелл, Янг–Чжан по OHLC за `period_start('1Y')`; `dividend_stats` — порт `dividendStats` (snake_case:
   `ttm_value, ttm_yield, by_year, by_month, growth_streak, payouts_per_year, upcoming`), только акции.
 * `ranking.next_weekday` — публичное имя (`_next_weekday` оставлен алиасом).
+
+## `web/lib/portfolios.js` (api) — раздел «Портфели и стратегии»
+
+Только загрузка и выборка из `public/data/portfolios.json` (считает ночной сборщик через
+`core/analytics/portfolios.py`); финансовых расчётов в браузере нет. Модуль не трогает DOM, кэш — общий из `data.js`.
+
+```js
+export async function loadPortfolios({base = DEFAULT_DATA_BASE, fetchImpl} = {})
+  -> {updated, source, initial, groups: string[], items: {slug: {row, report, stale?, stale_date?}},
+      series: {slug: [[date, value], ...]}, series_benchmark: {slug: [[date, value], ...]},
+      risk_return: {'1Y'|'5Y'|'10Y': [{id, name, group, ret, volatility, from, to}]},
+      skipped: {slug: причина}, stale: {slug: {stale_date, reason}}, last}   // файл как есть
+  // сбой сети / HTTP-ошибка (2 попытки) / нет объекта items -> Error
+  // «Не удалось загрузить данные портфелей (portfolios.json): …» / «…повреждён или имеет неожиданный формат»
+export function portfolioList(data, group = null) -> [{id, ...row}]
+  // все items или только row.group === group; сортировка по row.rank по убыванию,
+  // rank null/undefined/не число — в конце, между собой по name (localeCompare 'ru')
+export function portfolioById(data, id) -> {id, row, report, series, benchmark} | null
+  // series = data.series[id] || [], benchmark = data.series_benchmark[id] || []; нет id — null
+export function groupCounts(data) -> {all: N, [группа]: n, ...}   // группы из data.groups есть и при n = 0
+export function riskReturnPoints(data, window = '10Y') -> data.risk_return[window] | []
+export function isStale(data, id) -> boolean
+  // id есть в data.stale (объект {slug: {stale_date, reason}}; массив slug-ов тоже понимается) или items[id].stale
+```
+Поля `row` — строка `core.analytics.portfolios.portfolios_table` (name, group, since, last_date, ret_1d, ytd,
+cagr_10y, cagr_all, max_drawdown, current_drawdown, fee, fee_coverage, sharpe, sortino, omega, martin, calmar,
+ulcer_index, volatility_1y, benchmark, rank, rank_detail, rank_window); доли — в долях.
