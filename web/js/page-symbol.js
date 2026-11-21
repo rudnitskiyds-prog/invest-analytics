@@ -229,7 +229,7 @@ function render() {
   const t = route.ticker;
   $("#sym-title").textContent = t;
   $("#sym-lead").textContent = "";
-  document.title = `${t} — ИнвестАналитика`;
+  document.title = `${t} — FinServ`;
 
   if (S.isDemo()) {
     put(root, h("div", { class: "notice notice-info", role: "status" },
@@ -285,7 +285,7 @@ function renderHead(head, t, info) {
   if (!info) throw new NoData("");
   $("#sym-title").textContent = info.name || info.shortName || t;
   $("#sym-lead").textContent = `${t}${info.shortName && info.shortName !== info.name ? ` · ${info.shortName}` : ""}`;
-  document.title = `${info.shortName || t} (${t}) — ИнвестАналитика`;
+  document.title = `${info.shortName || t} (${t}) — FinServ`;
   const facts = [
     ["Тип", info.typeLabel || classLabel(info.cls)],
     ["ISIN", info.isin],

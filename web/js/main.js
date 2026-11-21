@@ -4,6 +4,7 @@ import { applyChartDefaults, registerEntities } from "./charts.js";
 import { $, $$, h, notice } from "./dom.js";
 import { catalogList, engine, entries, loadEngine } from "./engine.js";
 import * as home from "./page-home.js";
+import * as portfolios from "./page-portfolios.js";
 import * as stub from "./page-stub.js";
 import * as symbol from "./page-symbol.js";
 import * as tools from "./page-tools.js";
@@ -16,7 +17,7 @@ import * as frontier from "./tab-frontier.js";
 import * as method from "./tab-method.js";
 import * as security from "./tab-security.js";
 
-const PAGES = { home, tools, backtest, frontier, security, method, symbol, stub };
+const PAGES = { home, tools, backtest, frontier, security, method, symbol, stub, portfolios, portfolio: portfolios.detail };
 const BENCH_KEYS = ["MCFTR", "IMOEX", "MEBCTR", "RGBITR", "RUONIA", "GOLD_CBR"];
 let ready = false;
 let active = null;     // текущий маршрут
@@ -28,6 +29,8 @@ function activePage() {
 
 function show(route) {
   active = route;
+  // главная — тёмная тема бренда, все рабочие страницы — светлые
+  document.body.classList.toggle("theme-dark", route.page === "home");
   for (const p of $$(".panel")) p.hidden = p.id !== `panel-${route.panel}`;
   for (const a of $$("[data-nav]")) {
     if (a.dataset.nav === route.nav) a.setAttribute("aria-current", "page");
@@ -41,7 +44,7 @@ function show(route) {
   // общие параметры: на инструментах — все, на странице бумаги — только безрисковая ставка
   $("#params-bar").hidden = !route.paramsScope;
   for (const el of $$("[data-param-scope='tools']")) el.hidden = route.paramsScope !== "all";
-  document.title = `${route.title} — ИнвестАналитика`;
+  document.title = route.page === "home" ? "FinServ — всегда на финансовой службе" : `${route.title} — FinServ`;
   if (S.isDemo()) $("#live-link").href = S.liveHref();
 
   // страница бумаги сразу показывает демо-сообщение / ошибку тикера, каталог инструментов (STATIC)
@@ -84,7 +87,27 @@ function setupGlobals() {
   });
 }
 
+/** Декоративные линейные спирали (главная и шапка раздела портфелей). */
+function drawSpirals() {
+  const deco = document.getElementById("deco-spiral");
+  if (deco) {
+    let s = "";
+    for (let i = 0; i < 48; i++) s += `<ellipse rx="${400 - i * 4}" ry="${150 + i * 3}" transform="rotate(${i * 7.5})"/>`;
+    deco.innerHTML = s;
+  }
+  const pf = document.getElementById("pf-spiral");
+  if (pf) {
+    let s = "";
+    for (let i = 0; i < 40; i++) {
+      const r = 60 + i * 6;
+      s += `<ellipse rx="${r}" ry="${(r * 0.42).toFixed(1)}" transform="rotate(${i * 4.5})"/>`;
+    }
+    pf.innerHTML = s;
+  }
+}
+
 function setupChrome() {
+  drawSpirals();
   // ссылка «К содержимому»: hash занят маршрутом — переводим фокус без смены адреса
   $(".skip-link").addEventListener("click", (e) => {
     e.preventDefault();

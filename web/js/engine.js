@@ -30,6 +30,18 @@ export function loadEngine() {
   return loading;
 }
 
+// Раздел «Портфели и стратегии» (web/lib/portfolios.js) — отдельно: без него остальные разделы работают.
+let pfLoading = null;
+
+/** Модуль web/lib/portfolios.js или исключение с понятным текстом. */
+export function loadPortfoliosLib() {
+  pfLoading ??= import("../lib/portfolios.js").catch((e) => {
+    pfLoading = null;   // повторить при следующем заходе
+    throw new UserError(`Модуль раздела портфелей (web/lib/portfolios.js) не загрузился. Подробности: ${e?.message || e}`);
+  });
+  return pfLoading;
+}
+
 export function requireEngine() {
   if (!engine.ok) {
     throw new UserError(

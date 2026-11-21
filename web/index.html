@@ -3,25 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
-  <meta name="description" content="ИнвестАналитика — оценка эффективности инвестиций на российском рынке: бэктест пассивных стратегий, граница Марковица, коэффициенты эффективности.">
-  <title>ИнвестАналитика — оценка эффективности инвестиций</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Cpath d='M7 22l6-7 5 4 7-9' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#0B1730">
+  <meta name="description" content="FinServ — всегда на финансовой службе: доходность и риск бумаг Мосбиржи, готовые портфели, бэктест пассивных стратегий, граница Марковица, коэффициенты эффективности.">
+  <title>FinServ — всегда на финансовой службе</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230B1730'/%3E%3Crect x='3' y='3' width='26' height='26' rx='6' fill='none' stroke='%23C7A253' stroke-width='2'/%3E%3Cpath d='M8 21l5-5 3.5 3.5L24 12' fill='none' stroke='%23C7A253' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M19 12h5v5' fill='none' stroke='%23C7A253' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="preload" href="vendor/fonts/golos-text-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="vendor/fonts/oswald-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="vendor/fonts/fonts.css">
   <link rel="stylesheet" href="css/style.css">
   <script src="vendor/chart.umd.min.js" defer></script>
   <script type="module" src="js/main.js"></script>
 </head>
 <body>
 <a class="skip-link" href="#main">К содержимому</a>
+<div class="bg-deco" aria-hidden="true">
+  <div class="orb" style="width:520px;height:520px;background:#37386C;right:-120px;top:-110px;opacity:.9"></div>
+  <div class="orb" style="width:180px;height:180px;background:#C7A253;right:110px;top:40px;opacity:.35"></div>
+  <div class="orb" style="width:420px;height:420px;background:#1B2A66;left:-200px;top:560px;opacity:.9"></div>
+  <svg class="deco-spiral" id="deco-spiral" viewBox="-410 -410 820 820" fill="none" stroke="#C7A253" stroke-width=".6"></svg>
+</div>
 
 <header class="app-header">
   <div class="wrap header-row">
-    <a class="brand" href="#/" aria-label="ИнвестАналитика — на главную">
-      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8"/><path d="M7 22l6-7 5 4 7-9"/></svg>
-      <div>
-        <h1 class="brand-title">ИнвестАналитика</h1>
-        <p class="brand-sub">Оценка эффективности инвестиций на российском рынке</p>
-      </div>
+    <a class="brand" href="#/" aria-label="FinServ — на главную">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-9"/><path d="M15 6h6v6"/></svg></span>
+      <span class="brand-text">
+        <span class="brand-title">Fin<span>Serv</span></span>
+        <span class="brand-sub">Всегда на финансовой службе</span>
+      </span>
     </a>
     <button type="button" id="nav-toggle" class="nav-toggle" aria-expanded="false" aria-controls="site-nav">
       <span aria-hidden="true">☰</span><span class="sr-only">Меню разделов</span>
@@ -29,9 +39,9 @@
     <nav id="site-nav" class="site-nav" aria-label="Разделы сайта">
       <ul>
         <li><a href="#/" data-nav="home">Главная</a></li>
+        <li><a href="#/portfolios" data-nav="portfolios">Портфели</a></li>
+        <li><a href="#/screener/stocks" data-nav="screener">Бумаги</a></li>
         <li><a href="#/tools" data-nav="tools">Инструменты</a></li>
-        <li><a href="#/screener/stocks" data-nav="screener">Скринеры</a></li>
-        <li><a href="#/portfolios/lazy" data-nav="portfolios">Портфели</a></li>
         <li><a href="#/docs" data-nav="docs">Методика</a></li>
       </ul>
     </nav>
@@ -82,24 +92,72 @@
 
 <main id="main" class="wrap" tabindex="-1">
 
-<!-- ============================================================ ГЛАВНАЯ -->
+<!-- ============================================================ ГЛАВНАЯ (тёмная тема) -->
 <section class="panel" id="panel-home" aria-labelledby="h-home" hidden>
-  <div class="hero card">
-    <h2 id="h-home">Доходность и риск бумаг Мосбиржи — в одном месте</h2>
-    <p class="lead">Страницы акций, фондов, облигаций и индексов: доходность по периодам, моментум, просадки,
-      волатильность, дивиденды и рейтинг риск/доходность. Бэктест портфелей и граница Марковица.
-      Данные — ISS Мосбиржи, Банк России, T-Invest API и RusETFs.</p>
-    <div class="hero-search">
-      <label for="home-search">Найти бумагу</label>
-      <input id="home-search" type="text" placeholder="Тикер, название или ISIN" enterkeyhint="go">
-      <small class="hint">Начните вводить — появятся подсказки; Enter откроет страницу бумаги.</small>
+  <div class="h-hero">
+    <div>
+      <div class="eyebrow">Информационно-аналитическая платформа</div>
+      <h2 id="h-home">Финансовое планирование <em>и моделирование</em> инвестиций</h2>
+      <p class="h-lead">Доходность и риск бумаг Мосбиржи, готовые портфели, бэктесты и граница Марковица — с прозрачными
+        расчётами на данных Мосбиржи и Банка России.</p>
+      <div class="h-rule"></div>
+      <form class="find" id="home-find" role="search" onsubmit="return false">
+        <div class="find-box">
+          <label for="home-search" class="sr-only">Найти бумагу: тикер, название или ISIN</label>
+          <input id="home-search" type="text" placeholder="Найти бумагу: тикер, название или ISIN" enterkeyhint="go">
+        </div>
+        <button type="submit" class="btn btn-primary" id="home-find-go">Открыть</button>
+      </form>
+      <p class="find-hint">Начните вводить — появятся подсказки; Enter откроет страницу бумаги.</p>
+      <ul class="pop-list" id="home-popular" aria-label="Популярные бумаги"></ul>
+    </div>
+    <div class="glass" id="home-rates" aria-live="polite">
+      <h3>Ставки и золото</h3>
+      <div class="sub">Данные Банка России и Мосбиржи</div>
+      <p class="muted">Загрузка…</p>
     </div>
   </div>
-  <h3 class="section-title">Популярные бумаги</h3>
-  <ul class="pop-list" id="home-popular"></ul>
-  <h3 class="section-title">Разделы</h3>
-  <div class="entry-grid" id="home-sections"></div>
-  <div id="home-leaders"></div>
+
+  <div class="h-sec" id="home-kpis-sec" hidden>
+    <div class="h-kpis" id="home-kpis"></div>
+  </div>
+
+  <div class="h-sec">
+    <h3 class="h-title">Разделы</h3>
+    <div class="tiles" id="home-sections"></div>
+  </div>
+
+  <div class="h-sec" id="home-pf-sec">
+    <h3 class="h-title">Портфели за 10 лет</h3>
+    <div id="home-pf"><p class="muted">Загрузка портфелей…</p></div>
+  </div>
+
+  <div class="h-sec" id="home-leaders"></div>
+</section>
+
+<!-- ============================================================ ПОРТФЕЛИ: СПИСОК -->
+<section class="panel" id="panel-portfolios" aria-labelledby="h-portfolios" hidden>
+  <div class="pf-spiral-clip" aria-hidden="true"><svg class="pf-spiral" id="pf-spiral" viewBox="-320 -320 640 640" fill="none" stroke="#C7A253" stroke-width=".7"></svg></div>
+  <nav class="crumbs" aria-label="Навигационная цепочка"><a href="#/">FinServ</a> · <span class="here">Портфели и стратегии</span></nav>
+  <div class="panel-head">
+    <h2 id="h-portfolios">Портфели <em>и стратегии</em></h2>
+    <p class="lead" id="pf-lead">Готовые портфели на индексах Мосбиржи и золоте Банка России: от «ленивых» до отраслевых.
+      Доходность — с реинвестированием и ребалансировкой, рейтинг — по пяти годам. Для большинства портфелей —
+      инструкция, как собрать его из биржевых фондов.</p>
+  </div>
+  <div id="pf-root"><p class="muted">Загрузка портфелей…</p></div>
+</section>
+
+<!-- ============================================================ ПОРТФЕЛЬ -->
+<section class="panel" id="panel-portfolio" aria-labelledby="pf-title" hidden>
+  <nav class="crumbs" aria-label="Навигационная цепочка" id="pf-crumbs"><a href="#/portfolios">Портфели</a></nav>
+  <div class="pf-head">
+    <div>
+      <h2 class="page-title" id="pf-title">Портфель</h2>
+      <div class="tags" id="pf-tags"></div>
+    </div>
+  </div>
+  <div id="pf-page"></div>
 </section>
 
 <!-- ============================================================ ИНСТРУМЕНТЫ -->
@@ -425,7 +483,7 @@
 
 <footer class="app-footer">
   <div class="wrap footer-row">
-    <p>Источники данных: <a href="https://iss.moex.com/iss/reference/" rel="noopener">ISS Московской биржи</a>,
+    <p><b>FinServ</b> — всегда на финансовой службе. Данные: <a href="https://iss.moex.com/iss/reference/" rel="noopener">ISS Московской биржи</a>,
       <a href="https://www.cbr.ru/" rel="noopener">Банк России</a>, T-Invest API (дивиденды),
       <a href="https://rusetfs.com/" rel="noopener">RusETFs</a> (комиссии фондов). Расчёты выполняются в вашем браузере.</p>
     <p class="disclaimer">Не является инвестиционной рекомендацией. Результаты в прошлом не гарантируют доходность в будущем.</p>
