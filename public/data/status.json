@@ -3,73 +3,69 @@
   "ok": true,
   "rows": 4672,
   "last": "2026-11-21",
-  "checked": "2026-11-21T10:55:22+00:00"
+  "checked": "2026-11-22T11:13:00+00:00"
  },
  "ruonia_rate": {
   "ok": true,
   "rows": 4155,
   "last": "2026-11-19",
-  "checked": "2026-11-21T10:55:22+00:00"
+  "checked": "2026-11-22T11:13:01+00:00"
  },
  "ruonia_index": {
   "ok": true,
   "rows": 4155,
   "last": "2026-11-19",
-  "checked": "2026-11-21T10:55:22+00:00"
+  "checked": "2026-11-22T11:13:01+00:00"
  },
  "key_rate": {
   "ok": true,
   "rows": 3305,
   "last": "2026-11-20",
-  "checked": "2026-11-21T10:55:23+00:00"
+  "checked": "2026-11-22T11:13:02+00:00"
  },
  "tinvest_shares": {
   "ok": true,
   "rows": 254,
-  "last": "2026-11-21",
-  "checked": "2026-11-21T10:55:37+00:00"
+  "last": "2026-11-22",
+  "checked": "2026-11-22T11:13:38+00:00"
  },
  "tinvest_etfs": {
   "ok": true,
   "rows": 63,
-  "last": "2026-11-21",
-  "checked": "2026-11-21T10:55:37+00:00"
+  "last": "2026-11-22",
+  "checked": "2026-11-22T11:13:39+00:00"
  },
  "dividends": {
   "ok": true,
   "rows": 200,
-  "last": "2026-11-21",
-  "checked": "2026-11-21T10:57:23+00:00"
+  "last": "2026-11-22",
+  "checked": "2026-11-22T11:15:20+00:00"
  },
  "fundamentals": {
   "ok": true,
   "rows": 252,
-  "last": "2026-11-21",
-  "checked": "2026-11-21T10:57:24+00:00"
+  "last": "2026-11-22",
+  "checked": "2026-11-22T11:15:22+00:00"
  },
  "rusetfs_funds": {
   "ok": true,
   "rows": 213,
-  "last": "2026-11-21",
+  "last": "2026-11-22",
   "with_commission": 213,
-  "checked": "2026-11-21T10:55:35+00:00"
+  "checked": "2026-11-22T11:13:36+00:00"
  },
  "symbol_stats": {
-  "ok": true,
-  "rows": 270,
-  "last": "2026-10-31",
-  "shares": 225,
-  "funds": 45,
-  "short_history": 241,
-  "failed": 0,
-  "total_return": true,
-  "checked": "2026-11-21T10:59:27+00:00"
+  "ok": false,
+  "error": "RuntimeError: исчерпан бюджет времени (10 мин): обработано 447 из 511 бумаг",
+  "where": "collect_data.py:474 symbol_stats <- collect_data.py:529 collect_symbol_stats <- collect_data.py:641 main",
+  "checked": "2026-11-22T11:25:46+00:00",
+  "last": "2026-10-31"
  },
  "risk_free": {
   "ok": true,
   "rows": 5963,
   "last": "2026-11-20",
-  "checked": "2026-11-21T10:55:34+00:00"
+  "checked": "2026-11-22T11:13:34+00:00"
  },
  "portfolios": {
   "ok": true,
