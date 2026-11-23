@@ -3,69 +3,69 @@
   "ok": true,
   "rows": 4672,
   "last": "2026-11-21",
-  "checked": "2026-11-22T11:13:00+00:00"
+  "checked": "2026-11-23T12:23:09+00:00"
  },
  "ruonia_rate": {
   "ok": true,
-  "rows": 4155,
-  "last": "2026-11-19",
-  "checked": "2026-11-22T11:13:01+00:00"
+  "rows": 4156,
+  "last": "2026-11-20",
+  "checked": "2026-11-23T12:23:09+00:00"
  },
  "ruonia_index": {
   "ok": true,
-  "rows": 4155,
-  "last": "2026-11-19",
-  "checked": "2026-11-22T11:13:01+00:00"
+  "rows": 4156,
+  "last": "2026-11-20",
+  "checked": "2026-11-23T12:23:09+00:00"
  },
  "key_rate": {
   "ok": true,
-  "rows": 3305,
-  "last": "2026-11-20",
-  "checked": "2026-11-22T11:13:02+00:00"
+  "rows": 3306,
+  "last": "2026-11-23",
+  "checked": "2026-11-23T12:23:10+00:00"
  },
  "tinvest_shares": {
   "ok": true,
   "rows": 254,
-  "last": "2026-11-22",
-  "checked": "2026-11-22T11:13:38+00:00"
+  "last": "2026-11-23",
+  "checked": "2026-11-23T12:24:19+00:00"
  },
  "tinvest_etfs": {
   "ok": true,
   "rows": 63,
-  "last": "2026-11-22",
-  "checked": "2026-11-22T11:13:39+00:00"
+  "last": "2026-11-23",
+  "checked": "2026-11-23T12:24:21+00:00"
  },
  "dividends": {
   "ok": true,
   "rows": 200,
-  "last": "2026-11-22",
-  "checked": "2026-11-22T11:15:20+00:00"
+  "last": "2026-11-23",
+  "checked": "2026-11-23T12:26:03+00:00"
  },
  "fundamentals": {
   "ok": true,
   "rows": 252,
-  "last": "2026-11-22",
-  "checked": "2026-11-22T11:15:22+00:00"
+  "last": "2026-11-23",
+  "checked": "2026-11-23T12:26:05+00:00"
  },
  "rusetfs_funds": {
   "ok": true,
   "rows": 213,
-  "last": "2026-11-22",
+  "last": "2026-11-23",
   "with_commission": 213,
-  "checked": "2026-11-22T11:13:36+00:00"
+  "checked": "2026-11-23T12:24:12+00:00"
  },
  "symbol_stats": {
   "ok": false,
-  "error": "RuntimeError: исчерпан бюджет времени (10 мин): обработано 447 из 511 бумаг",
+  "error": "RuntimeError: исчерпан бюджет времени (10 мин): обработано 451 из 512 бумаг",
   "where": "collect_data.py:474 symbol_stats <- collect_data.py:529 collect_symbol_stats <- collect_data.py:641 main",
-  "checked": "2026-11-22T11:25:46+00:00",
+  "checked": "2026-11-23T12:36:12+00:00",
   "last": "2026-10-31"
  },
  "risk_free": {
   "ok": true,
   "rows": 5963,
   "last": "2026-11-20",
-  "checked": "2026-11-22T11:13:34+00:00"
+  "checked": "2026-11-23T12:24:10+00:00"
  },
  "portfolios": {
   "ok": true,
