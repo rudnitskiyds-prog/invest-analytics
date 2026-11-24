@@ -1,78 +1,78 @@
 {
  "cbr_gold": {
   "ok": true,
-  "rows": 4672,
-  "last": "2026-11-21",
-  "checked": "2026-11-23T12:23:09+00:00"
+  "rows": 4673,
+  "last": "2026-11-24",
+  "checked": "2026-11-24T13:35:10+00:00"
  },
  "ruonia_rate": {
   "ok": true,
-  "rows": 4156,
-  "last": "2026-11-20",
-  "checked": "2026-11-23T12:23:09+00:00"
+  "rows": 4157,
+  "last": "2026-11-23",
+  "checked": "2026-11-24T13:35:13+00:00"
  },
  "ruonia_index": {
   "ok": true,
-  "rows": 4156,
-  "last": "2026-11-20",
-  "checked": "2026-11-23T12:23:09+00:00"
+  "rows": 4157,
+  "last": "2026-11-23",
+  "checked": "2026-11-24T13:35:13+00:00"
  },
  "key_rate": {
   "ok": true,
-  "rows": 3306,
-  "last": "2026-11-23",
-  "checked": "2026-11-23T12:23:10+00:00"
+  "rows": 3307,
+  "last": "2026-11-24",
+  "checked": "2026-11-24T13:35:14+00:00"
  },
  "tinvest_shares": {
   "ok": true,
   "rows": 254,
-  "last": "2026-11-23",
-  "checked": "2026-11-23T12:24:19+00:00"
+  "last": "2026-11-24",
+  "checked": "2026-11-24T13:35:30+00:00"
  },
  "tinvest_etfs": {
   "ok": true,
   "rows": 63,
-  "last": "2026-11-23",
-  "checked": "2026-11-23T12:24:21+00:00"
+  "last": "2026-11-24",
+  "checked": "2026-11-24T13:35:30+00:00"
  },
  "dividends": {
   "ok": true,
   "rows": 200,
-  "last": "2026-11-23",
-  "checked": "2026-11-23T12:26:03+00:00"
+  "last": "2026-11-24",
+  "checked": "2026-11-24T13:37:13+00:00"
  },
  "fundamentals": {
   "ok": true,
-  "rows": 252,
-  "last": "2026-11-23",
-  "checked": "2026-11-23T12:26:05+00:00"
+  "rows": 251,
+  "last": "2026-11-24",
+  "checked": "2026-11-24T13:37:18+00:00"
  },
  "rusetfs_funds": {
   "ok": true,
-  "rows": 213,
-  "last": "2026-11-23",
-  "with_commission": 213,
-  "checked": "2026-11-23T12:24:12+00:00"
+  "rows": 214,
+  "last": "2026-11-24",
+  "with_commission": 214,
+  "checked": "2026-11-24T13:35:27+00:00"
  },
  "symbol_stats": {
   "ok": false,
-  "error": "RuntimeError: исчерпан бюджет времени (10 мин): обработано 451 из 512 бумаг",
-  "where": "collect_data.py:474 symbol_stats <- collect_data.py:529 collect_symbol_stats <- collect_data.py:641 main",
-  "checked": "2026-11-23T12:36:12+00:00",
+  "error": "ISSError: ISS недоступен: https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json {'iss.meta': 'off', 'securities.columns': 'SECID,SHORTNAME,SECNAME,ISIN,LOTSIZE,ISSUESIZE,PREVPRICE,LISTLEVEL,SECTYPE,CURRENCYID', 'marketdata.columns': 'SECID,LAST,LASTTOPREVPRICE,VALTODAY_RUR,ISSUECAPITALIZATION,UPDATETIME'} (HTTPSConnectionPool(host='iss.moex.com', port=443): Max retries exceeded with url: /iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&securi",
+  "where": "iss.py:67 get_json <- iss.py:498 _board_table <- iss.py:518 shares",
+  "checked": "2026-11-24T13:37:29+00:00",
   "last": "2026-10-31"
  },
  "risk_free": {
-  "ok": true,
-  "rows": 5963,
-  "last": "2026-11-20",
-  "checked": "2026-11-23T12:24:10+00:00"
+  "ok": false,
+  "error": "ISSError: ISS недоступен: https://iss.moex.com/iss/history/engines/stock/markets/index/securities/RUGBITR1Y.json {'iss.meta': 'off', 'from': '2000-01-01', 'till': '2026-11-24', 'history.columns': 'TRADEDATE,YIELD', 'start': 0} (HTTPSConnectionPool(host='iss.moex.com', port=443): Max retries exceeded with url: /iss/history/engines/stock/markets/index/securities/RUGBITR1Y.json?iss.meta=off&from=2000-01-01&till=2026-11-24&history.columns=TRADEDATE%2CYIELD&start=0 (Caused by SSLError(SSLCertVerifica",
+  "where": "iss.py:67 get_json <- iss.py:80 _paged <- iss.py:295 index_history",
+  "checked": "2026-11-24T13:35:25+00:00",
+  "last": "2026-11-20"
  },
  "portfolios": {
-  "ok": true,
-  "rows": 18,
-  "last": "2026-11-20",
-  "skipped": 0,
-  "stale": 0,
-  "checked": "2026-11-21T11:01:52+00:00"
+  "ok": false,
+  "error": "ValueError: слишком мало портфелей: 0 < 10 — ответ похож на ошибку",
+  "where": "collect_data.py:220 _check <- collect_data.py:564 portfolios <- collect_data.py:572 collect_portfolios",
+  "checked": "2026-11-24T13:37:30+00:00",
+  "last": "2026-11-20"
  }
 }
