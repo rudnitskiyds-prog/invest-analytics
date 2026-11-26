@@ -1,0 +1,22 @@
+{
+  "updated": "2026-11-19T03:00:00+03:00",
+  "source": "тестовая фикстура (tests/web/portfolios.test.mjs)",
+  "initial": 100000,
+  "groups": ["Ленивые портфели", "Тематические", "Пустая группа"],
+  "items": {
+    "gamma": {"row": {"name": "Вега", "group": "Тематические", "rank": null, "cagr_10y": null}, "report": null},
+    "beta": {"row": {"name": "Бета", "group": "Тематические", "rank": 50, "cagr_10y": 0.08}, "report": {"name": "Бета"}},
+    "alpha": {"row": {"name": "Альфа", "group": "Ленивые портфели", "rank": 50, "cagr_10y": 0.1}, "report": {"name": "Альфа"}},
+    "zeta": {"row": {"name": "Яблоко", "group": "Ленивые портфели", "rank": 80, "cagr_10y": 0.12}, "report": {"name": "Яблоко"},
+             "stale": true, "stale_date": "2026-11-16"}
+  },
+  "series": {"alpha": [["2026-01-01", 100000], ["2026-02-01", 101000]]},
+  "series_benchmark": {"alpha": [["2026-01-01", 100000], ["2026-02-01", 99000]]},
+  "risk_return": {
+    "10Y": [{"id": "alpha", "name": "Альфа", "group": "Ленивые портфели", "ret": 0.1, "volatility": 0.12, "from": "2016-11-18", "to": "2026-11-18"}],
+    "1Y": []
+  },
+  "skipped": {},
+  "stale": {"alpha": {"stale_date": "2026-11-17", "reason": "ISS недоступен"}},
+  "last": "2026-11-18"
+}
