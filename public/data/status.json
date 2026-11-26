@@ -1,78 +1,78 @@
 {
  "cbr_gold": {
   "ok": true,
-  "rows": 4674,
-  "last": "2026-11-25",
-  "checked": "2026-11-25T12:44:14+00:00"
+  "rows": 4675,
+  "last": "2026-11-26",
+  "checked": "2026-11-26T12:20:24+00:00"
  },
  "ruonia_rate": {
   "ok": true,
-  "rows": 4158,
-  "last": "2026-11-24",
-  "checked": "2026-11-25T12:44:14+00:00"
+  "rows": 4159,
+  "last": "2026-11-25",
+  "checked": "2026-11-26T12:20:24+00:00"
  },
  "ruonia_index": {
   "ok": true,
-  "rows": 4158,
-  "last": "2026-11-24",
-  "checked": "2026-11-25T12:44:14+00:00"
+  "rows": 4159,
+  "last": "2026-11-25",
+  "checked": "2026-11-26T12:20:24+00:00"
  },
  "key_rate": {
   "ok": true,
-  "rows": 3308,
-  "last": "2026-11-25",
-  "checked": "2026-11-25T12:44:15+00:00"
+  "rows": 3309,
+  "last": "2026-11-26",
+  "checked": "2026-11-26T12:20:25+00:00"
  },
  "tinvest_shares": {
   "ok": true,
   "rows": 254,
-  "last": "2026-11-25",
-  "checked": "2026-11-25T12:44:30+00:00"
+  "last": "2026-11-26",
+  "checked": "2026-11-26T12:20:41+00:00"
  },
  "tinvest_etfs": {
   "ok": true,
   "rows": 63,
-  "last": "2026-11-25",
-  "checked": "2026-11-25T12:44:31+00:00"
+  "last": "2026-11-26",
+  "checked": "2026-11-26T12:20:41+00:00"
  },
  "dividends": {
   "ok": true,
   "rows": 200,
-  "last": "2026-11-25",
-  "checked": "2026-11-25T12:46:13+00:00"
+  "last": "2026-11-26",
+  "checked": "2026-11-26T12:22:23+00:00"
  },
  "fundamentals": {
   "ok": true,
   "rows": 252,
-  "last": "2026-11-25",
-  "checked": "2026-11-25T12:46:16+00:00"
+  "last": "2026-11-26",
+  "checked": "2026-11-26T12:22:24+00:00"
  },
  "rusetfs_funds": {
   "ok": true,
   "rows": 214,
-  "last": "2026-11-25",
+  "last": "2026-11-26",
   "with_commission": 214,
-  "checked": "2026-11-25T12:44:27+00:00"
+  "checked": "2026-11-26T12:20:38+00:00"
  },
  "symbol_stats": {
   "ok": false,
   "error": "ISSError: ISS недоступен: https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json {'iss.meta': 'off', 'securities.columns': 'SECID,SHORTNAME,SECNAME,ISIN,LOTSIZE,ISSUESIZE,PREVPRICE,LISTLEVEL,SECTYPE,CURRENCYID', 'marketdata.columns': 'SECID,LAST,LASTTOPREVPRICE,VALTODAY_RUR,ISSUECAPITALIZATION,UPDATETIME'} (HTTPSConnectionPool(host='iss.moex.com', port=443): Max retries exceeded with url: /iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&securi",
   "where": "iss.py:67 get_json <- iss.py:498 _board_table <- iss.py:518 shares",
-  "checked": "2026-11-25T12:46:27+00:00",
+  "checked": "2026-11-26T12:22:36+00:00",
   "last": "2026-10-31"
  },
  "risk_free": {
   "ok": false,
-  "error": "ISSError: ISS недоступен: https://iss.moex.com/iss/history/engines/stock/markets/index/securities/RUGBITR1Y.json {'iss.meta': 'off', 'from': '2000-01-01', 'till': '2026-11-25', 'history.columns': 'TRADEDATE,YIELD', 'start': 0} (HTTPSConnectionPool(host='iss.moex.com', port=443): Max retries exceeded with url: /iss/history/engines/stock/markets/index/securities/RUGBITR1Y.json?iss.meta=off&from=2000-01-01&till=2026-11-25&history.columns=TRADEDATE%2CYIELD&start=0 (Caused by SSLError(SSLCertVerifica",
+  "error": "ISSError: ISS недоступен: https://iss.moex.com/iss/history/engines/stock/markets/index/securities/RUGBITR1Y.json {'iss.meta': 'off', 'from': '2000-01-01', 'till': '2026-11-26', 'history.columns': 'TRADEDATE,YIELD', 'start': 0} (HTTPSConnectionPool(host='iss.moex.com', port=443): Max retries exceeded with url: /iss/history/engines/stock/markets/index/securities/RUGBITR1Y.json?iss.meta=off&from=2000-01-01&till=2026-11-26&history.columns=TRADEDATE%2CYIELD&start=0 (Caused by SSLError(SSLCertVerifica",
   "where": "iss.py:67 get_json <- iss.py:80 _paged <- iss.py:295 index_history",
-  "checked": "2026-11-25T12:44:25+00:00",
+  "checked": "2026-11-26T12:20:36+00:00",
   "last": "2026-11-20"
  },
  "portfolios": {
   "ok": false,
   "error": "ValueError: слишком мало портфелей: 0 < 10 — ответ похож на ошибку",
   "where": "collect_data.py:220 _check <- collect_data.py:564 portfolios <- collect_data.py:572 collect_portfolios",
-  "checked": "2026-11-25T12:46:28+00:00",
+  "checked": "2026-11-26T12:22:38+00:00",
   "last": "2026-11-20"
  }
 }
