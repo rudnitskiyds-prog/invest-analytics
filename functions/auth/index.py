@@ -4,7 +4,7 @@
 * авторизатор (`x-yc-apigateway-authorizer`) на всех защищённых маршрутах -> {"isAuthorized": bool, "context": {...}};
 * обычная интеграция на маршруте `/` (без авторизатора) -> 401 + `WWW-Authenticate: Basic`, чтобы браузер
   показал окно логина (отказ авторизатора шлюз отдаёт без этого заголовка), а после входа — 302 на /web/.
-  Браузер запоминает логин для всего домена и дальше сам шлёт `Authorization` на /web/, данные и /api/.
+  Браузер запоминает логин для всего домена и дальше сам шлёт `Authorization` на /web/index.html, данные и /api/.
 """
 import base64
 import hashlib
@@ -62,7 +62,7 @@ def check_basic(authorization: str):
 
 def _login_page(event) -> dict:
     if check_basic(_header(event, "authorization")):
-        return {"statusCode": 302, "headers": {"Location": "/web/", "Cache-Control": "no-store"}, "body": ""}
+        return {"statusCode": 302, "headers": {"Location": "/web/index.html", "Cache-Control": "no-store"}, "body": ""}
     return {
         "statusCode": 401,
         "headers": {"WWW-Authenticate": f'Basic realm="{REALM}", charset="UTF-8"',
