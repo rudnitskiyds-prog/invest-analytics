@@ -1,0 +1,190 @@
+name: Выкладка в Yandex Cloud
+
+# Статика (web/, public/data/, tests/fixtures/) → закрытый бакет Object Storage; функции assistant и auth;
+# спецификация API Gateway. Настройка облака и список секретов — infra/README.md.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "public/data/**"
+      - "tests/fixtures/**"
+      - "functions/**"
+      - "infra/**"
+      - ".github/workflows/deploy-yc.yml"
+  # коммит данных из «Сбора данных» сделан GITHUB_TOKEN и push-триггер не запускает — ловим завершение сбора.
+  # failure тоже выкладываем: при сбое одного источника остальные данные уже закоммичены
+  workflow_run:
+    workflows: ["Сбор данных (ЦБ, T-Invest, RusETFs)"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-yc
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      YC_BUCKET: ${{ vars.YC_BUCKET }}
+      YC_GATEWAY_ID: ${{ vars.YC_GATEWAY_ID }}
+      YC_SA_ID: ${{ vars.YC_SA_ID }}
+      YC_LOCKBOX_SECRET_ID: ${{ vars.YC_LOCKBOX_SECRET_ID }}
+    steps:
+      - name: Проверка настройки
+        id: cfg
+        env:
+          HAS_KEY: ${{ secrets.YC_SA_JSON_CREDENTIALS != '' }}
+        run: |
+          if [ "$HAS_KEY" != "true" ]; then
+            echo "::warning::Yandex Cloud не настроен, см. infra/README.md"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          miss=""
+          for v in YC_BUCKET YC_GATEWAY_ID YC_SA_ID YC_LOCKBOX_SECRET_ID; do
+            [ -n "${!v}" ] || miss="$miss $v"
+          done
+          if [ -n "$miss" ]; then
+            echo "::error::Не заданы переменные репозитория:$miss (см. infra/README.md)"; exit 1
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.enabled == 'true'
+
+      - name: Установка и авторизация yc
+        if: steps.cfg.outputs.enabled == 'true'
+        env:
+          YC_SA_JSON: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
+          YC_CLOUD_ID: ${{ secrets.YC_CLOUD_ID }}
+          YC_FOLDER_ID: ${{ secrets.YC_FOLDER_ID }}
+        run: |
+          set -euo pipefail
+          curl -fsSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash -s -- -i "$HOME/yandex-cloud" -n
+          echo "$HOME/yandex-cloud/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/yandex-cloud/bin:$PATH"
+          key="$RUNNER_TEMP/sa-key.json"
+          trap 'rm -f "$key"' EXIT
+          ( umask 077; printf '%s' "$YC_SA_JSON" > "$key" )
+          echo "::add-mask::$(jq -r .id "$key")"
+          # id сервисного аккаунта ключа — для временного статического ключа Object Storage ниже
+          echo "DEPLOY_SA_ID=$(jq -r .service_account_id "$key")" >> "$GITHUB_ENV"
+          yc config profile create ci >/dev/null
+          yc config set service-account-key "$key"   # yc копирует ключ в свой конфиг, файл удаляется trap'ом
+          yc config set cloud-id "$YC_CLOUD_ID"
+          yc config set folder-id "$YC_FOLDER_ID"
+
+      - name: Статика в Object Storage
+        if: steps.cfg.outputs.enabled == 'true'
+        # aws cli (предустановлен в ubuntu-latest) с временным статическим ключом сервисного аккаунта: ключ
+        # создаётся здесь и удаляется в конце шага, отдельный секрет не нужен. Content-Type и Cache-Control —
+        # явно по расширению; финальный sync --delete --size-only ничего не перезаливает и удаляет устаревшие объекты.
+        env:
+          AWS_DEFAULT_REGION: ru-central1
+        run: |
+          set -euo pipefail
+          ak=$(yc iam access-key create --service-account-id "$DEPLOY_SA_ID" --description "deploy-yc ${GITHUB_RUN_ID}" --format json)
+          ak_id=$(jq -r .access_key.id <<<"$ak")
+          trap 'yc iam access-key delete --id "$ak_id" >/dev/null || echo "::warning::Не удалён временный ключ $ak_id"' EXIT
+          export AWS_ACCESS_KEY_ID=$(jq -r .access_key.key_id <<<"$ak")
+          export AWS_SECRET_ACCESS_KEY=$(jq -r .secret <<<"$ak")
+          echo "::add-mask::$AWS_ACCESS_KEY_ID"; echo "::add-mask::$AWS_SECRET_ACCESS_KEY"
+          unset ak
+          s3() { aws --endpoint-url https://storage.yandexcloud.net s3 "$@" --only-show-errors; }
+          short="private, max-age=300"      # данные и страницы обновляются ежедневно; сайт закрыт паролем
+          medium="private, max-age=300"     # свои css/js/svg: имена без хэшей — короткий кэш, чтобы не смешивались старые и новые модули
+          long="private, max-age=604800"     # web/vendor: сторонние библиотеки
+          put() {   # $1 — каталог, $2 — маска, $3 — Content-Type, $4 — Cache-Control
+            s3 cp "$1" "s3://$YC_BUCKET/$1" --recursive --exclude "*" --include "$2" --exclude "vendor/*" \
+              --content-type "$3" --cache-control "$4"
+          }
+          for d in web public/data tests/fixtures; do
+            put "$d" "*.html" "text/html; charset=utf-8"       "$short"
+            put "$d" "*.json" "application/json; charset=utf-8" "$short"
+            put "$d" "*.csv"  "text/csv; charset=utf-8"        "$short"
+            put "$d" "*.css"  "text/css; charset=utf-8"        "$medium"
+            put "$d" "*.js"   "text/javascript; charset=utf-8" "$medium"
+            put "$d" "*.mjs"  "text/javascript; charset=utf-8" "$medium"
+            put "$d" "*.svg"  "image/svg+xml"                  "$medium"
+          done
+          if [ -d web/vendor ]; then
+            s3 cp web/vendor "s3://$YC_BUCKET/web/vendor" --recursive --exclude "*" --include "*.js" \
+              --content-type "text/javascript; charset=utf-8" --cache-control "$long"
+          fi
+          # прочие файлы (md, xml, шрифты…) — с типом по расширению; удаление объектов, которых нет в репозитории
+          for d in web public/data tests/fixtures; do
+            s3 sync "$d" "s3://$YC_BUCKET/$d" --delete --size-only --cache-control "$short"
+          done
+
+      - name: Сертификат НУЦ Минцифры для GigaChat
+        if: steps.cfg.outputs.enabled == 'true'
+        # те же официальные адреса и отпечатки, что в collect-data.yml (сверить: gosuslugi.ru/crt).
+        # Без сертификата ассистент не подключится к GigaChat — при несовпадении выкладка падает.
+        env:
+          RU_ROOT_SHA256: "D26D2D0231B7C39F92CC738512BA54103519E4405D68B5BD703E9788CA8ECF31"
+          RU_SUB_SHA256: "BBBDE2103E790B999EC62BD03CF625A5A2E7C316E10AFE6A490EEDEAD8B3FD9B"
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/ru-ca"; mkdir -p "$d"
+          get() {   # $1 — имя, $2 — URL, $3 — ожидаемый отпечаток; файл может быть PEM или DER
+            curl -fsS -m 30 --retry 2 -o "$d/$1.raw" "$2"
+            openssl x509 -in "$d/$1.raw" -out "$d/$1.pem" 2>/dev/null \
+              || openssl x509 -inform DER -in "$d/$1.raw" -out "$d/$1.pem"
+            fp=$(openssl x509 -in "$d/$1.pem" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d :)
+            [ "$fp" = "$3" ] || { echo "::error::Отпечаток сертификата $1 ($fp) не совпадает с закреплённым"; exit 1; }
+          }
+          get root https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt "$RU_ROOT_SHA256"
+          get sub  https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt  "$RU_SUB_SHA256"
+          openssl verify -CAfile "$d/root.pem" "$d/root.pem" "$d/sub.pem"
+          cat "$d/root.pem" "$d/sub.pem" > functions/assistant/russian_trusted_root_ca.pem
+
+      - name: Cloud Functions
+        if: steps.cfg.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          fid() {   # id функции по имени; создаёт, если её ещё нет
+            yc serverless function get --name "$1" --format json 2>/dev/null | jq -r .id \
+              || yc serverless function create --name "$1" --format json | jq -r .id
+          }
+          deploy() {   # $1 — имя функции, остальное — доп. флаги версии
+            name=$1; shift
+            zip_path="$RUNNER_TEMP/$name.zip"
+            (cd "functions/$name" && zip -qr "$zip_path" . -x "__pycache__/*" "*.pyc" "tests/*")
+            yc serverless function version create --function-name "$name" \
+              --runtime python312 --entrypoint index.handler --memory 256m --execution-timeout 30s \
+              --service-account-id "$YC_SA_ID" --source-path "$zip_path" "$@" >/dev/null
+          }
+          ASSISTANT_FUNCTION_ID=$(fid assistant)
+          AUTH_FUNCTION_ID=$(fid auth)
+          deploy assistant \
+            --environment GIGACHAT_CA_BUNDLE=russian_trusted_root_ca.pem \
+            --secret "environment-variable=GIGACHAT_AUTH_KEY,id=$YC_LOCKBOX_SECRET_ID,key=GIGACHAT_AUTH_KEY"
+          deploy auth \
+            --secret "environment-variable=SITE_USERS,id=$YC_LOCKBOX_SECRET_ID,key=SITE_USERS"
+          echo "ASSISTANT_FUNCTION_ID=$ASSISTANT_FUNCTION_ID" >> "$GITHUB_ENV"
+          echo "AUTH_FUNCTION_ID=$AUTH_FUNCTION_ID" >> "$GITHUB_ENV"
+
+      - name: API Gateway
+        if: steps.cfg.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          export BUCKET="$YC_BUCKET" SA_ID="$YC_SA_ID" ASSISTANT_FUNCTION_ID AUTH_FUNCTION_ID
+          spec="$RUNNER_TEMP/gateway.yaml"
+          envsubst '${BUCKET} ${ASSISTANT_FUNCTION_ID} ${AUTH_FUNCTION_ID} ${SA_ID}' < infra/gateway.yaml > "$spec"
+          if grep -n '\${[A-Z_]*}' "$spec"; then echo "::error::В спецификации шлюза остались неподставленные переменные"; exit 1; fi
+          yc serverless api-gateway update --id "$YC_GATEWAY_ID" --spec "$spec" >/dev/null
+          domain=$(yc serverless api-gateway get --id "$YC_GATEWAY_ID" --format json | jq -r .domain)
+          {
+            echo "### Выкладка в Yandex Cloud"
+            echo ""
+            echo "Сайт: https://$domain/ (откройте корень — появится окно логина)"
+            echo ""
+            echo "Обновлены: статика в бакете, функции \`assistant\` и \`auth\`, спецификация шлюза."
+          } >> "$GITHUB_STEP_SUMMARY"

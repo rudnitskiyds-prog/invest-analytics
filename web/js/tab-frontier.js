@@ -1,5 +1,6 @@
 // Вкладка «Граница Марковица». Оценка входов и оптимизация — web/lib/frontier.js.
 
+import { fact, registerFacts } from "./assistant.js";
 import { benchColor, destroyChart, palette, renderChart, seqBlue, themeColors, baseOptions } from "./charts.js";
 import { $, errorNotice, h, nextFrame, notice, tableWrap, withBusy } from "./dom.js";
 import { assetLabel, catalogList, engine, requireEngine, UserError } from "./engine.js";
@@ -12,6 +13,9 @@ import * as S from "./state.js";
 let last = null;
 let running = false;
 let toBacktest = () => {};
+let facts = [];   // факты экрана для ассистента — оптимальные портфели из последнего render()
+
+registerFacts("/tools/frontier", () => (last ? facts : []));
 
 export function init(opts = {}) {
   toBacktest = opts.toBacktest || toBacktest;
@@ -197,6 +201,17 @@ function render() {
   const front = [...fr.frontier].sort((a, b) => a.vol - b.vol);
   const mv = fr.minVar;
   const ms = fr.maxSharpe;
+  const SRC = "расчёт ИнвестАналитики по данным ISS MOEX и Банка России";
+  facts = [fact("period", "Общий период данных", null, "period",
+    `${fmtDate(frame.dates[0])} — ${fmtDate(frame.dates.at(-1))}`, SRC)];
+  for (const [id, title, pt] of [["max_sharpe", "Касательный портфель (макс. Шарп)", ms], ["min_var", "Портфель минимальной дисперсии", mv]]) {
+    facts.push(
+      fact(`${id}.ret`, `${title}: ожидаемая доходность`, pt.ret, "pct", fmtPct(pt.ret), SRC),
+      fact(`${id}.vol`, `${title}: волатильность`, pt.vol, "pct", fmtPct(pt.vol), SRC),
+      fact(`${id}.sharpe`, `${title}: коэф. Шарпа`, pt.sharpe, "coef", fmtCoef(pt.sharpe), SRC),
+      ...Object.entries(weightsObj(pt.w, assets)).filter(([, v]) => v > 1e-4)
+        .map(([k, v]) => fact(`${id}.w.${k}`, `${title}: доля ${k}`, v, "pct", fmtPct(v), SRC)));
+  }
   const vols = [...fr.random.map((p) => p.vol), ...fr.assets.map((a) => a.vol), ...front.map((p) => p.vol)];
   const xmax = Math.max(...vols) * 1.05;
   const sh = fr.random.map((p) => p.sharpe).filter(Number.isFinite);

@@ -6,3 +6,7 @@ data/portfolio.sqlite
 # временные файлы атомарной записи сборщика
 public/data/*.tmp
 .*.tmp
+# ключи сервисного аккаунта Yandex Cloud и сертификат, который кладёт выкладка
+yc-sa-key.json
+*.sa-key.json
+functions/assistant/*.pem

@@ -589,3 +589,47 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
 .plain-summary { font-size: 1.0625rem; line-height: 1.5; }
 .plain-summary p { margin: 0 0 6px; }
 :root[data-mode="pro"] .simple-only { display: none; }
+
+/* ---------- Ассистент «Спросить ИИ» (web/js/assistant.js) */
+:root { --mark-bg: #ffe08a; --mark-text: #3d2c00; }
+@media (prefers-color-scheme: dark) { :root { --mark-bg: #6b5212; --mark-text: #fff3cf; } }
+body.has-ai { padding-bottom: calc(72px + env(safe-area-inset-bottom)); } /* кнопка не закрывает конец страницы */
+.ai-fab {
+  position: fixed; z-index: 20; right: calc(16px + env(safe-area-inset-right));
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  min-height: 44px; padding: 10px 18px; border: 0; border-radius: 999px; cursor: pointer;
+  background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 600;
+  box-shadow: 0 4px 16px rgb(0 0 0 / .2);
+}
+.ai-fab:hover { background: var(--accent-strong); }
+.ai-fab[hidden] { display: none; }
+.ai-dialog {
+  inset: auto 16px 16px auto; margin: 0; width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px);
+  padding: 16px 18px; border: 1px solid var(--border-strong); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); box-shadow: 0 12px 40px rgb(0 0 0 / .25); overflow: auto;
+}
+.ai-dialog::backdrop { background: rgb(0 0 0 / .2); }
+.ai-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ai-head h2 { margin: 0; font-size: 1.125rem; }
+.ai-disc { margin: 6px 0 10px; }
+.ai-examples { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
+.ai-ex { text-align: left; white-space: normal; }
+.ai-form label { display: block; font-weight: 500; margin-bottom: 4px; }
+.ai-form textarea {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 72px; padding: 8px 10px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text);
+  font: inherit; font-size: 16px; /* 16 px — iOS не увеличивает страницу при фокусе */
+}
+.ai-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.ai-status:empty { display: none; }
+.ai-answer { margin-top: 12px; }
+.ai-label { margin: 0 0 6px; font-size: .8125rem; font-weight: 600; color: var(--text-muted); }
+.ai-text { white-space: pre-wrap; line-height: 1.5; overflow-wrap: anywhere; }
+.ai-dialog mark { background: var(--mark-bg); color: var(--mark-text); border-radius: 3px; padding: 0 2px; }
+@media (max-width: 600px) {
+  .ai-dialog {
+    inset: 0; width: 100%; max-width: none; height: 100%; max-height: none; border: 0; border-radius: 0;
+    padding: calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom));
+  }
+}
+.ai-pd { margin: 6px 0 0; }
