@@ -155,15 +155,16 @@ def test_verify_numbers_from_text_and_source():
 
 
 # ============================================================ build_messages
-def test_build_messages_facts_separate():
+def test_build_messages_single_user_message():
+    """Одно сообщение user: два подряд GigaChat обрабатывал ~17 с вместо ~1 с (проверено на живом API)."""
     _, screen = logic.parse_request(_body("Что такое просадка?"))
     msgs = logic.build_messages("SYS", "Что такое просадка?", screen)
-    assert [m["role"] for m in msgs] == ["system", "user", "user"]
+    assert [m["role"] for m in msgs] == ["system", "user"]
     assert msgs[0]["content"] == "SYS"
-    assert msgs[2]["content"] == "Что такое просадка?"
-    assert "Бэктест портфелей" in msgs[1]["content"] and "/tools/backtest" in msgs[1]["content"]
-    assert "Что такое просадка" not in msgs[1]["content"]
-    payload = json.loads(msgs[1]["content"].split("\n", 1)[1])
+    user = msgs[1]["content"]
+    assert user.endswith("\n\nВопрос: Что такое просадка?")
+    assert "Бэктест портфелей" in user and "/tools/backtest" in user
+    payload = json.loads(user.split("\n")[1])
     assert payload["sources"] == [SRC], "источник перечислен один раз"
     assert payload["facts"] == [{**f, "source": 0} for f in screen["facts"]]
     assert screen["facts"][0]["source"] == SRC, "build_messages не меняет исходные факты"
@@ -172,7 +173,7 @@ def test_build_messages_facts_separate():
 def test_build_messages_sources_indexed():
     facts = [{"id": "a", "source": "S1"}, {"id": "b", "source": ""}, {"id": "c", "source": "S2"}, {"id": "d", "source": "S1"}]
     msgs = logic.build_messages("SYS", "?", {"route": "/r", "title": "T", "facts": facts})
-    payload = json.loads(msgs[1]["content"].split("\n", 1)[1])
+    payload = json.loads(msgs[1]["content"].split("\n")[1])
     assert payload == {"sources": ["S1", "S2"],
                        "facts": [{"id": "a", "source": 0}, {"id": "b"}, {"id": "c", "source": 1}, {"id": "d", "source": 0}]}
 
@@ -270,7 +271,7 @@ def test_handler_ok(giga):
     assert chat["json"]["model"] == "GigaChat"
     msgs = chat["json"]["messages"]
     assert msgs[0] == {"role": "system", "content": index.SYSTEM_PROMPT}
-    assert msgs[-1]["content"] == "Почему CAGR ниже, чем у индекса?"
+    assert len(msgs) == 2 and msgs[-1]["content"].endswith("Вопрос: Почему CAGR ниже, чем у индекса?")
     assert chat["headers"]["Authorization"] == "Bearer tok1"
 
 

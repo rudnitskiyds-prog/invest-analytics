@@ -107,7 +107,8 @@ def parse_request(body) -> tuple:
 
 
 def build_messages(system_prompt: str, question: str, screen: dict) -> list:
-    """Системный промпт, затем факты экрана отдельным сообщением, затем вопрос.
+    """Системный промпт и одно сообщение пользователя: факты экрана (строка JSON), затем вопрос.
+    Два сообщения user подряд GigaChat обрабатывал ~17 с вместо ~1 с — поэтому одно.
     Источники перечисляются один раз (`sources`), у факта — индекс источника: экономия токенов."""
     sources, facts = [], []
     for f in screen["facts"]:
@@ -125,8 +126,7 @@ def build_messages(system_prompt: str, question: str, screen: dict) -> list:
     )
     return [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": facts_msg},
-        {"role": "user", "content": question},
+        {"role": "user", "content": f"{facts_msg}\n\nВопрос: {question}"},
     ]
 
 
