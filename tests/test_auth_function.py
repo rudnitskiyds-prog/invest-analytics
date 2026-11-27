@@ -93,7 +93,7 @@ def test_login_page_asks_password():
 
 def test_login_page_redirects_after_login():
     r = auth.handler(_ev("/", _basic("boris", "p:w2")), None)
-    assert r["statusCode"] == 302 and r["headers"]["Location"] == "/web/"
+    assert r["statusCode"] == 302 and r["headers"]["Location"] == "/web/index.html"
 
 
 def test_login_page_by_url_field():

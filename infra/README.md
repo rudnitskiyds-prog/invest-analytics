@@ -5,7 +5,7 @@
 ```
 браузер ──► API Gateway (https://<id>.apigw.yandexcloud.net)
               ├─ /               → функция auth: окно логина браузера, после входа — переход на /web/
-              ├─ /web/, /{path+} → закрытый бакет Object Storage (web/, public/data/, tests/fixtures/)
+              ├─ /{path+}        → закрытый бакет Object Storage (web/, public/data/, tests/fixtures/)
               └─ POST /api/assistant → функция assistant → GigaChat
 ```
 
