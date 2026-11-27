@@ -143,7 +143,12 @@ jobs:
           get root https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt "$RU_ROOT_SHA256"
           get sub  https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt  "$RU_SUB_SHA256"
           openssl verify -CAfile "$d/root.pem" "$d/root.pem" "$d/sub.pem"
-          cat "$d/root.pem" "$d/sub.pem" > functions/assistant/russian_trusted_root_ca.pem
+          # у файлов Минцифры окончания строк CRLF и нет перевода строки в конце: простой cat склеивает
+          # «END CERTIFICATE-----» с «-----BEGIN» и пакет не читается (все запросы к GigaChat падали на TLS)
+          for f in root sub; do tr -d '\r' < "$d/$f.pem"; echo; done > functions/assistant/russian_trusted_root_ca.pem
+          [ "$(grep -c '^-----BEGIN CERTIFICATE-----$' functions/assistant/russian_trusted_root_ca.pem)" = 2 ] \
+            || { echo "::error::Пакет сертификатов Минцифры собран неверно"; exit 1; }
+          openssl verify -CAfile functions/assistant/russian_trusted_root_ca.pem "$d/sub.pem"
 
       - name: Cloud Functions
         if: steps.cfg.outputs.enabled == 'true'
