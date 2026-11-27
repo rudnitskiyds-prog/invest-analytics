@@ -218,3 +218,20 @@ def test_setup_sh_site_users_accepted_by_auth(monkeypatch):
     monkeypatch.setenv("SITE_USERS", r.stdout.decode().strip())
     hdr = "Basic " + base64.b64encode("ivan:dlinnyj-parol-16+".encode()).decode()
     assert auth.check_basic(hdr) == "ivan"
+
+
+def test_deploy_ca_bundle_survives_crlf_files_without_final_newline(tmp_path):
+    """Файлы Минцифры — CRLF и без перевода строки в конце; склейка не должна слеплять сертификаты."""
+    wf = (ROOT / ".github" / "workflows" / "deploy-yc.yml").read_text(encoding="utf-8")
+    line = re.search(r"^\s*(for f in root sub; do .*? > (\S+))$", wf, re.M)
+    assert line, "в workflow нет склейки сертификатов"
+    for name in ("root", "sub"):
+        (tmp_path / f"{name}.pem").write_bytes(
+            b"-----BEGIN CERTIFICATE-----\r\nQUJD\r\n-----END CERTIFICATE-----")  # без \n в конце
+    cmd = line.group(1).replace("$d", str(tmp_path)).replace(line.group(2), str(tmp_path / "out.pem"))
+    subprocess.run(["bash", "-c", cmd], check=True)
+    out = (tmp_path / "out.pem").read_text()
+    assert "\r" not in out
+    assert out.count("\n-----BEGIN CERTIFICATE-----\n") == 1 and out.startswith("-----BEGIN CERTIFICATE-----\n")
+    ok = {"-----BEGIN CERTIFICATE-----", "-----END CERTIFICATE-----", "QUJD", ""}
+    assert set(out.split("\n")) <= ok, out  # каждая метка на своей строке, ничего не слиплось
