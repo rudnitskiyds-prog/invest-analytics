@@ -13,6 +13,7 @@ import { go, href, setQuery } from "./router.js";
 import { attachSearch, classLabel } from "./search.js";
 import { riskFree } from "./riskfree.js";
 import { getSeries } from "./source.js";
+import { hint } from "./glossary.js";
 import * as S from "./state.js";
 import * as backtest from "./tab-backtest.js";
 
@@ -155,12 +156,17 @@ function skeleton(lines = 3) {
  * Создать блок и запустить его заполнение. fn(body, live) — асинхронная; live() === false,
  * если пользователь уже ушёл на другую бумагу. fn может вернуть "skip" — блок убирается.
  */
+/** Блоки для опытных — только в режиме «Подробно»; у остальных заголовков — подсказка «?». */
+const ADV_BLOCKS = new Set(["momentum", "rating", "relative", "riskret", "tail", "vol"]);
+const BLOCK_TERM = { periods: "total_return", momentum: "momentum", rating: "rating", relative: "beta", riskret: "sharpe",
+  tail: "var_95", fund: "ter", divs: "dividend", coupons: "coupon", drawdowns: "max_drawdown", vol: "volatility", bond: "ytm" };
+
 function block(container, { id, title, sub = "" }, fn) {
   const body = h("div", { class: "blk-body" }, skeleton(id === "chart" ? 6 : 3));
   const subEl = h("p", { class: "card-sub" }, sub);
   subEl.hidden = !sub;
-  const sec = h("section", { class: "card sym-block", id: `sym-${id}`, "aria-labelledby": `sym-${id}-t`, "aria-busy": "true" },
-    h("h3", { class: "card-title", id: `sym-${id}-t` }, title), subEl, body);
+  const sec = h("section", { class: `card sym-block${ADV_BLOCKS.has(id) ? " adv" : ""}`, id: `sym-${id}`, "aria-labelledby": `sym-${id}-t`, "aria-busy": "true" },
+    h("h3", { class: "card-title" }, h("span", { id: `sym-${id}-t` }, title), hint(BLOCK_TERM[id])), subEl, body);
   container.append(sec);
   const my = gen;
   const live = () => my === gen;
@@ -321,10 +327,10 @@ function renderToolbar(box, t, benchKey, cmp) {
   };
   const field = h("div", { class: "field" }, h("label", { for: "sym-cmp" }, "Сравнить с бумагой"), cmpInput);
   put(box,
-    h("div", { class: "field" }, h("label", { for: "sym-bench" }, "Бенчмарк"), sel),
+    h("div", { class: "field adv" }, h("div", {}, h("label", { for: "sym-bench" }, "Бенчмарк"), hint("benchmark")), sel),
     field,
     cmp ? h("button", { type: "button", class: "btn btn-sm", onclick: () => apply("") }, `Убрать ${cmp}`) : null,
-    h("p", { class: "hint" }, "Коэффициенты — по дневным доходностям; безрисковая ставка — доходность коротких ОФЗ на те же даты."),
+    h("p", { class: "hint adv" }, "Коэффициенты — по дневным доходностям; безрисковая ставка — доходность коротких ОФЗ на те же даты."),
   );
   attachSearch(cmpInput, { onPick: apply });
 }
@@ -816,7 +822,7 @@ function buildBlocks(root, ctx) {
     h("button", {
       type: "button", class: "btn btn-primary", onclick: () => {
         backtest.setCustomPortfolio({ [t]: 1 },
-          `${t} добавлена в «Свой портфель» с долей 100 %. Добавьте другие активы, задайте доли и нажмите «Запустить бэктест».`);
+          `${t} добавлена в «Свой портфель» с долей 100 %. Добавьте другие активы, задайте доли и нажмите «Посчитать».`);
         go("/tools/backtest");
       },
     }, "Собрать портфель с этой бумагой"));

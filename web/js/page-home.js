@@ -8,11 +8,17 @@ import { go, href, symbolHref } from "./router.js";
 import { attachSearch, classLabel, POPULAR } from "./search.js";
 import { isDemo } from "./state.js";
 
+const GOALS = [
+  { path: "/tools/backtest", title: "Сравнить готовые портфели", text: "Что стало бы с 1 000 000 ₽, вложенными в 2011 году: акции, облигации, золото и их смеси." },
+  { path: "/symbol/MCFTR", title: "Посмотреть весь рынок акций", text: "Как рос и падал индекс Мосбиржи — «корзина» крупнейших компаний России." },
+  { path: "/symbol/SBER", title: "Разобрать одну компанию", text: "Доходность, дивиденды и самые глубокие падения отдельной акции — например, Сбербанка." },
+];
+
 const SECTIONS = [
-  { path: "/tools", title: "Инструменты", text: "Бэктест портфелей и пассивных стратегий, граница Марковица, коэффициенты эффективности." },
+  { path: "/tools", title: "Инструменты", text: "Проверка портфелей на истории, подбор долей активов, показатели риска и доходности." },
   { path: "/screener/stocks", title: "Скринеры", text: "Акции, фонды и облигации Мосбиржи с фильтрами по доходности, риску и комиссиям." },
   { path: "/portfolios/lazy", title: "Портфели", text: "«Ленивые» портфели на российских индексах и фондах — состав и история." },
-  { path: "/docs", title: "Методика", text: "Формулы коэффициентов, допущения бэктеста и источники данных." },
+  { path: "/docs", title: "Как мы считаем", text: "Формулы, допущения и источники данных — для тех, кто хочет проверить." },
 ];
 
 let inited = false;
@@ -27,6 +33,9 @@ export function init() {
       h("span", { class: "pop-key" }, p.secid),
       h("span", { class: "pop-name" }, p.name),
       h("span", { class: "pop-cls" }, classLabel(p.cls))))));
+  $("#home-goals").replaceChildren(...GOALS.map((s) => h("a", { class: "card entry entry-goal", href: href(s.path) },
+    h("span", { class: "entry-title" }, s.title),
+    h("span", { class: "entry-text" }, s.text))));
   $("#home-sections").replaceChildren(...SECTIONS.map((s) => h("a", { class: "card entry", href: href(s.path) },
     h("span", { class: "entry-title" }, s.title),
     h("span", { class: "entry-text" }, s.text))));
@@ -39,6 +48,7 @@ export function onShow() {
 
 async function showLeaders() {
   const box = $("#home-leaders");
+  box.classList.add("adv");
   const load = engine.symbol?.loadSymbolStats;
   if (isDemo() || typeof load !== "function") {
     box.replaceChildren();

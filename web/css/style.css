@@ -112,7 +112,7 @@ p { margin: 0 0 0.6em; }
   border-bottom: 1px solid var(--border);
 }
 .header-row {
-  display: grid; grid-template-columns: auto 1fr minmax(200px, 300px); align-items: center;
+  display: grid; grid-template-columns: auto 1fr minmax(200px, 300px) auto; align-items: center;
   gap: 12px 24px; padding-top: 12px; padding-bottom: 12px;
 }
 .brand { display: flex; align-items: center; gap: 12px; min-width: 0; color: inherit; text-decoration: none; border-radius: var(--radius-sm); }
@@ -134,6 +134,7 @@ p { margin: 0 0 0.6em; }
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text);
 }
 .nav-search { min-width: 0; }
+.mode-toggle { grid-column: 4; grid-row: 1; }
 
 /* поиск-combobox */
 .search-box { position: relative; }
@@ -511,8 +512,9 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
 }
 @media (max-width: 900px) {
   .form-grid-2, .grid-2 { grid-template-columns: minmax(0, 1fr); }
-  .header-row { grid-template-columns: 1fr auto; }
-  .nav-toggle { display: inline-flex; align-items: center; justify-content: center; }
+  .header-row { grid-template-columns: 1fr auto auto; }
+  .mode-toggle { grid-column: 2; }
+  .nav-toggle { grid-column: 3; grid-row: 1; display: inline-flex; align-items: center; justify-content: center; }
   .site-nav { grid-column: 1 / -1; display: none; }
   .site-nav.open { display: block; }
   .site-nav ul { flex-direction: column; }
@@ -561,3 +563,29 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
   * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
 .stub-nav { padding: 0 0 14px; }
+
+/* ---------- Режим «Просто / Подробно» и подсказки «?» (web/js/glossary.js) */
+:root:not([data-mode="pro"]) .adv { display: none !important; }
+.mode-toggle {
+  border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface); color: var(--text);
+  padding: 6px 12px; font: inherit; font-size: .875rem; cursor: pointer; white-space: nowrap;
+}
+:root[data-mode="pro"] .mode-toggle { background: var(--accent-soft); color: var(--accent-strong); border-color: var(--accent); }
+.gl { display: inline-block; margin-left: 4px; vertical-align: middle; }
+.gl-btn {
+  width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border-strong); background: var(--surface-2);
+  color: var(--text-muted); font-weight: 600; font-size: 12px; line-height: 1; font-family: inherit; cursor: pointer; padding: 0;
+}
+.gl-btn::after { content: ""; position: absolute; inset: -12px; } /* зона нажатия 44 px на телефоне */
+.gl-btn { position: relative; }
+.gl-btn:hover, .gl-btn:focus-visible { color: var(--accent-strong); border-color: var(--accent); }
+.gl-pop {
+  max-width: min(360px, calc(100vw - 32px)); padding: 14px 16px; border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); background: var(--surface); color: var(--text);
+  font-size: .9375rem; font-weight: 400; line-height: 1.45; text-align: left; white-space: normal;
+  box-shadow: 0 8px 28px rgb(0 0 0 / .18);
+}
+.gl-pop::backdrop { background: rgb(0 0 0 / .08); }
+.plain-summary { font-size: 1.0625rem; line-height: 1.5; }
+.plain-summary p { margin: 0 0 6px; }
+:root[data-mode="pro"] .simple-only { display: none; }

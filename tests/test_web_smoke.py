@@ -69,10 +69,16 @@ def browser():
 class Session:
     """Страница с журналами: ошибки консоли, внешние запросы, незнакомые запросы к ISS."""
 
-    def __init__(self, browser, server, *, live: bool, stats: bool = True, width: int | None = None):
+    def __init__(self, browser, server, *, live: bool, stats: bool = True, width: int | None = None,
+                 mode: str = "pro"):
         self.server = server
         kw = {"viewport": {"width": width, "height": 812}} if width else {}
         self.page = browser.new_page(**kw)
+        # режим «Просто / Подробно» (web/js/glossary.js); старые проверки — на полном интерфейсе
+        # только при первой загрузке вкладки: перезагрузка должна видеть выбор, сделанный переключателем
+        self.page.add_init_script(f"try {{ if (!sessionStorage.getItem('ia-mode-init')) {{"
+                                  f" localStorage.setItem('ia-mode', '{mode}'); sessionStorage.setItem('ia-mode-init', '1') }} }}"
+                                  " catch (e) {}")
         self.errors: list[str] = []
         self.external: list[str] = []
         self.unknown_iss: list[str] = []
@@ -195,7 +201,7 @@ def test_demo_tools_backtest_frontier_metrics_docs(demo):
 
     # Бэктест: в демо считается сразу; плюс явный запуск кнопкой
     page.wait_for_selector("#bt-out table.metrics-table", timeout=TIMEOUT)
-    _rerun(page, "Запустить бэктест", "#bt-out")
+    _rerun(page, "Посчитать", "#bt-out")
     _assert_table_and_chart(page, "#bt-out", "table.metrics-table")
     text = page.locator("#bt-out table.metrics-table").inner_text()
     assert "Коэф. Шарпа" in text and "Лежебока" in text, text[:500]
@@ -365,6 +371,8 @@ def test_live_home_leaders_and_search(live):
     page.locator("#nav-search").press("ArrowDown")
     page.locator("#nav-search").press("Enter")
     page.wait_for_function("() => location.hash === '#/symbol/SBER'", timeout=TIMEOUT)
+    # панель переключается по hashchange — это следующая задача после смены адреса
+    page.wait_for_function("() => !document.querySelector('#panel-symbol').hidden", timeout=TIMEOUT)
     assert live.visible_panel() == ["panel-symbol"]
     _wait_blocks(page, len(SHARE_BLOCKS))
     assert any("securities.json" in u and "q=" in u for u in live.iss_calls)
@@ -492,12 +500,13 @@ def test_live_symbol_without_symbol_stats(browser, server):
 
 
 # ================================================================ мобильная ширина
+@pytest.mark.parametrize("mode", ["simple", "pro"])
 @pytest.mark.parametrize("live_mode, hash_", [
     (False, "#/"), (False, "#/tools"), (False, "#/tools/backtest"), (False, "#/docs"),
     (True, "#/symbol/SBER"), (True, "#/symbol/SU26238RMFS4"),
 ])
-def test_mobile_375_no_horizontal_scroll(browser, server, live_mode, hash_):
-    s = Session(browser, server, live=live_mode, width=375)
+def test_mobile_375_no_horizontal_scroll(browser, server, live_mode, hash_, mode):
+    s = Session(browser, server, live=live_mode, width=375, mode=mode)
     try:
         s.goto("" if live_mode else "?demo=1", hash_)
         if hash_.startswith("#/symbol"):
@@ -516,3 +525,229 @@ def test_mobile_375_no_horizontal_scroll(browser, server, live_mode, hash_):
         s.check_clean()
     finally:
         s.close()
+
+
+def test_simple_mode_hides_expert_parts(browser, server):
+    """Режим «Просто» (по умолчанию для новых посетителей): итог словами, подсказки «?», без экспертных настроек."""
+    s = Session(browser, server, live=False, mode="simple")
+    try:
+        page = s.page
+        s.goto("?demo=1", "#/")
+        assert page.locator("#home-goals a").count() == 3
+        s.goto("?demo=1", "#/tools/backtest")
+        assert page.locator("#params-bar").is_hidden(), "в «Просто» общие параметры скрыты"
+        assert page.locator("#bt-band").is_hidden() and page.locator("#bt-cap").is_visible()
+        _rerun(page, "Посчитать", "#bt-out")
+        summary = page.locator("#bt-out .plain-summary").inner_text()
+        assert "стало бы" in summary and "не гарантирует" in summary, summary[:500]
+        table = page.locator("#bt-out table.metrics-table").inner_text()
+        assert "Макс. просадка" in table and "Коэф. Шарпа" not in table, table[:500]
+        # подсказка открывается по нажатию (телефон — без наведения)
+        page.locator("#bt-out .metrics-table .gl-btn").first.click()
+        assert page.locator(".gl-pop:popover-open").count() == 1
+        page.keyboard.press("Escape")
+        # переключатель возвращает полный интерфейс
+        page.locator("#mode-toggle").click()
+        assert page.locator("#params-bar").is_visible()
+        assert "Коэф. Шарпа" in page.locator("#bt-out table.metrics-table").inner_text()
+        assert page.evaluate("() => localStorage.getItem('ia-mode')") == "pro"
+        s.check_clean()
+    finally:
+        s.close()
+
+
+# ================================================================ «Просто»: сводка «Если коротко» и подписи
+_PCT = re.compile(r"(−?\d[\d ]*(?:,\d+)?) %")
+_NBSP_JS = ".replace(/\\u00a0/g, ' ')"  # в тексте интерфейса — неразрывные пробелы; сравниваем с обычными
+
+
+def _pct(s: str) -> float:
+    """«−12,3 %» (неразрывные пробелы, типографский минус) → −12.3."""
+    m = _PCT.search(s)
+    assert m, f"нет процента в «{s}»"
+    return float(m.group(1).replace(" ", "").replace(",", ".").replace("−", "-"))
+
+
+def _summary(page) -> dict[str, str]:
+    """Абзацы `.plain-summary` (без дисклеймера): имя портфеля (первый <b>) → полный текст."""
+    return page.evaluate("""() => Object.fromEntries([...document.querySelectorAll('#bt-out .plain-summary p:not(.hint)')]
+        .map((p) => [p.querySelector('b').textContent, p.textContent""" + _NBSP_JS + """]))""")
+
+
+def _metrics(page, out="#bt-out") -> dict[str, dict[str, str]]:
+    """Таблица показателей по textContent (и скрытые в «Просто» строки): подпись строки → {столбец: значение}."""
+    return page.evaluate(f"""() => {{
+        const t = document.querySelector('{out} table.metrics-table');
+        const cols = [...t.querySelectorAll('thead th')].slice(1).map((th) => th.textContent.trim());
+        return Object.fromEntries([...t.querySelectorAll('tbody tr')].map((tr) => [
+            tr.querySelector('th').getAttribute('aria-label') || tr.querySelector('th').textContent.trim(),
+            Object.fromEntries([...tr.querySelectorAll('td')].map((td, i) => [cols[i], td.textContent.trim(){_NBSP_JS}]))]));
+    }}""")
+
+
+@pytest.fixture
+def simple(browser, server):
+    s = Session(browser, server, live=False, mode="simple")
+    yield s
+    s.close()
+
+
+def test_simple_summary_matches_metrics_table(simple):
+    """«в среднем X % в год» и «ниже максимума на Y %» в сводке — те же CAGR и макс. просадка, что в таблице."""
+    simple.goto("?demo=1", "#/tools/backtest")
+    page = simple.page
+    _rerun(page, "Посчитать", "#bt-out")
+    summ, table = _summary(page), _metrics(page)
+    assert len(summ) >= 3, summ
+    for name, text in summ.items():
+        m = re.search(r"в среднем (\S+ %) в год", text)
+        assert m, f"{name}: нет «в среднем … в год»: {text}"
+        cagr = _pct(table["CAGR (среднегод.)"][name])
+        assert _pct(m.group(1)) == cagr, f"{name}: сводка {m.group(1)} ≠ CAGR в таблице {cagr}"
+        m = re.search(r"максимума на (\S+ %)", text)
+        assert m, f"{name}: нет просадки: {text}"
+        dd = abs(_pct(table["Макс. просадка"][name]))  # в таблице 1 знак, в сводке — целые
+        assert abs(_pct(m.group(1)) - dd) <= 0.5 + 1e-9, f"{name}: сводка {m.group(1)} ≠ просадка {dd}"
+    simple.check_clean()
+
+
+def _xirr_reference(cap: float, contrib: float) -> dict[str, float]:
+    """XIRR по потокам Python-бэктеста (core) на той же месячной фикстуре, что и демо: −invested[0], −взносы, +итог."""
+    from core.analytics.backtest import BacktestConfig, run_backtest, xirr
+    from core.analytics.strategies import STRATEGIES
+    from tests.web.fixture_loader import load_fixture
+
+    px = load_fixture().loc["2011-01-31":"2025-12-31"]
+    out = {}
+    for name, s in STRATEGIES.items():
+        r = run_backtest(px, BacktestConfig(weights=s["weights"], initial=cap, rebalance="A",
+                                            contribution=contrib, contribution_freq="M"))
+        inv = r.invested
+        # первая дата — конец месяца, поэтому пополнение уже в ней: invested[0] = cap + contrib
+        flows = [(inv.index[0], -float(inv.iloc[0]))] + [(d, -float(v)) for d, v in inv.diff().iloc[1:].items() if v > 0]
+        flows.append((r.equity.index[-1], float(r.equity.iloc[-1])))
+        out[name] = xirr(flows)
+    return out
+
+
+def test_simple_summary_with_contributions_shows_xirr(simple):
+    """С пополнениями показывается денежно-взвешенная доходность (XIRR потоков), а не CAGR ряда стоимости."""
+    simple.goto("?demo=1", "#/tools/backtest")
+    page = simple.page
+    page.wait_for_selector("#bt-out table.metrics-table", timeout=TIMEOUT)
+    page.fill("#bt-contrib", "50000")
+    _rerun(page, "Посчитать", "#bt-out")
+    summ, table = _summary(page), _metrics(page)
+    kpis = page.evaluate("() => Object.fromEntries([...document.querySelectorAll('#bt-out .kpi:not(.bench)')]"
+                         ".map((k) => [k.querySelector('.kpi-name').textContent, k.querySelector('.kpi-sub').textContent" + _NBSP_JS + "]))")
+    ref = _xirr_reference(1_000_000, 50_000)
+    assert summ and set(summ) <= set(ref), (summ.keys(), ref.keys())
+    for name, text in summ.items():
+        assert "с учётом пополнений" in text, f"{name}: {text}"
+        assert "с учётом пополнений" in kpis[name], f"{name}: карточка «{kpis[name]}»"
+        assert "внесено" in kpis[name], kpis[name]
+        m = re.search(r"с учётом пополнений приносили в среднем (\S+ %) в год", text)
+        assert m, text
+        shown = _pct(m.group(1))
+        assert _pct(kpis[name].split("с учётом пополнений", 1)[1]) == shown, (kpis[name], text)
+        assert abs(shown - ref[name] * 100) <= 0.05 + 1e-6, f"{name}: показано {shown} %, XIRR {ref[name] * 100:.3f} %"
+        # CAGR ряда стоимости включает взносы и поэтому заметно выше
+        assert shown < _pct(table["CAGR (среднегод.)"][name]) - 1, (name, shown, table["CAGR (среднегод.)"][name])
+    simple.check_clean()
+
+
+def test_simple_summary_short_period_total_return(simple):
+    """Срок < 1 года: годовой процент не показывается, только «за весь срок»."""
+    simple.goto("?demo=1&from=2024-01-01&till=2024-06-30", "#/tools/backtest")
+    page = simple.page
+    _rerun(page, "Посчитать", "#bt-out")
+    summ = _summary(page)
+    assert summ
+    for name, text in summ.items():
+        assert "в год" not in text, f"{name}: {text}"
+        assert "за весь срок" in text, f"{name}: {text}"
+    kpi = page.locator("#bt-out .kpis").inner_text()
+    assert "в год" not in kpi and "за весь срок" in kpi, kpi
+    simple.check_clean()
+
+
+def test_simple_security_metrics_full_table(simple):
+    """«Коэффициенты бумаги» — полная таблица и в «Просто» (buildMetricsTable(..., {simple: false}))."""
+    simple.goto("?demo=1", "#/tools/metrics")
+    page = simple.page
+    page.wait_for_selector("#sec-out table.metrics-table", timeout=TIMEOUT)
+    row = page.locator("#sec-out table.metrics-table tbody tr", has=page.locator("th[aria-label='Коэф. Шарпа']"))
+    assert row.count() == 1 and row.is_visible(), "строка «Коэф. Шарпа» скрыта в «Просто»"
+    assert page.locator("#sec-out table.metrics-table tbody tr:not(:visible)").count() == 0
+    simple.check_clean()
+
+
+def test_simple_strategy_labels_grouped_without_codes(simple):
+    """Подписи готовых портфелей: доли по классам без повторов, коды индексов (MCFTR…) — только в «Подробно»."""
+    simple.goto("?demo=1", "#/tools/backtest")
+    page = simple.page
+    page.wait_for_selector("#bt-strategies .check-note", timeout=TIMEOUT)
+    notes = page.evaluate("() => Object.fromEntries([...document.querySelectorAll('#bt-strategies label')]"
+                          ".map((l) => [l.querySelector('.check-title').innerText, l.querySelector('.check-note').innerText" + _NBSP_JS + "]))")
+    allw = next(v for k, v in notes.items() if k.startswith("Всепогодный"))
+    assert allw.count("Акции") == 1, allw
+    assert "37,5 %" in allw, f"MCFTR 30 % + MEEUTR 7,5 % должны сложиться в «Акции 37,5 %»: {allw}"
+    codes = re.compile(r"\b(MCFTR|MEEUTR|RGBITR|RUGBITR\w*|GOLD_CBR|CORP_CHAIN|RUCBITR|RUONIA)\b")
+    for name, text in notes.items():
+        assert not codes.search(text), f"{name}: код индекса в «Просто»: {text}"
+        words = [w.split(" ")[0] for w in text.split(" · ") if w]
+        assert len(words) == len(set(words)), f"{name}: класс повторяется: {text}"
+    simple.check_clean()
+
+
+def test_mode_toggle_persists_before_scripts(simple):
+    """«Подробно» запоминается: после перезагрузки data-mode=pro стоит уже до main.js (inline-скрипт в <head>)."""
+    simple.page.add_init_script("document.addEventListener('readystatechange', () => {"
+                                " if (document.readyState === 'interactive') window.__modeAtParse = document.documentElement.dataset.mode; })")
+    simple.goto("?demo=1", "#/")
+    page = simple.page
+    assert page.evaluate("() => document.documentElement.dataset.mode") != "pro"
+    page.locator("#mode-toggle").click()
+    assert page.evaluate("() => localStorage.getItem('ia-mode')") == "pro"
+    page.reload(wait_until="load")
+    page.wait_for_function(IDLE, timeout=TIMEOUT)
+    assert page.evaluate("() => window.__modeAtParse") == "pro", "data-mode не выставлен inline-скриптом до модулей"
+    assert page.evaluate("() => document.documentElement.dataset.mode") == "pro"
+    assert page.locator("#mode-toggle").inner_text().strip() == "Просто"
+    simple.check_clean()
+
+
+def test_simple_contrib_hides_cagr_rows_and_short_period(simple):
+    """При пополнениях CAGR и накопленная доходность ряда стоимости (с взносами) в «Просто» скрыты, в «Подробно» видны;
+    короткий срок + пополнения — результат «за весь срок» «сверх внесённого»."""
+    simple.goto("?demo=1&contrib=50000", "#/tools/backtest")
+    page = simple.page
+    _rerun(page, "Посчитать", "#bt-out")
+    row = lambda label: page.locator("#bt-out table.metrics-table tbody tr",
+                                     has=page.locator(f"th[aria-label='{label}']"))
+    for label in ("CAGR (среднегод.)", "Накопленная доходность"):
+        assert row(label).count() == 1 and row(label).is_hidden(), f"«{label}» видна в «Просто» при пополнениях"
+    assert row("Макс. просадка").is_visible()
+    page.locator("#mode-toggle").click()
+    for label in ("CAGR (среднегод.)", "Накопленная доходность"):
+        assert row(label).is_visible(), f"«{label}» не видна в «Подробно»"
+    page.locator("#mode-toggle").click()
+
+    simple.goto("?demo=1&contrib=50000&from=2024-01-01&till=2024-06-30", "#/tools/backtest")
+    _rerun(page, "Посчитать", "#bt-out")
+    summ = _summary(page)
+    assert summ
+    for name, text in summ.items():
+        assert "за весь срок" in text and "сверх внесённого" in text, f"{name}: {text}"
+        assert "в год" not in text, f"{name}: {text}"
+    simple.check_clean()
+
+
+def test_mode_toggle_has_no_aria_label(demo):
+    """Имя кнопки — её видимый текст («Подробно»/«Просто»); aria-label его бы подменял (WCAG 2.5.3)."""
+    demo.goto("?demo=1", "#/")
+    btn = demo.page.locator("#mode-toggle")
+    assert btn.get_attribute("aria-label") is None
+    btn.click()
+    assert btn.get_attribute("aria-label") is None
+    assert demo.page.get_by_role("button", name=btn.inner_text().strip()).count() >= 1
