@@ -159,7 +159,8 @@ def handler(event, context):
     except Upstream as e:
         text = ("Бесплатный лимит GigaChat исчерпан. Попробуйте позже." if e.status == 402
                 else "Ассистент временно недоступен: GigaChat не отвечает. Попробуйте позже.")
-        return done(502, {"error": text}, upstream=str(e))
+        # detail — шаг и код/имя ошибки («oauth: 401», «chat: SSLError»), без секретов: нужен, пока нет журналов
+        return done(502, {"error": text, "detail": str(e)}, upstream=str(e))
 
     facts_used, unverified = verify_numbers(answer, screen["facts"])
     return done(200, {"answer": answer, "facts_used": facts_used, "unverified_numbers": unverified, "label": LABEL},
