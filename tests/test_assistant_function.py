@@ -465,8 +465,8 @@ def test_verify_numbers_round2():
     assert logic.verify_numbers("Минимум 250,5 ₽.", lo) == (["lo"], [])
 
 
-def test_read_timeout_12s():
-    assert index.TIMEOUT[1] == 12
+def test_timeouts_fit_function_limit():
+    assert index.TIMEOUT[1] + index.CHAT_TIMEOUT[1] <= 30   # OAuth + чат укладываются в таймаут функции (30 с)
 
 
 def test_handler_415(giga):
