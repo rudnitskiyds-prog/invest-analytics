@@ -122,6 +122,36 @@ def _log(**fields):
     print(json.dumps(fields, ensure_ascii=False))
 
 
+def _diag() -> dict:
+    """Проверки канала до GigaChat из облака: только коды и время, без ключей и текста ответов.
+    ponytail: временный режим для диагностики ReadTimeout; убрать, когда причина найдена."""
+    out = {}
+    t = time.time()
+    try:
+        token = _get_token()
+        out["oauth"] = f"ok {time.time() - t:.1f}s"
+    except Upstream as e:
+        return {"oauth": f"{e} {time.time() - t:.1f}s"}
+    hdr = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    tiny = {"model": os.environ.get("GIGACHAT_MODEL", "GigaChat"),
+            "messages": [{"role": "user", "content": "Ответь одним словом: да"}], "max_tokens": 5}
+    probes = [
+        ("models", "GET", CHAT_URL.rsplit("/chat/", 1)[0] + "/models", None, False),
+        ("chat", "POST", CHAT_URL, tiny, False),
+        ("chat_stream", "POST", CHAT_URL, {**tiny, "stream": True}, True),
+    ]
+    for name, method, url, body, stream in probes:
+        t = time.time()
+        try:
+            r = requests.request(method, url, json=body, headers=hdr, timeout=(5, 7), verify=_verify(), stream=stream)
+            first = next(r.iter_content(64), b"") if stream else r.content[:0]
+            out[name] = f"{r.status_code} {time.time() - t:.1f}s" + (f" first_bytes={len(first)}" if stream else "")
+            r.close()
+        except requests.RequestException as e:
+            out[name] = f"{type(e).__name__} {time.time() - t:.1f}s"
+    return out
+
+
 def handler(event, context):
     started = time.time()
     route, q_len, n_facts = "", 0, 0
@@ -134,6 +164,8 @@ def handler(event, context):
     ip = ((event.get("requestContext") or {}).get("identity") or {}).get("sourceIp") or "unknown"
     if _rate_limited(ip, started):
         return done(429, {"error": "Слишком много вопросов подряд. Подождите минуту и попробуйте снова."})
+    if {k.lower(): v for k, v in (event.get("headers") or {}).items()}.get("x-diag") == "1":
+        return done(200, {"diag": _diag()}, diag=True)
 
     ctype = next((v for k, v in (event.get("headers") or {}).items() if k.lower() == "content-type"), "")
     if not str(ctype).lower().startswith("application/json"):
