@@ -333,7 +333,10 @@ def test_handler_502_chat(giga, chat):
 
 def test_handler_502_oauth(giga):
     giga.oauth = FakeResp(401, {"message": "bad key"})
-    assert _call(_event())[0] == 502
+    status, data, _ = _call(_event())
+    assert status == 502
+    assert data["detail"] == "oauth: 401"   # шаг и код — для диагностики без журналов; ключа в ответе нет
+    assert "bad key" not in json.dumps(data, ensure_ascii=False)
 
 
 def test_handler_502_no_key(giga, monkeypatch):
