@@ -394,3 +394,68 @@ public_data.symbol_stats() -> dict | None                     # public/data/symb
   Роджерс–Сатчелл, Янг–Чжан по OHLC за `period_start('1Y')`; `dividend_stats` — порт `dividendStats` (snake_case:
   `ttm_value, ttm_yield, by_year, by_month, growth_streak, payouts_per_year, upcoming`), только акции.
 * `ranking.next_weekday` — публичное имя (`_next_weekday` оставлен алиасом).
+
+## Ассистент GigaChat и выкладка в Yandex Cloud (ветка `feature/yc-gigachat`)
+
+Архитектура (вариант A): всё в Yandex Cloud, сайт закрыт логином и паролем.
+
+```
+браузер ──► API Gateway (один домен *.apigw.yandexcloud.net)
+              ├─ /{path+}          → Object Storage, закрытый бакет (копия web/, public/data/, tests/fixtures/)
+              ├─ /                 → редирект на /web/
+              ├─ POST /api/assistant → Cloud Function `assistant` (functions/assistant/)
+              └─ все маршруты защищены авторизатором: Cloud Function `auth` (functions/auth/), Basic-авторизация
+```
+
+Секреты — только в Yandex Lockbox / переменных функций и в GitHub Secrets; в репозитории и в браузере их нет.
+
+### Cloud Function `assistant` (Python 3.12, `functions/assistant/index.py: handler(event, context)`) — зона `backend`
+Запрос `POST /api/assistant`, JSON:
+```json
+{"question": "строка до 1000 знаков",
+ "screen": {"route": "/tools/backtest", "title": "Бэктест портфелей",
+            "facts": [{"id": "pf1.cagr", "label": "Лежебока плюс: в среднем в год", "value": 0.123, "unit": "pct",
+                       "text": "12,3 %", "source": "расчёт ИнвестАналитики по ISS MOEX, 2011–2025"}]}}
+```
+Ответ 200: `{"answer": "текст", "facts_used": ["pf1.cagr"], "unverified_numbers": ["15 %"], "label": "Ответ ИИ (GigaChat). Не является индивидуальной инвестиционной рекомендацией."}`.
+Ошибки: 400 (`{"error": "…"}` — пустой/длинный вопрос, > 60 фактов, неверный JSON), 429 (лимит), 502 (GigaChat недоступен) — тексты на русском.
+* Числа считает только расчётное ядро: модель получает факты экрана и должна ссылаться на них. Сервис сверяет все числа
+  ответа с `facts[].value`/`text` (нормализация: пробелы, запятая, %, ₽; допуск округления) — не найденные попадают
+  в `unverified_numbers`, интерфейс помечает их.
+* Нет индивидуальных рекомендаций (39-ФЗ, ст. 6.1): системный промпт `functions/assistant/prompts/system.md`
+  (зона `ai`) + серверный фильтр вопросов «что купить/продать/куда вложить» → вежливый отказ без вызова модели.
+* Персональные данные не нужны и не логируются: в журнале только маршрут, длины, коды ответа и время.
+* GigaChat: OAuth `https://ngw.devices.sberbank.ru:9443/api/v2/oauth` (ключ авторизации `GIGACHAT_AUTH_KEY`,
+  `GIGACHAT_SCOPE`, по умолчанию `GIGACHAT_API_PERS`), токен кэшируется до истечения; чат
+  `https://gigachat.devices.sberbank.ru/api/v1/chat/completions`, модель `GIGACHAT_MODEL` (по умолчанию `GigaChat`).
+  TLS — сертификат НУЦ Минцифры: путь в `GIGACHAT_CA_BUNDLE`, файл кладёт в пакет функции workflow выкладки.
+* Лимиты: `RATE_LIMIT_PER_MIN` (по умолчанию 10) на IP в памяти экземпляра; `max_tokens` ответа ≤ 800.
+* Зависимости — только `requests`.
+
+### Cloud Function `auth` (`functions/auth/index.py: handler(event, context)`) — зона `backend`
+Авторизатор API Gateway: проверяет заголовок `Authorization: Basic …` против `SITE_USERS`
+(`логин:соль_hex:pbkdf2_sha256_hex` через запятую, 200 000 итераций, из Lockbox). Сравнение — постоянное по времени.
+Окно входа: маршрут `/` без авторизатора вызывает ту же функцию — без пароля 401 + `WWW-Authenticate: Basic`,
+с паролем 302 на `/web/`; браузер дальше сам шлёт Basic на все маршруты (они под авторизатором).
+
+### `infra/` — зона `backend`
+`infra/gateway.yaml` (OpenAPI-спецификация API Gateway с подстановками `${BUCKET}`, `${ASSISTANT_FUNCTION_ID}`,
+`${AUTH_FUNCTION_ID}`, `${SA_ID}`), `infra/README.md` — пошаговая настройка облака для владельца (консоль или `yc`),
+список секретов GitHub, бюджет-уведомление.
+
+### Выкладка `.github/workflows/deploy-yc.yml` — зона `api`
+Триггеры: push в `main`, завершение «Сбор данных», ручной запуск. Если секретов нет — job завершается успешно
+с предупреждением. Шаги: синхронизация `web/`, `public/data/`, `tests/fixtures/` в бакет; новые версии функций
+`assistant` (с сертификатом Минцифры) и `auth`; обновление спецификации шлюза. Два сервисных аккаунта: `ia-deploy` (ключ в `YC_SA_JSON_CREDENTIALS`, без доступа к секретам Lockbox) и
+`ia-runtime` (`YC_SA_ID`: функции и шлюз). Секреты: `YC_SA_JSON_CREDENTIALS`,
+`YC_CLOUD_ID`, `YC_FOLDER_ID`; переменные: `YC_BUCKET`, `YC_GATEWAY_ID`, `YC_SA_ID`, `YC_LOCKBOX_SECRET_ID`.
+
+### Панель ассистента в `web/` — зона `site`
+* `web/js/config.js`: `ASSISTANT_URL = "/api/assistant"` (тот же домен).
+* `web/js/assistant.js`: кнопка «Спросить ИИ» (плавающая, видна на `/tools/*` и `/symbol/*` всегда — без фактов
+  ассистент отвечает про термины) → панель (на телефоне — на весь экран) с полем вопроса, примерами вопросов и ответом.
+  Ответ подписан «Ответ ИИ», числа из `unverified_numbers` подсвечены с пояснением «не найдено в расчёте».
+* `value` — число или `null` (даты и периоды — только в `text`).
+* Каждая страница регистрирует сборщик фактов: `registerFacts(route, () => facts[])` — берёт уже посчитанные
+  интерфейсом значения (не считает заново). Если `fetch` недоступен (локально, демо) — понятное сообщение
+  «Ассистент работает на опубликованном сайте».

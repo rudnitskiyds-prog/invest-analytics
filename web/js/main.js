@@ -1,5 +1,6 @@
 // Точка входа: шапка с навигацией и поиском, hash-роутер, общие параметры, страницы.
 
+import { initAssistant } from "./assistant.js";
 import { getMode, setMode } from "./glossary.js";
 import { applyChartDefaults, registerEntities } from "./charts.js";
 import { $, $$, h, notice } from "./dom.js";
@@ -121,6 +122,7 @@ function setupChrome() {
 async function start() {
   R.migrateLegacy();
   setupChrome();
+  initAssistant();
   show(R.current());
   R.onRoute(show);
 

@@ -1,10 +1,11 @@
 // Вкладка «Коэффициенты бумаги»: тикер/индекс против бенчмарка. Расчёт — computeAll из web/lib.
 
+import { fact, registerFacts } from "./assistant.js";
 import { colorOf, destroyChart, lineChart } from "./charts.js";
 import { $, errorNotice, h, notice, tableWrap, withBusy } from "./dom.js";
-import { assetLabel, engine, requireEngine, UserError } from "./engine.js";
+import { assetLabel, engine, entries, requireEngine, toSet, UserError } from "./engine.js";
 import { bindValue, globals, readDates, FREQ_LABELS } from "./fields.js";
-import { fmtDate } from "./format.js";
+import { fmtDate, fmtMetric } from "./format.js";
 import { riskFree } from "./riskfree.js";
 import { getMany } from "./source.js";
 import * as S from "./state.js";
@@ -12,6 +13,10 @@ import { buildMetricsTable } from "./tab-backtest.js";
 
 let last = null;
 let running = false;
+let facts = [];   // факты экрана для ассистента — значения таблицы из последнего render()
+const FACT_KEYS = ["total_return", "cagr", "volatility", "max_drawdown", "sharpe", "beta", "alpha"];
+
+registerFacts("/tools/metrics", () => (last ? facts : []));
 
 export function init() {
   const key = bindValue("sec-key", "sec");
@@ -115,6 +120,18 @@ function render() {
   const reports = { [key]: E.metrics.computeAll(s, b, g.rf, g.freq) };
   if (b && !same) reports[g.bench] = E.metrics.computeAll(b, b, g.rf, g.freq);
   const cols = Object.keys(reports);
+  const SRC = "расчёт ИнвестАналитики по данным ISS MOEX и Банка России";
+  const pf = toSet(E.metrics.PERCENT_FIELDS);
+  const labels = Object.fromEntries(entries(E.metrics.LABELS_RU));
+  facts = [fact("period", "Период расчёта", null, "period",
+    `${fmtDate(s.dates[0])} — ${fmtDate(s.dates.at(-1))}`, SRC)];
+  for (const c of cols) {
+    for (const k of FACT_KEYS) {
+      if (!labels[k]) continue;
+      const v = reports[c][k];
+      facts.push(fact(`${c}.${k}`, `${c}: ${labels[k]}`, v, pf.has(k) ? "pct" : "coef", fmtMetric(k, v, pf), SRC));
+    }
+  }
   out.append(h("section", { class: "card" },
     h("h3", { class: "card-title" }, "Показатели эффективности"),
     h("p", { class: "card-sub adv" }, `${g.rfNote} Доходности ${FREQ_LABELS[g.freq]}, бенчмарк ${g.bench}.`),

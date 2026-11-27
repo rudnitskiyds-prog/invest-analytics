@@ -751,3 +751,153 @@ def test_mode_toggle_has_no_aria_label(demo):
     btn.click()
     assert btn.get_attribute("aria-label") is None
     assert demo.page.get_by_role("button", name=btn.inner_text().strip()).count() >= 1
+
+
+# ================================================================ ассистент «Спросить ИИ» (web/js/assistant.js)
+OFFLINE_AI = "Ассистент работает на опубликованном сайте"
+# живой бэктест на поддельном ISS: части индексов для Брауна/Далио в нём нет (404) — это не ошибка ассистента
+LIVE_BT_MISSING = r"RUGBITR10Y|RUGBITR5|MEEUTR"
+
+
+def _ai_requests(session):
+    calls = []
+    session.page.on("request", lambda r: calls.append(r) if "/api/assistant" in r.url else None)
+    return calls
+
+
+def test_ai_demo_panel(demo):
+    calls = _ai_requests(demo)
+    demo.goto("?demo=1", "#/")
+    page = demo.page
+    fab = page.locator(".ai-fab")
+    assert fab.count() == 1 and fab.is_hidden(), "на главной кнопки «Спросить ИИ» нет"
+
+    page.evaluate("() => { location.hash = '#/tools/backtest'; }")
+    page.wait_for_selector("#bt-out table.metrics-table", timeout=TIMEOUT)
+    _rerun(page, "Посчитать", "#bt-out")
+    assert fab.is_visible(), "после расчёта бэктеста кнопка видна"
+    assert "Спросить ИИ" in fab.inner_text()
+
+    fab.click()
+    dlg = page.locator("dialog.ai-dialog")
+    assert dlg.is_visible()
+    assert page.evaluate("() => document.activeElement && document.activeElement.id") == "ai-q", "фокус в поле вопроса"
+    screen_txt = page.locator("#ai-screen").inner_text()
+    n = int(re.search(r"ИИ видит (\d+) ", screen_txt).group(1))
+    word = page.evaluate(f"async () => (await import('/web/js/assistant.js')).plural({n}, 'показатель', 'показателя', 'показателей')")
+    assert f"ИИ видит {n} {word} " in screen_txt, screen_txt
+    assert "личные данные" in page.locator("#ai-pd").inner_text(), "подсказка про личные данные"
+    assert page.locator(".ai-examples button").count() >= 1
+    page.locator("#ai-q").fill("Что такое максимальная просадка?")
+    page.get_by_role("button", name="Спросить", exact=True).click()
+    page.wait_for_selector(".ai-answer [role=alert]", timeout=TIMEOUT)
+    assert OFFLINE_AI in page.locator(".ai-answer").inner_text()
+    assert not calls, "в демо запрос к ассистенту не уходит"
+
+    page.keyboard.press("Escape")
+    page.wait_for_function("() => !document.querySelector('dialog.ai-dialog').open", timeout=TIMEOUT)
+    assert page.evaluate("() => document.activeElement.classList.contains('ai-fab')"), "фокус вернулся на кнопку"
+
+    # клик по затемнению закрывает, клик внутри диалога — нет
+    fab.click()
+    box = dlg.bounding_box()
+    page.mouse.click(box["x"] + box["width"] / 2, box["y"] + 10)
+    assert page.evaluate("() => document.querySelector('dialog.ai-dialog').open"), "клик внутри не закрывает"
+    page.mouse.click(5, 5)
+    page.wait_for_function("() => !document.querySelector('dialog.ai-dialog').open", timeout=TIMEOUT)
+
+    page.evaluate("() => { location.hash = '#/docs'; }")
+    page.wait_for_function("() => !document.querySelector('#panel-method').hidden", timeout=TIMEOUT)
+    assert fab.is_hidden(), "в методике кнопки нет"
+    demo.check_clean()
+
+
+def _live_backtest(live):
+    live.goto("", "#/tools/backtest")
+    page = live.page
+    page.get_by_role("button", name="Посчитать").click()
+    page.wait_for_function("() => !document.body.classList.contains('is-busy') && document.querySelector('#bt-out .kpi')",
+                           timeout=TIMEOUT)
+    return page
+
+
+def _check_live_clean(live, allow=None):
+    errs = [e for e in live.errors if not re.search(LIVE_BT_MISSING, e) and not (allow and re.search(allow, e))]
+    assert not errs, "\n".join(errs)
+    assert not live.external, live.external
+    assert all(re.search(LIVE_BT_MISSING, u) for u in live.unknown_iss), live.unknown_iss
+
+
+def test_ai_live_answer_marks_unverified(live):
+    page = _live_backtest(live)
+    sent = []
+
+    def fake(route):
+        sent.append(json.loads(route.request.post_data))
+        route.fulfill(status=200, content_type="application/json", body=json.dumps({
+            "answer": "Итоговая сумма у портфеля выросла, в среднем 15 % в год.",
+            "facts_used": ["pf1.final"], "unverified_numbers": ["15 %"],
+            "label": "Ответ ИИ (GigaChat). Не является индивидуальной инвестиционной рекомендацией."},
+            ensure_ascii=False))
+
+    page.route("**/api/assistant", fake)
+    page.locator(".ai-fab").click()
+    page.locator("#ai-q").fill("Почему у портфелей разная итоговая сумма?")
+    page.get_by_role("button", name="Спросить", exact=True).click()
+    page.wait_for_selector(".ai-answer .ai-text", timeout=TIMEOUT)
+
+    ans = page.locator(".ai-answer")
+    assert "Ответ ИИ" in ans.locator(".ai-label").inner_text()
+    mark = ans.locator("mark.ai-unverified")
+    assert mark.count() == 1 and mark.inner_text().startswith("15 %")
+    assert "не найдены в расчёте" in ans.inner_text()
+
+    assert len(sent) == 1
+    req = sent[0]
+    assert req["question"] == "Почему у портфелей разная итоговая сумма?"
+    screen = req["screen"]
+    assert screen["route"] == "/tools/backtest" and screen["title"]
+    ids = {f["id"] for f in screen["facts"]}
+    assert {"pf1.final", "pf1.invested", "pf1.period", "pf1.max_drawdown"} <= ids, ids
+    assert all(re.fullmatch(r"(pf\d+|bench)\.\w+", i) for i in ids), ids
+    assert len(screen["facts"]) <= 60
+    by_id = {f["id"]: f for f in screen["facts"]}
+    out = page.locator("#bt-out").inner_text()
+    final = by_id["pf1.final"]
+    assert final["unit"] == "rub" and isinstance(final["value"], (int, float))
+    assert re.fullmatch(r"\d{1,3}( \d{3})* ₽", final["text"]), final["text"]
+    assert final["text"].replace(" ", " ") in out.replace(" ", " "), "текст факта — как на экране"
+    dd = by_id["pf1.max_drawdown"]
+    assert dd["unit"] == "pct" and re.fullmatch(r"[−-]?\d+,\d %", dd["text"]), dd["text"]
+    assert all(f["text"] and f["source"] and f["label"] for f in screen["facts"])
+    _check_live_clean(live)
+
+
+@pytest.mark.parametrize("status, needle", [
+    (429, "Слишком много вопросов"), (502, "недоступен"), (400, "Вопрос не принят: Введите вопрос."),
+    (402, "Бесплатный лимит GigaChat исчерпан"),
+    (502, "Бесплатный лимит GigaChat исчерпан"),   # так отвечает функция на 402 от GigaChat
+])
+def test_ai_live_errors(live, status, needle):
+    page = _live_backtest(live)
+    page.route("**/api/assistant", lambda r: r.fulfill(status=status, content_type="application/json",
+                                                         body=json.dumps({"error": needle if "лимит" in needle else "Введите вопрос."},
+                                                                         ensure_ascii=False)))
+    page.locator(".ai-fab").click()
+    page.locator("#ai-q").fill("Что такое просадка?")
+    page.get_by_role("button", name="Спросить", exact=True).click()
+    page.wait_for_selector(".ai-answer [role=alert]", timeout=TIMEOUT)
+    assert needle in page.locator(".ai-answer").inner_text()
+    assert page.get_by_role("button", name="Спросить", exact=True).is_enabled()
+    _check_live_clean(live, allow=rf"status of {status} .*/api/assistant")  # строка браузера о коде ответа
+
+
+def test_ai_plural(demo):
+    """Склонение «1 показатель / 3 показателя / 30 показателей» (web/js/assistant.js: plural)."""
+    demo.goto("?demo=1", "#/")
+    got = demo.page.evaluate("async () => { const m = await import('/web/js/assistant.js');"
+                             " return [1, 2, 3, 4, 5, 11, 12, 14, 21, 22, 25, 30, 101, 111, 112]"
+                             ".map((n) => m.plural(n, 'показатель', 'показателя', 'показателей')); }")
+    one, few, many = "показатель", "показателя", "показателей"
+    assert got == [one, few, few, few, many, many, many, many, one, few, many, many, one, many, many]
+    demo.check_clean()

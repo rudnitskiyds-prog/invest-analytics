@@ -1,5 +1,6 @@
 // Вкладка «Бэктест»: классические пассивные стратегии и свой портфель. Все расчёты — web/lib (runBacktest, computeAll…).
 
+import { fact, registerFacts } from "./assistant.js";
 import { colorOf, destroyChart, heatStyle, lineChart } from "./charts.js";
 import { $, downloadCsv, errorNotice, h, nextFrame, notice, tableWrap, withBusy } from "./dom.js";
 import { assetLabel, engine, entries, requireEngine, toSet, UserError } from "./engine.js";
@@ -16,6 +17,9 @@ const DEFAULT_PF = [["MCFTR", 50], ["RGBITR", 30], ["GOLD_CBR", 20]];
 let strategyNames = [];
 let last = null;          // последний результат (для перерисовки без пересчёта)
 let running = false;
+let facts = [];           // факты экрана для ассистента — из последнего render()
+
+registerFacts("/tools/backtest", () => (last ? facts : []));
 
 // ---------------------------------------------------------------- свой портфель (таблица)
 
@@ -380,6 +384,25 @@ function render() {
     if (kind === "gain") return [h("b", {}, fmtPct(v, 1)), " — прирост сверх внесённого за весь срок"];
     return [];
   };
+
+  // --- факты для ассистента: те же значения, что в карточках и «Если коротко»
+  const SRC = "расчёт ИнвестАналитики по данным ISS MOEX и Банка России";
+  const GROWTH_LABEL = { cagr: "в среднем в год", xirr: "в среднем в год с учётом пополнений",
+    total: "доходность за весь срок", gain: "прирост сверх внесённого за весь срок" };
+  facts = [];
+  const pushFacts = (id, key, n, s, paid, gr) => {
+    facts.push(
+      fact(`${id}.final`, `${n}: итоговая стоимость`, s.values.at(-1), "rub", fmtRub(s.values.at(-1)), SRC),
+      fact(`${id}.invested`, `${n}: внесено`, paid, "rub", fmtRub(paid), SRC),
+      fact(`${id}.period`, `${n}: период`, null, "period",
+        `${fmtDate(s.dates[0])} — ${fmtDate(s.dates.at(-1))}`, SRC),
+      fact(`${id}.max_drawdown`, `${n}: максимальная просадка`, reports[key].max_drawdown, "pct",
+        fmtPct(reports[key].max_drawdown, 1), SRC));
+    if (gr.kind) facts.push(fact(`${id}.${gr.kind}`, `${n}: ${GROWTH_LABEL[gr.kind]}`, gr.v, "pct", fmtPct(gr.v, 1), SRC));
+  };
+  names.forEach((n, i) => pushFacts(`pf${i + 1}`, n, n, results[n].equity,
+    p.contrib > 0 ? results[n].invested.values.at(-1) : p.cap, growth(n, results[n].equity, p.contrib > 0)));
+  if (benchScaled) pushFacts("bench", benchName, `Бенчмарк ${benchName}`, benchScaled, p.cap, growth(benchName, bench, false));
 
   // --- карточки
   const kpis = h("div", { class: "kpis" });
