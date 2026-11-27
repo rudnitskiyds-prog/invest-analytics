@@ -14,8 +14,9 @@ from logic import (FALLBACK_SYSTEM_PROMPT, LABEL, REFUSAL, BadRequest, build_mes
 
 OAUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 CHAT_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
-TIMEOUT = (5, 12)  # подключение, чтение: OAuth + чат + повтор укладываются в 30 с функции
-MAX_TOKENS = 800
+TIMEOUT = (5, 8)        # OAuth: подключение, чтение
+CHAT_TIMEOUT = (5, 22)  # чат: GigaChat отвечает дольше 12 с (проверено прямым вызовом); токен обычно в кэше, итого < 30 с функции
+MAX_TOKENS = 500
 
 
 def _load_prompt() -> str:
@@ -104,7 +105,7 @@ def _chat(messages: list) -> str:
     for attempt in range(2):
         token = _get_token()  # Upstream("oauth", …) уходит наверх как есть
         try:
-            r = requests.post(CHAT_URL, json=payload, timeout=TIMEOUT, verify=_verify(),
+            r = requests.post(CHAT_URL, json=payload, timeout=CHAT_TIMEOUT, verify=_verify(),
                               headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
             if r.status_code == 401 and attempt == 0:  # токен отозван раньше срока — берём новый
                 _token["value"] = None
