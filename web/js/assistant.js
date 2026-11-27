@@ -163,7 +163,7 @@ async function ask(raw) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
   try {
-    const screen = { route: route.path, title: document.title.replace(/ — ИнвестАналитика$/, ""), facts: facts() || [] };
+    const screen = { route: route.path, title: document.title.replace(/ — FinServ$/, ""), facts: facts() || [] };
     let res;
     try {
       res = await fetch(ASSISTANT_URL, {

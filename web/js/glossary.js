@@ -1,4 +1,4 @@
-// Глоссарий для подсказок «?» и режим «Просто / Подробно».
+// Глоссарий для подсказок «?».
 // ponytail: термины пока здесь, в JS; на этапе 5 переезжают в content/glossary/*.md со сборкой в JSON.
 
 import { h } from "./dom.js";
@@ -46,9 +46,6 @@ export const TERMS = {
   ytm: { term: "Доходность к погашению", short: "Примерно столько процентов в год, если продержать облигацию до погашения и эмитент заплатит всё в срок (без учёта налога)." },
 };
 
-/** Метрики, которые видны в режиме «Просто»; остальные строки таблиц — только в «Подробно». */
-export const SIMPLE_METRICS = new Set(["total_return", "cagr", "max_drawdown", "worst_period", "best_period", "days_to_recover"]);
-
 let seq = 0;
 
 /** Кнопка «?» с всплывающим пояснением (Popover API: открывается по нажатию, работает на телефоне). */
@@ -60,23 +57,4 @@ export function hint(key) {
     h("button", { type: "button", class: "gl-btn", popovertarget: id, "aria-label": `Что такое «${t.term}»?` }, "?"),
     h("span", { id, popover: "auto", class: "gl-pop" },
       h("b", {}, t.term), " ", t.short));
-}
-
-const MODE_KEY = "ia-mode";
-
-export function getMode() {
-  try {
-    return localStorage.getItem(MODE_KEY) === "pro" ? "pro" : "simple";
-  } catch {
-    return "simple";
-  }
-}
-
-export function setMode(m) {
-  document.documentElement.dataset.mode = m;
-  try {
-    localStorage.setItem(MODE_KEY, m);
-  } catch {
-    /* приватный режим — только на эту вкладку */
-  }
 }

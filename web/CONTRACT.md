@@ -305,6 +305,11 @@ export async function loadSymbolStats({base, fetchImpl}={}) -> {updated, items: 
 * `data.js` `fetchIssSecurity`/`loadAsset` берут те же свечи ISS — они тоже скорректированы на сплиты биржей
   (без подклейки TQTF у фондов — она есть только в `fetchOHLC`).
 * `symbol.js` экспортирует также `classify({type, group, secid, market, sectype})` и `DEFAULT_BENCHMARKS`.
+* `fetchLastPrices(secids, {fetchImpl}) -> {SECID: {last, prevClose, change, changePct, board, currency}}` — последние
+  цены двумя параллельными запросами ISS (`markets/shares` и `markets/index`, `securities=A,B,…`,
+  `iss.only=securities,marketdata`), без свечей. last — LAST → LCURRENTPRICE → PREVPRICE (индексы — CURRENTVALUE →
+  LASTVALUE); prevClose — PREVPRICE (индексы — LASTVALUE); change — доля, changePct — в %; режим — TQBR, затем TQTF,
+  затем любой; currency — ISO ('SUR' → 'RUB'), у индексов null. Не найдено (облигации, металлы, сбой) — ключа нет.
   Класс: `metal` (GLDRUB_TOM и др., *metal*), `index`, `bond`, `fund` (*ppif*/*etf*, SECTYPE J/9/A/B),
   `share` (*share*/*depositary*, SECTYPE 1/2/D), `currency`; иначе `null`.
 * `fetchSecurityInfo`: `couponPercent` — в % годовых (как в ISS, по имени поля), `couponPeriod` — дней
@@ -459,3 +464,83 @@ public_data.symbol_stats() -> dict | None                     # public/data/symb
 * Каждая страница регистрирует сборщик фактов: `registerFacts(route, () => facts[])` — берёт уже посчитанные
   интерфейсом значения (не считает заново). Если `fetch` недоступен (локально, демо) — понятное сообщение
   «Ассистент работает на опубликованном сайте».
+
+## FinServ: редизайн, главная, логотипы компаний, скринеры, портфели (ветка `feature/finserv-redesign`)
+
+Бренд — **FinServ** (везде вместо «ИнвестАналитика»: интерфейс, заголовки, источники «расчёт FinServ», промпт).
+Режим «Просто / Подробно» убирается: одна версия, полная и понятная (подсказки «?» и «Если коротко» остаются).
+Ориентир — информационная архитектура главной portfolioslab.com (набор и порядок блоков), но оформление,
+тексты, графика и логотип — свои; тема **светлая**; данные — только российские.
+
+### Дизайн-токены (`web/css/tokens.css`, подключается первым; все экраны используют только их)
+```css
+--font: "Montserrat", system-ui, sans-serif;   /* @font-face: web/vendor/fonts/montserrat-{cyrillic,latin}-wght-normal.woff2, 100–900 */
+--bg: #F6F7F9;  --surface: #FFFFFF;  --surface-2: #F1F3F6;  --border: #E3E7ED;  --border-strong: #CBD2DC;
+--text: #0E1726; --text-muted: #5B6676; --brand: #0F766E; --brand-strong: #0B5D57; --brand-soft: #E6F4F2;
+--accent: #F59E0B; --pos: #15803D; --neg: #DC2626; --chart-grid: #E8ECF1;
+--radius: 14px; --radius-sm: 8px; --shadow: 0 1px 2px rgb(14 23 38 / .06), 0 4px 16px rgb(14 23 38 / .06);
+```
+Тёмная тема не поддерживается (prefers-color-scheme игнорируем, `color-scheme: light`).
+
+### Логотип FinServ — `web/img/finserv-logo.svg` (знак) и `web/img/finserv-wordmark.svg`
+Свой: геометрический знак в скруглённом квадрате цвета `--brand`, читается и как «F», и как растущий график;
+работает в 16 px (favicon) и 40 px (шапка).
+
+### Логотипы компаний — `web/js/logo.js` (site) ← данные сборщика (api)
+* api: в `public/data/tinvest_shares.json` и `tinvest_etfs.json` у каждой записи `logo` (имя файла из T-Invest
+  `brand.logo_name`, например `"sber.png"`) и `logo_color` (`brand.logo_base_color`, `#RRGGBB`) — если есть.
+* `logoFor(secid)` → `{url|null, color, initials}`; url = `https://invest-brands.cdn-tinkoff.ru/<имя без .png>x160.png`.
+  `assetBadge(secid, size=24)` — круглый `<img>` (alt="", loading="lazy", ошибка загрузки → кружок с 1–2 буквами
+  тикера на `logo_color` или нейтральном фоне). Индексы, металлы, ОФЗ — кружок с иконкой класса.
+* Источник фиксируется в `docs/DATA_PERMISSIONS.md` как часть разрешения Т-Банка (T-Invest API).
+
+### Скринеры `/screener/stocks|funds|bonds` — данные считает сборщик, браузер только фильтрует
+* api, `web/lib/screener.js`:
+  `loadScreener(kind, {base}) -> {updated, source, columns: [{key, label, type: "pct"|"num"|"rub"|"text"|"date", group}], rows: [{secid, name, ...}]}`
+  * `stocks`: join `symbol_stats.json` (class share) + `tinvest_shares.json` (имя, сектор, лого) + `fundamentals.json`
+    (P/E, P/B, EV/EBITDA, ROE, див. доходность) — колонки: тикер, название, сектор, CAGR, волатильность,
+    макс. просадка, Шарп, Сортино, рейтинг (score), P/E, P/B, ROE, див. доходность.
+  * `funds`: `symbol_stats` (class fund) + `rusetfs_funds.json` (УК, СЧА, комиссия, класс активов) + `tinvest_etfs.json`.
+  * `bonds`: новый файл сборщика `public/data/screener_bonds.json` (ISS TQOB, TQCB; раз в сутки): secid, name,
+    board, yield (доходность к погашению/оферте), duration_days, coupon_pct, coupon_freq, maturity_date, offer_date,
+    listing_level, volume_rub (оборот за день), price_pct, nkd.
+  * `filterRows(rows, filters)`, `sortRows(rows, key, dir)` — чистые функции (тест в tests/web).
+  * **Фактические ключи колонок** (`COLUMNS[kind]` в `web/lib/screener.js`; pct — доли):
+    * stocks: `secid, name, sector` (рус. подпись сектора T-Invest), `cagr, volatility, max_drawdown` (pct),
+      `sharpe, sortino, score` (num), `pe, pb, ev_ebitda` (num), `roe, dividend_yield` (pct; из % T-Invest / 100).
+      Строки — объединение акций symbol_stats и tinvest_shares (без 36 мес. истории — коэффициенты null).
+    * funds: `secid, name, issuer, asset_class` (text), `commission` (pct; RusETFs commission_pct / 100, иначе
+      T-Invest fixed_commission / 100), `aum_rub` (rub), `cagr … score` как у акций. Строки — фонды symbol_stats
+      ∪ tinvest_etfs; RusETFs только обогащает (неторгуемые фонды RusETFs не попадают).
+    * bonds: `secid, name, type` («ОФЗ» / «Корпоративная»), `face_currency` (text, валюта номинала), `yield, coupon_pct` (pct), `coupon_freq,
+      duration_days` (num), `maturity_date, offer_date` (date), `price_pct` (num, % номинала), `nkd, volume_rub`
+      (rub), `listing_level` (num).
+    * `symbol_stats.json` items[secid] дополнительно: `name` (SHORTNAME ISS или null), `ret_6m` (доля; metrics.period_returns
+      "6M" на конец прошлого месяца — у акций с дивидендами, у фондов по цене). Цен в файле нет (котировки
+      не пишутся) — цену главная берёт из ISS в браузере. `portfolios.json` items[slug].row.`ret_6m` (доля, "6M").
+      В loadScreener name из symbol_stats — запасной вариант после T-Invest/RusETFs.
+    * Доп. поля строк вне columns: `logo, logo_color` (stocks/funds), `board` (bonds). Нет файла — поля null.
+  * `filters`: `{q: 'текст'}` — подстрока тикера/названия; `{key: {min, max}}` — диапазон включительно (числа или
+    ISO-даты, null не проходит); `{key: [..]}` — из списка; `{key: 'v'}` — точное совпадение без регистра.
+    `sortRows`: dir `'asc'|'desc'` (по умолчанию desc), null всегда в конце, устойчивая, новый массив.
+  * `screener_bonds.json` = `{updated, source: "ISS MOEX", boards: ["TQOB","TQCB"], data: [...]}`, сборщик
+    `--only screener_bonds` (отдельный шаг workflow). Все непогашенные выпуски с ценой, без отсечки по обороту.
+* site: `web/js/page-screener.js` — таблица с поиском, фильтрами по ключевым колонкам (сектор, диапазоны),
+  выбором колонок, сортировкой, пагинацией (50), CSV; логотип слева от тикера; клик — страница бумаги;
+  дата и источник данных над таблицей; пустые/ошибочные состояния.
+
+### Портфели `/portfolios/lazy` и `/portfolio/{slug}` — перенос `pages/8_Портфели.py` (site)
+`public/data/portfolios.json` уже есть (groups, items[slug].row/…, series, series_benchmark, risk_return):
+листинг с сортировкой и диаграммой «риск — доходность», страница портфеля (состав, рост 100 000 ₽ против
+бенчмарка, доходность по периодам, просадки, «Как повторить» с БПИФ и комиссиями, «Открыть в бэктесте»).
+Расчётов в интерфейсе нет — только данные файла (если чего-то не хватает — список для api).
+
+### Главная `/` (site) — блоки по порядку
+1. Герой: заголовок-миссия, подзаголовок, кнопка «Проверить портфель» (→ бэктест), поиск по бумагам.
+2. Лента карточек готовых портфелей (из portfolios.json): название, мини-график, доходность за 6 мес.
+3. «От идеи до портфеля» — 5 шагов (изучить → сравнить → выбрать → проверить на истории → подобрать доли),
+   каждый ведёт в раздел.
+4. Блок про диверсификацию/корреляции (пример на реальных индексах: акции, ОФЗ, золото) → граница/бэктест.
+5. Сравнение двух бумаг (два поля + популярные пары SBER/GAZP, TMOS/EQMX, …) → бэктест/сравнение.
+6. «Популярные бумаги» (лого, тикер, название, цена, изменение за 6 мес.) и «Лидеры рейтинга» (symbol_stats).
+7. Дисклеймер. Раздел «База знаний» — позже (в меню не показываем).

@@ -298,7 +298,7 @@ def block_rating(sec: str, rating: Optional[dict] = None, err: Optional[str] = N
                f"100 — лучший показатель класса. Рейтинг ночной, по месячным доходностям {basis}; "
                "Rf — средняя доходность коротких ОФЗ за период бумаги, поэтому значения могут отличаться от коэффициентов "
                "ниже (они — по дневным данным). "
-               f"Источник: {(stats or {}).get('source') or 'ISS MOEX (расчёт ИнвестАналитики)'}"
+               f"Источник: {(stats or {}).get('source') or 'ISS MOEX (расчёт FinServ)'}"
                f"{f', обновлено {upd}' if upd != '—' else ''}.")
     score = it.get("score")
     a, b = st.columns([1, 4])

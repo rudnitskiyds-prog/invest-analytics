@@ -201,7 +201,7 @@ function render() {
   const front = [...fr.frontier].sort((a, b) => a.vol - b.vol);
   const mv = fr.minVar;
   const ms = fr.maxSharpe;
-  const SRC = "расчёт ИнвестАналитики по данным ISS MOEX и Банка России";
+  const SRC = "расчёт FinServ по данным ISS MOEX и Банка России";
   facts = [fact("period", "Общий период данных", null, "period",
     `${fmtDate(frame.dates[0])} — ${fmtDate(frame.dates.at(-1))}`, SRC)];
   for (const [id, title, pt] of [["max_sharpe", "Касательный портфель (макс. Шарп)", ms], ["min_var", "Портфель минимальной дисперсии", mv]]) {

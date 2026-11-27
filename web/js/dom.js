@@ -98,7 +98,9 @@ export function downloadCsv(filename, rows) {
 }
 
 function csvCell(v) {
-  const s = v == null ? "" : String(v);
+  let s = v == null ? "" : String(v);
+  // защита от CSV-инъекции: текст, начинающийся с = + - @ TAB CR, — с апострофом; числа («-1,5») не трогаем
+  if (typeof v !== "number" && /^[=+\-@\t\r]/.test(s) && !/^-?\d+(,\d+)?$/.test(s)) s = `'${s}`;
   return /[;"\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

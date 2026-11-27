@@ -1,4 +1,4 @@
-# Выкладка ИнвестАналитики в Yandex Cloud
+# Выкладка FinServ в Yandex Cloud
 
 Сайт и ассистент GigaChat работают в Yandex Cloud и закрыты логином и паролем:
 

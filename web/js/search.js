@@ -3,6 +3,7 @@
 
 import { h, put } from "./dom.js";
 import { engine } from "./engine.js";
+import { assetBadge } from "./logo.js";
 import { isDemo } from "./state.js";
 
 /** Популярные бумаги (статичный список для главной и офлайн-подсказок). */
@@ -87,6 +88,7 @@ export function attachSearch(input, { onPick, limit = 8 } = {}) {
         id: `${id}-o${i}`, role: "option", "aria-selected": "false", class: "search-opt",
         onmousedown: (e) => { e.preventDefault(); pick(r.secid); },
       },
+      assetBadge(r.secid, 28, r.cls),
       h("span", { class: "so-key" }, r.secid),
       h("span", { class: "so-name" }, r.shortName || r.name || ""),
       h("span", { class: "so-cls" }, classLabel(r.cls) + (r.isTraded === false ? " · не торгуется" : "")))),

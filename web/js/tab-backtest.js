@@ -8,7 +8,7 @@ import { bindCheckbox, bindNumber, bindValue, globals, readDates, readNumber, FR
 import { csvNum, fmtDate, fmtMetric, fmtNum, fmtPct, fmtRub, parseNum } from "./format.js";
 import { riskFree } from "./riskfree.js";
 import { getMany } from "./source.js";
-import { hint, SIMPLE_METRICS } from "./glossary.js";
+import { hint } from "./glossary.js";
 import * as S from "./state.js";
 
 export const PF_NAME = "Свой портфель";
@@ -156,7 +156,7 @@ const CLASS_WORDS = {
   "Денежный рынок": "Денежный рынок (почти как вклад)",
 };
 
-/** «Акции 30 % · Золото 30 % …» — доли суммируются по классу актива из каталога; коды индексов — в «Подробно». */
+/** «Акции 30 % · Золото 30 % …» — доли суммируются по классу актива из каталога; коды индексов — серым в скобках. */
 function weightsText(w) {
   const cls = Object.fromEntries((engine.data?.CATALOG || []).map((c) => [c.key, c.assetClass]));
   const groups = new Map();  // класс (или код, если его нет в каталоге) → { v, keys }
@@ -169,7 +169,7 @@ function weightsText(w) {
   }
   return [...groups].map(([name, { v, keys }]) => h("span", { class: "w-item" },
     `${name} ${fmtPct(v, Math.round(v * 1000) % 10 ? 1 : 0)}`,
-    keys.length ? h("span", { class: "adv muted" }, ` (${keys.join(", ")})`) : null))
+    keys.length ? h("span", { class: "muted" }, ` (${keys.join(", ")})`) : null))
     .flatMap((x, i) => (i ? [" · ", x] : [x]));
 }
 
@@ -386,7 +386,7 @@ function render() {
   };
 
   // --- факты для ассистента: те же значения, что в карточках и «Если коротко»
-  const SRC = "расчёт ИнвестАналитики по данным ISS MOEX и Банка России";
+  const SRC = "расчёт FinServ по данным ISS MOEX и Банка России";
   const GROWTH_LABEL = { cagr: "в среднем в год", xirr: "в среднем в год с учётом пополнений",
     total: "доходность за весь срок", gain: "прирост сверх внесённого за весь срок" };
   facts = [];
@@ -479,7 +479,7 @@ function render() {
   // --- показатели эффективности
   const cols = Object.keys(reports);
   const metricsTable = buildMetricsTable(cols, reports, (c) => colorOf(c, { bench: c === benchName && !!bench }),
-    { hideGrowth: p.contrib > 0 });
+    { contrib: p.contrib > 0 });
   const costs = names.map((n) => {
     const r = results[n];
     return `${n}: оборот ${fmtNum(r.turnover, 1)}×, комиссии ${fmtRub(r.costs)}, налог ${fmtRub(r.taxes)}`;
@@ -488,17 +488,16 @@ function render() {
     h("div", { class: "chart-head" },
       h("div", {},
         h("h3", { class: "card-title" }, "Показатели эффективности"),
-        h("p", { class: "card-sub simple-only" }, "Нажмите «?», чтобы узнать, что значит показатель. Все коэффициенты — в режиме «Подробно»."),
-        h("p", { class: "card-sub adv" },
+        h("p", { class: "card-sub" },
           `${g.rfNote} Доходности ${FREQ_LABELS[g.freq]}, бенчмарк ${benchName}.`)),
       h("div", { class: "toolbar" },
         h("button", { type: "button", class: "btn btn-sm", onclick: () => csvMetrics(cols, reports) }, "Скачать CSV — показатели"),
         h("button", { type: "button", class: "btn btn-sm", onclick: () => csvEquity(lineSeries) }, "Скачать CSV — стоимость"))),
     tableWrap(metricsTable),
-    h("p", { class: "hint adv" }, `Оборот и издержки — ${costs}.`)));
+    h("p", { class: "hint" }, `Оборот и издержки — ${costs}.`)));
 
   // --- по годам
-  out.append(h("section", { class: "card adv" },
+  out.append(h("section", { class: "card" },
     h("h3", { class: "card-title" }, "Доходность по годам"),
     h("p", { class: "card-sub" }, "Первый и последний годы — неполные, от даты начала / до даты конца"),
     tableWrap(heatmap(lineSeries))));
@@ -511,7 +510,7 @@ function render() {
     tradesBox.replaceChildren(tradesTable(r));
   };
   sel.addEventListener("change", drawTrades);
-  out.append(h("section", { class: "card adv" },
+  out.append(h("section", { class: "card" },
     h("div", { class: "chart-head" },
       h("div", {},
         h("h3", { class: "card-title" }, "Журнал сделок"),
@@ -524,19 +523,21 @@ function render() {
   drawTrades();
 }
 
-// hideGrowth: при пополнениях CAGR и накопленная доходность ряда включают взносы — в «Просто» их не показываем
-export function buildMetricsTable(cols, reports, colorFor, { simple = true, hideGrowth = false } = {}) {
+// contrib: при пополнениях CAGR и накопленная доходность считаются по стоимости ряда, то есть включают взносы
+export function buildMetricsTable(cols, reports, colorFor, { contrib = false } = {}) {
   const GROWTH = new Set(["cagr", "total_return"]);
   const { LABELS_RU, PERCENT_FIELDS } = engine.metrics;
   const pf = toSet(PERCENT_FIELDS);
   const head = h("tr", {}, h("th", { scope: "col" }, "Показатель"),
     ...cols.map((c) => h("th", { scope: "col", class: "num" },
       h("span", { class: "swatch", style: { background: colorFor(c) }, "aria-hidden": "true" }), c)));
-  const rows = entries(LABELS_RU).map(([key, label]) =>
+  const rows = entries(LABELS_RU).map(([key, base]) => {
+    const label = contrib && GROWTH.has(key) ? `${base} (по стоимости, включая взносы)` : base;
     // aria-label на th — чтобы кнопка «?» не попадала в имя заголовка строки
-    h("tr", { class: !simple || (SIMPLE_METRICS.has(key) && !(hideGrowth && GROWTH.has(key))) ? null : "adv" },
+    return h("tr", {},
       h("th", { scope: "row", "aria-label": label }, h("span", {}, label), hint(key)),
-      ...cols.map((c) => h("td", { class: "num" }, fmtMetric(key, reports[c][key], pf)))));
+      ...cols.map((c) => h("td", { class: "num" }, fmtMetric(key, reports[c][key], pf))));
+  });
   return h("table", { class: "metrics-table" }, h("thead", {}, head), h("tbody", {}, rows));
 }
 
@@ -590,11 +591,12 @@ function csvEquity(lineSeries) {
 }
 
 function csvMetrics(cols, reports) {
-  const { LABELS_RU } = engine.metrics;
+  const { LABELS_RU, PERCENT_FIELDS } = engine.metrics;
   const rows = [["Показатель", "Ключ", ...cols]];
+  const pct = (k) => PERCENT_FIELDS?.has(k); // доли → проценты, как в заголовке «…, %»
   rows.push(["Начало", "start", ...cols.map((c) => reports[c].start)]);
   rows.push(["Конец", "end", ...cols.map((c) => reports[c].end)]);
-  for (const [k, label] of entries(LABELS_RU)) rows.push([label, k, ...cols.map((c) => csvNum(reports[c][k], 8))]);
+  for (const [k, label] of entries(LABELS_RU)) rows.push([pct(k) && !label.includes("%") ? `${label}, %` : label, k, ...cols.map((c) => csvNum(pct(k) && Number.isFinite(reports[c][k]) ? reports[c][k] * 100 : reports[c][k], 6))]);
   downloadCsv("backtest_pokazateli.csv", rows);
 }
 

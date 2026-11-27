@@ -1,5 +1,5 @@
 """
-ИнвестАналитика — информационно-аналитическая платформа оценки эффективности инвестиций.
+FinServ — информационно-аналитическая платформа оценки эффективности инвестиций.
 Запуск:  streamlit run app.py
 """
 import os
@@ -13,7 +13,7 @@ try:
 except Exception:  # noqa: BLE001 — secrets.toml отсутствует
     pass
 
-st.set_page_config(page_title="ИнвестАналитика", page_icon="📈", layout="wide")
+st.set_page_config(page_title="FinServ", page_icon="📈", layout="wide")
 
 pages = {
     "Рынок": [

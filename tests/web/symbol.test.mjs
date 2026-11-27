@@ -463,7 +463,7 @@ describe('loadFundInfo', () => {
 
 describe('loadSymbolStats', () => {
   test('файл есть — объект как в файле; нет файла / нет items — null', async () => {
-    const body = { updated: '2026-10-08T03:00:00+00:00', source: 'ISS MOEX (расчёт ИнвестАналитики)', rf: 0.17,
+    const body = { updated: '2026-10-08T03:00:00+00:00', source: 'ISS MOEX (расчёт FinServ)', rf: 0.17,
       window: {}, classes: { share: { n: 1 } }, items: { SBER: { class: 'share', score: 50 } } };
     assert.deepEqual(await Y.loadSymbolStats({ base: '/d', fetchImpl: iss([[/\/d\/symbol_stats\.json$/, body]]) }), body);
     assert.equal(await Y.loadSymbolStats({ base: '/d', fetchImpl: iss([]) }), null);

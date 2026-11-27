@@ -296,6 +296,7 @@ def test_synthetic_table_rank_none_short_history(synthetic):
     assert df["rank"].isna().all()
     assert (df["rank_window"] == "5Y").all()
     assert list(df.columns) == [*pf.TABLE_COLUMNS, "stale"]
+    assert "ret_6m" in pf.TABLE_COLUMNS   # доходность за 6 мес. — карточки портфелей на главной
     assert not df["stale"].any()
     assert df.attrs["source"] == "live" and df.attrs["updated"] is None
 
