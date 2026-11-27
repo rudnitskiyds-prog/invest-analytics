@@ -23,6 +23,8 @@
         <p class="brand-sub">Оценка эффективности инвестиций на российском рынке</p>
       </div>
     </a>
+    <button type="button" id="mode-toggle" class="mode-toggle" aria-pressed="false"
+      title="Подробно — все коэффициенты и настройки расчёта; Просто — только главное">Подробно</button>
     <button type="button" id="nav-toggle" class="nav-toggle" aria-expanded="false" aria-controls="site-nav">
       <span aria-hidden="true">☰</span><span class="sr-only">Меню разделов</span>
     </button>
@@ -37,7 +39,7 @@
     </nav>
     <div class="nav-search" role="search">
       <label for="nav-search" class="sr-only">Поиск бумаги по тикеру или названию</label>
-      <input id="nav-search" type="text" placeholder="Тикер или название: SBER, ОФЗ…" enterkeyhint="go">
+      <input id="nav-search" type="text" placeholder="Найти: Сбербанк, золото, ОФЗ…" enterkeyhint="go">
     </div>
   </div>
 </header>
@@ -58,7 +60,7 @@
   <a href="#/tools" class="tool-nav-all">Все инструменты</a>
 </nav>
 
-<div class="wrap params-bar" id="params-bar" hidden>
+<div class="wrap params-bar adv" id="params-bar" hidden>
   <form class="global-params" id="global-form" aria-label="Общие параметры расчёта" onsubmit="return false">
     <div class="field field-compact" id="g-rf" role="group" aria-labelledby="g-rf-label">
       <span id="g-rf-label" class="label">Безрисковая ставка</span>
@@ -85,16 +87,17 @@
 <!-- ============================================================ ГЛАВНАЯ -->
 <section class="panel" id="panel-home" aria-labelledby="h-home" hidden>
   <div class="hero card">
-    <h2 id="h-home">Доходность и риск бумаг Мосбиржи — в одном месте</h2>
-    <p class="lead">Страницы акций, фондов, облигаций и индексов: доходность по периодам, моментум, просадки,
-      волатильность, дивиденды и рейтинг риск/доходность. Бэктест портфелей и граница Марковица.
-      Данные — ISS Мосбиржи, Банк России, T-Invest API и RusETFs.</p>
+    <h2 id="h-home">Посмотрите, как вели себя вложения в прошлом</h2>
+    <p class="lead">Сколько приносили акции, облигации, фонды и золото, насколько глубоко они падали и как быстро
+      восстанавливались. Простыми словами и в рублях. Данные — Московская биржа и Банк России.</p>
     <div class="hero-search">
-      <label for="home-search">Найти бумагу</label>
-      <input id="home-search" type="text" placeholder="Тикер, название или ISIN" enterkeyhint="go">
-      <small class="hint">Начните вводить — появятся подсказки; Enter откроет страницу бумаги.</small>
+      <label for="home-search">Найти акцию, фонд или облигацию</label>
+      <input id="home-search" type="text" placeholder="Например: Сбербанк, золото, ОФЗ" enterkeyhint="go">
+      <small class="hint">Начните вводить название — появятся подсказки.</small>
     </div>
   </div>
+  <h3 class="section-title">С чего начать</h3>
+  <div class="entry-grid" id="home-goals"></div>
   <h3 class="section-title">Популярные бумаги</h3>
   <ul class="pop-list" id="home-popular"></ul>
   <h3 class="section-title">Разделы</h3>
@@ -133,13 +136,13 @@
 <section class="panel" id="panel-backtest" aria-labelledby="h-backtest" hidden>
   <div class="panel-head">
     <h2 id="h-backtest">Бэктест портфелей и стратегий</h2>
-    <p class="lead">По умолчанию: 1&nbsp;000&nbsp;000&nbsp;₽, 2011–2025, ежегодная ребалансировка
-      в последний торговый день декабря, без комиссий и налогов, бенчмарк — MCFTR.</p>
+    <p class="lead">Отметьте готовые портфели или соберите свой и посмотрите, что стало бы с вашими деньгами,
+      если бы вы вложили их в прошлом. По умолчанию: 1&nbsp;000&nbsp;000&nbsp;₽ с 2011 по 2025 год.</p>
   </div>
   <form id="bt-form" class="card form-card" novalidate>
     <div class="form-grid-2">
       <fieldset class="group">
-        <legend>Классические пассивные стратегии</legend>
+        <legend>Готовые портфели</legend>
         <div id="bt-strategies" class="check-list"><p class="muted">Загрузка списка стратегий…</p></div>
       </fieldset>
       <fieldset class="group">
@@ -162,18 +165,18 @@
       <div class="form-grid">
         <div class="field"><label for="bt-from">Начало</label><input id="bt-from" type="date" min="2003-01-01"></div>
         <div class="field"><label for="bt-till">Конец</label><input id="bt-till" type="date" min="2003-01-01"></div>
-        <div class="field"><label for="bt-cap">Начальный капитал, ₽</label><input id="bt-cap" type="text" inputmode="numeric" autocomplete="off"></div>
-        <div class="field"><label for="bt-rebal">Ребалансировка</label><select id="bt-rebal"></select></div>
-        <div class="field"><label for="bt-band">Коридор, п.&nbsp;п. (0 — нет)</label><input id="bt-band" type="text" inputmode="decimal" autocomplete="off"></div>
-        <div class="field"><label for="bt-comm">Комиссия, % от сделки</label><input id="bt-comm" type="text" inputmode="decimal" autocomplete="off"></div>
-        <div class="field"><label for="bt-contrib">Пополнение, ₽</label><input id="bt-contrib" type="text" inputmode="numeric" autocomplete="off"></div>
+        <div class="field"><label for="bt-cap">Сколько вложить, ₽</label><input id="bt-cap" type="text" inputmode="numeric" autocomplete="off"></div>
+        <div class="field adv"><label for="bt-rebal">Ребалансировка</label><select id="bt-rebal"></select></div>
+        <div class="field adv"><label for="bt-band">Коридор, п.&nbsp;п. (0 — нет)</label><input id="bt-band" type="text" inputmode="decimal" autocomplete="off"></div>
+        <div class="field adv"><label for="bt-comm">Комиссия, % от сделки</label><input id="bt-comm" type="text" inputmode="decimal" autocomplete="off"></div>
+        <div class="field"><label for="bt-contrib">Докладывать, ₽</label><input id="bt-contrib" type="text" inputmode="numeric" autocomplete="off"></div>
         <div class="field"><label for="bt-cfreq">Периодичность пополнения</label>
           <select id="bt-cfreq"><option value="M">Ежемесячно</option><option value="Q">Ежеквартально</option><option value="A">Ежегодно</option></select></div>
-        <div class="field"><label for="bt-tax">НДФЛ при ребалансировке, %</label><input id="bt-tax" type="text" inputmode="decimal" autocomplete="off"></div>
+        <div class="field adv"><label for="bt-tax">НДФЛ при ребалансировке, %</label><input id="bt-tax" type="text" inputmode="decimal" autocomplete="off"></div>
       </div>
     </fieldset>
     <div class="form-actions">
-      <button type="submit" class="btn btn-primary" id="bt-run">Запустить бэктест</button>
+      <button type="submit" class="btn btn-primary" id="bt-run">Посчитать</button>
       <span class="status" id="bt-status" role="status" aria-live="polite"></span>
     </div>
   </form>

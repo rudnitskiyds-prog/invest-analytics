@@ -7,6 +7,7 @@ import { bindCheckbox, bindNumber, bindValue, globals, readDates, readNumber, FR
 import { csvNum, fmtDate, fmtMetric, fmtNum, fmtPct, fmtRub, parseNum } from "./format.js";
 import { riskFree } from "./riskfree.js";
 import { getMany } from "./source.js";
+import { hint, SIMPLE_METRICS } from "./glossary.js";
 import * as S from "./state.js";
 
 export const PF_NAME = "Свой портфель";
@@ -75,7 +76,7 @@ function addPfRow(key = "", w = "") {
 }
 
 /** Задать свой портфель извне (граница Марковица, страница бумаги). weights — доли. */
-export function setCustomPortfolio(weights, message = "Веса с границы Марковица перенесены в «Свой портфель». Нажмите «Запустить бэктест».") {
+export function setCustomPortfolio(weights, message = "Веса с границы Марковица перенесены в «Свой портфель». Нажмите «Посчитать».") {
   const tbody = $("#bt-pf-table tbody");
   tbody.replaceChildren();
   for (const [k, w] of Object.entries(weights)) {
@@ -145,8 +146,12 @@ export function init() {
   );
 }
 
+/** «Акции 30 % · Золото 30 % …» — классы активов из каталога вместо кодов индексов; код — в «Подробно». */
 function weightsText(w) {
-  return entries(w).map(([k, v]) => `${k} ${fmtPct(v, v * 100 % 1 ? 1 : 0)}`).join(" · ");
+  const cls = Object.fromEntries((engine.data?.CATALOG || []).map((c) => [c.key, c.assetClass]));
+  return entries(w).map(([k, v]) => h("span", { class: "w-item" },
+    `${cls[k] || k} ${fmtPct(v, v * 100 % 1 ? 1 : 0)}`, cls[k] ? h("span", { class: "adv muted" }, ` (${k})`) : null))
+    .flatMap((x, i) => (i ? [" · ", x] : [x]));
 }
 
 function pickedIdx() {
@@ -328,16 +333,29 @@ function render() {
     kpis.append(h("div", { class: "kpi", style: { "--kpi-color": colorOf(n) } },
       h("div", { class: "kpi-name" }, n),
       h("div", { class: "kpi-value" }, fmtRub(eq.values.at(-1))),
-      h("div", { class: "kpi-sub" }, "CAGR ", h("b", {}, fmtPct(E.metrics.cagr(eq), 1)),
+      h("div", { class: "kpi-sub" }, "в среднем ", h("b", {}, fmtPct(E.metrics.cagr(eq), 1)), " в год",
         p.contrib > 0 ? ` · внесено ${fmtRub(r.invested.values.at(-1))}` : "")));
   }
   if (benchScaled) {
     kpis.append(h("div", { class: "kpi bench", style: { "--kpi-color": colorOf(benchName, { bench: true }) } },
       h("div", { class: "kpi-name" }, `Бенчмарк ${benchName}`),
       h("div", { class: "kpi-value" }, fmtRub(benchScaled.values.at(-1))),
-      h("div", { class: "kpi-sub" }, "CAGR ", h("b", {}, fmtPct(E.metrics.cagr(bench), 1)))));
+      h("div", { class: "kpi-sub" }, "в среднем ", h("b", {}, fmtPct(E.metrics.cagr(bench), 1)), " в год")));
   }
   out.append(kpis);
+
+  // --- итог простыми словами
+  const yrs = (Date.parse(p.till) - Date.parse(p.from)) / (365.25 * 864e5);
+  out.append(h("section", { class: "card plain-summary" },
+    h("h3", { class: "card-title" }, "Если коротко"),
+    names.map((n) => {
+      const eq = results[n].equity;
+      const paid = p.contrib > 0 ? results[n].invested.values.at(-1) : p.cap;
+      return h("p", {}, h("b", {}, n), ": вложили ", fmtRub(paid), " — к ", fmtDate(p.till), " стало бы ", h("b", {}, fmtRub(eq.values.at(-1))),
+        yrs >= 1 ? `, в среднем ${fmtPct(E.metrics.cagr(eq), 1)} в год` : null,
+        ". В худший момент портфель был ниже прошлого максимума на ", h("b", {}, fmtPct(Math.abs(E.metrics.maxDrawdown(eq)), 0)), ".");
+    }),
+    h("p", { class: "hint" }, "Расчёт на исторических данных. Прошлая доходность не гарантирует будущей. Не является индивидуальной инвестиционной рекомендацией.")));
 
   const lineSeries = names.map((n) => ({ name: n, ...results[n].equity }));
   if (benchScaled) lineSeries.push({ name: benchName, ...benchScaled, bench: true });
@@ -364,7 +382,7 @@ function render() {
   // --- просадки
   const ddCanvas = h("canvas", { role: "img", "aria-label": "График просадок" });
   out.append(h("section", { class: "card" },
-    h("h3", { class: "card-title" }, "Просадки"),
+    h("h3", { class: "card-title" }, "Просадки", hint("max_drawdown")),
     h("p", { class: "card-sub" }, "Снижение стоимости от предыдущего максимума"),
     h("div", { class: "chart-box short" }, ddCanvas)));
   lineChart(ddCanvas, {
@@ -386,16 +404,17 @@ function render() {
     h("div", { class: "chart-head" },
       h("div", {},
         h("h3", { class: "card-title" }, "Показатели эффективности"),
-        h("p", { class: "card-sub" },
+        h("p", { class: "card-sub simple-only" }, "Нажмите «?», чтобы узнать, что значит показатель. Все коэффициенты — в режиме «Подробно»."),
+        h("p", { class: "card-sub adv" },
           `${g.rfNote} Доходности ${FREQ_LABELS[g.freq]}, бенчмарк ${benchName}.`)),
       h("div", { class: "toolbar" },
         h("button", { type: "button", class: "btn btn-sm", onclick: () => csvMetrics(cols, reports) }, "Скачать CSV — показатели"),
         h("button", { type: "button", class: "btn btn-sm", onclick: () => csvEquity(lineSeries) }, "Скачать CSV — стоимость"))),
     tableWrap(metricsTable),
-    h("p", { class: "hint" }, `Оборот и издержки — ${costs}.`)));
+    h("p", { class: "hint adv" }, `Оборот и издержки — ${costs}.`)));
 
   // --- по годам
-  out.append(h("section", { class: "card" },
+  out.append(h("section", { class: "card adv" },
     h("h3", { class: "card-title" }, "Доходность по годам"),
     h("p", { class: "card-sub" }, "Первый и последний годы — неполные, от даты начала / до даты конца"),
     tableWrap(heatmap(lineSeries))));
@@ -408,7 +427,7 @@ function render() {
     tradesBox.replaceChildren(tradesTable(r));
   };
   sel.addEventListener("change", drawTrades);
-  out.append(h("section", { class: "card" },
+  out.append(h("section", { class: "card adv" },
     h("div", { class: "chart-head" },
       h("div", {},
         h("h3", { class: "card-title" }, "Журнал сделок"),
@@ -428,7 +447,7 @@ export function buildMetricsTable(cols, reports, colorFor) {
     ...cols.map((c) => h("th", { scope: "col", class: "num" },
       h("span", { class: "swatch", style: { background: colorFor(c) }, "aria-hidden": "true" }), c)));
   const rows = entries(LABELS_RU).map(([key, label]) =>
-    h("tr", {}, h("th", { scope: "row" }, label),
+    h("tr", { class: SIMPLE_METRICS.has(key) ? null : "adv" }, h("th", { scope: "row" }, label, hint(key)),
       ...cols.map((c) => h("td", { class: "num" }, fmtMetric(key, reports[c][key], pf)))));
   return h("table", { class: "metrics-table" }, h("thead", {}, head), h("tbody", {}, rows));
 }

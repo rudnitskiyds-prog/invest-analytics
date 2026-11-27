@@ -1,5 +1,6 @@
 // Точка входа: шапка с навигацией и поиском, hash-роутер, общие параметры, страницы.
 
+import { getMode, setMode } from "./glossary.js";
 import { applyChartDefaults, registerEntities } from "./charts.js";
 import { $, $$, h, notice } from "./dom.js";
 import { catalogList, engine, entries, loadEngine } from "./engine.js";
@@ -84,7 +85,19 @@ function setupGlobals() {
   });
 }
 
+function setupMode() {
+  const btn = $("#mode-toggle");
+  const apply = (m) => {
+    setMode(m);
+    btn.setAttribute("aria-pressed", m === "pro" ? "true" : "false");
+    btn.textContent = m === "pro" ? "Просто" : "Подробно";
+  };
+  apply(getMode());
+  btn.addEventListener("click", () => apply(getMode() === "pro" ? "simple" : "pro"));
+}
+
 function setupChrome() {
+  setupMode();
   // ссылка «К содержимому»: hash занят маршрутом — переводим фокус без смены адреса
   $(".skip-link").addEventListener("click", (e) => {
     e.preventDefault();

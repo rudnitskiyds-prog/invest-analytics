@@ -69,10 +69,13 @@ def browser():
 class Session:
     """Страница с журналами: ошибки консоли, внешние запросы, незнакомые запросы к ISS."""
 
-    def __init__(self, browser, server, *, live: bool, stats: bool = True, width: int | None = None):
+    def __init__(self, browser, server, *, live: bool, stats: bool = True, width: int | None = None,
+                 mode: str = "pro"):
         self.server = server
         kw = {"viewport": {"width": width, "height": 812}} if width else {}
         self.page = browser.new_page(**kw)
+        # режим «Просто / Подробно» (web/js/glossary.js); старые проверки — на полном интерфейсе
+        self.page.add_init_script(f"try {{ localStorage.setItem('ia-mode', '{mode}') }} catch (e) {{}}")
         self.errors: list[str] = []
         self.external: list[str] = []
         self.unknown_iss: list[str] = []
@@ -195,7 +198,7 @@ def test_demo_tools_backtest_frontier_metrics_docs(demo):
 
     # Бэктест: в демо считается сразу; плюс явный запуск кнопкой
     page.wait_for_selector("#bt-out table.metrics-table", timeout=TIMEOUT)
-    _rerun(page, "Запустить бэктест", "#bt-out")
+    _rerun(page, "Посчитать", "#bt-out")
     _assert_table_and_chart(page, "#bt-out", "table.metrics-table")
     text = page.locator("#bt-out table.metrics-table").inner_text()
     assert "Коэф. Шарпа" in text and "Лежебока" in text, text[:500]
@@ -365,6 +368,8 @@ def test_live_home_leaders_and_search(live):
     page.locator("#nav-search").press("ArrowDown")
     page.locator("#nav-search").press("Enter")
     page.wait_for_function("() => location.hash === '#/symbol/SBER'", timeout=TIMEOUT)
+    # панель переключается по hashchange — это следующая задача после смены адреса
+    page.wait_for_function("() => !document.querySelector('#panel-symbol').hidden", timeout=TIMEOUT)
     assert live.visible_panel() == ["panel-symbol"]
     _wait_blocks(page, len(SHARE_BLOCKS))
     assert any("securities.json" in u and "q=" in u for u in live.iss_calls)
@@ -492,12 +497,13 @@ def test_live_symbol_without_symbol_stats(browser, server):
 
 
 # ================================================================ мобильная ширина
+@pytest.mark.parametrize("mode", ["simple", "pro"])
 @pytest.mark.parametrize("live_mode, hash_", [
     (False, "#/"), (False, "#/tools"), (False, "#/tools/backtest"), (False, "#/docs"),
     (True, "#/symbol/SBER"), (True, "#/symbol/SU26238RMFS4"),
 ])
-def test_mobile_375_no_horizontal_scroll(browser, server, live_mode, hash_):
-    s = Session(browser, server, live=live_mode, width=375)
+def test_mobile_375_no_horizontal_scroll(browser, server, live_mode, hash_, mode):
+    s = Session(browser, server, live=live_mode, width=375, mode=mode)
     try:
         s.goto("" if live_mode else "?demo=1", hash_)
         if hash_.startswith("#/symbol"):
@@ -513,6 +519,35 @@ def test_mobile_375_no_horizontal_scroll(browser, server, live_mode, hash_):
             ".slice(0, 5).map((e) => e.tagName + '#' + e.id + '.' + e.className)")
         assert not wide, f"{hash_}: элементы шире экрана: {wide}"
         assert s.page.locator("#nav-toggle").is_visible(), "на мобильной ширине меню — за кнопкой"
+        s.check_clean()
+    finally:
+        s.close()
+
+
+def test_simple_mode_hides_expert_parts(browser, server):
+    """Режим «Просто» (по умолчанию для новых посетителей): итог словами, подсказки «?», без экспертных настроек."""
+    s = Session(browser, server, live=False, mode="simple")
+    try:
+        page = s.page
+        s.goto("?demo=1", "#/")
+        assert page.locator("#home-goals a").count() == 3
+        s.goto("?demo=1", "#/tools/backtest")
+        assert page.locator("#params-bar").is_hidden(), "в «Просто» общие параметры скрыты"
+        assert page.locator("#bt-band").is_hidden() and page.locator("#bt-cap").is_visible()
+        _rerun(page, "Посчитать", "#bt-out")
+        summary = page.locator("#bt-out .plain-summary").inner_text()
+        assert "стало бы" in summary and "не гарантирует" in summary, summary[:500]
+        table = page.locator("#bt-out table.metrics-table").inner_text()
+        assert "Макс. просадка" in table and "Коэф. Шарпа" not in table, table[:500]
+        # подсказка открывается по нажатию (телефон — без наведения)
+        page.locator("#bt-out .metrics-table .gl-btn").first.click()
+        assert page.locator(".gl-pop:popover-open").count() == 1
+        page.keyboard.press("Escape")
+        # переключатель возвращает полный интерфейс
+        page.locator("#mode-toggle").click()
+        assert page.locator("#params-bar").is_visible()
+        assert "Коэф. Шарпа" in page.locator("#bt-out table.metrics-table").inner_text()
+        assert page.evaluate("() => localStorage.getItem('ia-mode')") == "pro"
         s.check_clean()
     finally:
         s.close()
