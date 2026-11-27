@@ -519,3 +519,32 @@ DD22 = [{"id": "dd", "label": "Максимальная просадка", "valu
 ])
 def test_verify_numbers_negative_fact_round3(answer, expected):
     assert logic.verify_numbers(answer, DD22) == expected
+
+
+def test_diag_mode_reports_codes_and_timings_only(giga, monkeypatch):
+    """X-Diag: 1 — проверки канала до GigaChat; в ответе только коды/время, без токена."""
+    class R:
+        def __init__(self, code): self.status_code, self.content = code, b"{}"
+        def iter_content(self, n): return iter([b"data: {}"])
+        def close(self): pass
+    seen = []
+
+    def fake_request(method, url, **kw):
+        seen.append((method, url, kw.get("stream"), kw["timeout"]))
+        if kw.get("stream"):
+            raise index.requests.ReadTimeout()
+        return R(200)
+    monkeypatch.setattr(index.requests, "request", fake_request)
+    ev = _event()
+    ev["headers"]["X-Diag"] = "1"
+    status, data, r = _call(ev)
+    d = data["diag"]
+    assert status == 200 and d["oauth"].startswith("ok")
+    assert d["models"].startswith("200") and d["chat"].startswith("200") and d["chat_stream"].startswith("ReadTimeout")
+    assert [s[0] for s in seen] == ["GET", "POST", "POST"] and seen[0][1].endswith("/api/v1/models")
+    assert all(t == (5, 7) for *_, t in seen)
+    assert "tok1" not in r["body"]
+
+
+def test_diag_header_absent_runs_normal_flow(giga):
+    assert "diag" not in _call(_event())[1]
