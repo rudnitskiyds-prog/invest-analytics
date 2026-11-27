@@ -3,6 +3,7 @@
 // Все расчёты — web/lib (metrics.js, symbol.js) по контракту этапа 1 (web/CONTRACT.md);
 // здесь только выбор данных, срезы по датам и вывод.
 
+import { fact, registerFacts } from "./assistant.js";
 import { barChart, colorOf, destroyChart, heatStyle, lineChart, priceDigits } from "./charts.js";
 import { DATA_BASE } from "./config.js";
 import { $, h, notice, put, tableWrap } from "./dom.js";
@@ -40,6 +41,9 @@ class NoData extends Error {}
 let gen = 0;
 let route = null;
 const memo = new Map();
+// факты для ассистента: блоки кладут сюда уже выведенные значения (сбрасываются в render())
+let facts = [];
+registerFacts("/symbol/", () => facts);
 
 function once(key, fn, ttlMs = 0) {
   const hit = memo.get(key);
@@ -230,6 +234,7 @@ export function rerender() {
 
 function render() {
   const my = ++gen;
+  facts = [];
   const root = $("#sym-root");
   root.querySelectorAll("canvas").forEach(destroyChart);
   const t = route.ticker;
@@ -387,6 +392,14 @@ function buildBlocks(root, ctx) {
       ? h("div", { class: "range", role: "img", "aria-label": `Цена в диапазоне 52 недель: от ${fmtPrice(s.low52, unit)} до ${fmtPrice(s.high52, unit)}` },
         h("span", { class: "range-dot", style: { left: `${Math.max(0, Math.min(100, ((s.last - s.low52) / (s.high52 - s.low52)) * 100))}%` } }))
       : null;
+    const SRC = `ISS MOEX${s.date ? ` на ${fmtDate(String(s.date).slice(0, 10))}` : ""}`;
+    facts.push(
+      fact(`${t}.price`, `${t}: цена`, s.last, unit, fmtPrice(s.last, unit), SRC),
+      fact(`${t}.change_day`, `${t}: изменение за день`, s.changePct, "pct", signed(s.changePct, 2), SRC),
+      fact(`${t}.low52`, `${t}: минимум за 52 недели`, s.low52, unit, fmtPrice(s.low52, unit), SRC),
+      fact(`${t}.high52`, `${t}: максимум за 52 недели`, s.high52, unit, fmtPrice(s.high52, unit), SRC),
+      fact(`${t}.turnover_day`, `${t}: оборот за день`, s.valueRub, "rub", fmtBigRub(s.valueRub), SRC),
+      s.marketCap != null ? fact(`${t}.market_cap`, `${t}: капитализация`, s.marketCap, "rub", fmtBigRub(s.marketCap), SRC) : null);
     put(body, h("div", { class: "kpis" },
       kpi("Цена", fmtPrice(s.last, unit), s.prevClose != null ? `закрытие накануне ${fmtPrice(s.prevClose, unit)}` : ""),
       kpi("Изменение за день", h("span", { class: signClass(s.changePct) }, signed(s.changePct, 2)),
@@ -478,6 +491,16 @@ function buildBlocks(root, ctx) {
     }
     if (!live()) return;
     setSub(`${withDivsNote(p)} Для периодов больше года — также CAGR (среднегодовая доходность).`);
+    const SRC = "расчёт ИнвестАналитики по данным ISS MOEX";
+    for (const [key, rows] of [[t, mine], [benchKey, bm]]) {
+      if (!rows) continue;
+      for (const [k, label] of RETURN_PERIODS) {
+        const x = rows[k];
+        if (!x || !isNum(x.ret)) continue;
+        facts.push(fact(`${key}.ret_${k}`, `${key}: доходность, ${label.toLowerCase()}`, x.ret, "pct", fmtPct(x.ret, 1), SRC));
+        if (isNum(x.cagr)) facts.push(fact(`${key}.cagr_${k}`, `${key}: CAGR, ${label.toLowerCase()}`, x.cagr, "pct", fmtPct(x.cagr, 1), SRC));
+      }
+    }
     const cell = (x) => {
       if (!x || !isNum(x.ret)) return h("td", { class: "num muted" }, "—");
       return h("td", { class: "num", title: x.from ? `с ${fmtDate(x.from)}` : null },

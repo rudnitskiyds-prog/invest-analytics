@@ -1,0 +1,69 @@
+# Спецификация Yandex API Gateway. Подстановки (делает workflow выкладки через envsubst):
+# BUCKET, ASSISTANT_FUNCTION_ID, AUTH_FUNCTION_ID, SA_ID — см. infra/README.md.
+# Схема входа: «/» без авторизатора вызывает функцию auth, она отвечает 401 + WWW-Authenticate (браузер
+# показывает окно логина) или, если логин верный, 302 на /web/. Все остальные маршруты закрыты авторизатором.
+openapi: 3.0.0
+info:
+  title: invest-analytics
+  version: 1.0.0
+
+components:
+  securitySchemes:
+    siteAuth:
+      type: http
+      scheme: basic
+      x-yc-apigateway-authorizer:
+        type: function
+        function_id: ${AUTH_FUNCTION_ID}
+        tag: "$latest"
+        service_account_id: ${SA_ID}
+        authorizer_result_ttl_in_seconds: 300
+
+paths:
+  /:
+    get:
+      summary: Вход (окно логина браузера) и переход на /web/
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: ${AUTH_FUNCTION_ID}
+        tag: "$latest"
+        service_account_id: ${SA_ID}
+
+  /web/:
+    get:
+      summary: Главная страница сайта
+      security:
+        - siteAuth: []
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: ${BUCKET}
+        object: web/index.html
+        service_account_id: ${SA_ID}
+
+  /api/assistant:
+    post:
+      summary: Ассистент GigaChat
+      security:
+        - siteAuth: []
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: ${ASSISTANT_FUNCTION_ID}
+        tag: "$latest"
+        service_account_id: ${SA_ID}
+
+  /{path+}:
+    get:
+      summary: Статика из закрытого бакета (web/, public/data/, tests/fixtures/)
+      security:
+        - siteAuth: []
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: ${BUCKET}
+        object: "{path}"
+        service_account_id: ${SA_ID}
