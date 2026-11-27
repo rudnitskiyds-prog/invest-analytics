@@ -89,7 +89,7 @@ function setupMode() {
   const btn = $("#mode-toggle");
   const apply = (m) => {
     setMode(m);
-    btn.setAttribute("aria-pressed", m === "pro" ? "true" : "false");
+    btn.title = m === "pro" ? "Показать только главное" : "Показать все показатели и настройки";
     btn.textContent = m === "pro" ? "Просто" : "Подробно";
   };
   apply(getMode());

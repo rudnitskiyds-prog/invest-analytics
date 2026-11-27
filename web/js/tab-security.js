@@ -117,8 +117,8 @@ function render() {
   const cols = Object.keys(reports);
   out.append(h("section", { class: "card" },
     h("h3", { class: "card-title" }, "Показатели эффективности"),
-    h("p", { class: "card-sub" }, `${g.rfNote} Доходности ${FREQ_LABELS[g.freq]}, бенчмарк ${g.bench}.`),
-    tableWrap(buildMetricsTable(cols, reports, (c) => colorOf(c, { bench: c === g.bench })))));
+    h("p", { class: "card-sub adv" }, `${g.rfNote} Доходности ${FREQ_LABELS[g.freq]}, бенчмарк ${g.bench}.`),
+    tableWrap(buildMetricsTable(cols, reports, (c) => colorOf(c, { bench: c === g.bench }), { simple: false }))));
 }
 
 export function rerender() {

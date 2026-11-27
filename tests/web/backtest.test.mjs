@@ -130,6 +130,28 @@ describe('пополнения, комиссия, налог, веса', () => {
   });
 });
 
+describe('xirr по потокам бэктеста с пополнениями (синтетика)', () => {
+  // месячные концы 2020-01…2022-12; цена растёт ровно на g в год (дни/365,25)
+  const dates = [];
+  for (let y = 2020; y <= 2022; y++) for (let m = 1; m <= 12; m++) {
+    dates.push(new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10));
+  }
+  const t = dates.map((d) => (Date.parse(d) - Date.parse(dates[0])) / 864e5 / 365.25);
+  for (const g of [0, 0.1]) {
+    test(`рост ${g * 100} % в год, 1 000 000 + 50 000 в месяц → xirr = ${g * 100} %`, () => {
+      const F2 = { dates, cols: { A: t.map((x) => 100 * (1 + g) ** x), B: t.map((x) => 50 * (1 + g) ** x) } };
+      const r = runBacktest(F2, { weights: { A: 0.6, B: 0.4 }, initial: 1e6, rebalance: 'A',
+        contribution: 50000, contributionFreq: 'M' });
+      const inv = r.invested.values;
+      assert.equal(inv[0], 1050000, 'пополнение в первую дату');
+      const flows = [{ date: dates[0], amount: -inv[0] }];
+      for (let i = 1; i < inv.length; i++) if (inv[i] > inv[i - 1]) flows.push({ date: dates[i], amount: -(inv[i] - inv[i - 1]) });
+      flows.push({ date: dates.at(-1), amount: r.equity.values.at(-1) });
+      close(xirr(flows), g, 1e-6, 'xirr');
+    });
+  }
+});
+
 describe('паритет с Python', () => {
   test('квартальная ребалансировка + коридор + комиссия + пополнения + НДФЛ (окно 2011–2025)', () => {
     const ref = reference();

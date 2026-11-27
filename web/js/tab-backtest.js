@@ -146,11 +146,26 @@ export function init() {
   );
 }
 
-/** «Акции 30 % · Золото 30 % …» — классы активов из каталога вместо кодов индексов; код — в «Подробно». */
+const CLASS_WORDS = {
+  "Облигации гос.": "Гособлигации",
+  "Облигации корп.": "Корпоративные облигации",
+  "Денежный рынок": "Денежный рынок (почти как вклад)",
+};
+
+/** «Акции 30 % · Золото 30 % …» — доли суммируются по классу актива из каталога; коды индексов — в «Подробно». */
 function weightsText(w) {
   const cls = Object.fromEntries((engine.data?.CATALOG || []).map((c) => [c.key, c.assetClass]));
-  return entries(w).map(([k, v]) => h("span", { class: "w-item" },
-    `${cls[k] || k} ${fmtPct(v, v * 100 % 1 ? 1 : 0)}`, cls[k] ? h("span", { class: "adv muted" }, ` (${k})`) : null))
+  const groups = new Map();  // класс (или код, если его нет в каталоге) → { v, keys }
+  for (const [k, v] of entries(w)) {
+    const name = cls[k] ? (CLASS_WORDS[cls[k]] || cls[k]) : k;
+    const g = groups.get(name) || { v: 0, keys: [] };
+    g.v += v;
+    if (cls[k]) g.keys.push(k);
+    groups.set(name, g);
+  }
+  return [...groups].map(([name, { v, keys }]) => h("span", { class: "w-item" },
+    `${name} ${fmtPct(v, Math.round(v * 1000) % 10 ? 1 : 0)}`,
+    keys.length ? h("span", { class: "adv muted" }, ` (${keys.join(", ")})`) : null))
     .flatMap((x, i) => (i ? [" · ", x] : [x]));
 }
 
@@ -308,6 +323,19 @@ async function run() {
 
 // ---------------------------------------------------------------- вывод
 
+const yearsOf = (s) => (Date.parse(s.dates.at(-1)) - Date.parse(s.dates[0])) / (365.25 * 864e5);
+
+/** Потоки для xirr: −внесённое на первую дату (капитал и, возможно, первое пополнение), −каждое пополнение, +конечная стоимость. */
+function contribFlows(r) {
+  const { dates, values } = r.invested;
+  const flows = [{ date: dates[0], amount: -values[0] }];
+  for (let i = 1; i < dates.length; i++) {
+    if (values[i] > values[i - 1]) flows.push({ date: dates[i], amount: -(values[i] - values[i - 1]) });
+  }
+  flows.push({ date: r.equity.dates.at(-1), amount: r.equity.values.at(-1) });
+  return flows;
+}
+
 function render() {
   const E = engine;
   const { results, bench, g, p, warnings } = last;
@@ -325,35 +353,70 @@ function render() {
   const benchName = g.bench;
   const benchScaled = bench ? E.metrics.rebase(bench, p.cap) : null;
 
+  // показатели — одни и те же для карточек, «Если коротко» и таблицы
+  const reports = {};
+  for (const n of names) reports[n] = E.metrics.computeAll(results[n].equity, bench, g.rf, g.freq);
+  if (bench) reports[benchName] = E.metrics.computeAll(bench, bench, g.rf, g.freq);
+
+  // Годовой процент — только при фактическом сроке ≥ 1 года; при пополнениях CAGR стоимости включает взносы,
+  // поэтому показываем денежно-взвешенную доходность (xirr). kind: "cagr" | "xirr" | "total" | null.
+  const growth = (n, s, withContrib) => {
+    const long = yearsOf(s) >= 1;
+    if (withContrib) {
+      if (!long) {
+        // меньше года годовой процент не показываем — только прирост сверх внесённого
+        const paid = results[n].invested.values.at(-1);
+        return { kind: "gain", v: (s.values.at(-1) - paid) / paid };
+      }
+      const v = E.backtest.xirr(contribFlows(results[n]));
+      return Number.isFinite(v) ? { kind: "xirr", v } : { kind: null };
+    }
+    return long ? { kind: "cagr", v: reports[n].cagr } : { kind: "total", v: reports[n].total_return };
+  };
+  const kpiSub = ({ kind, v }) => {
+    if (kind === "cagr") return ["в среднем ", h("b", {}, fmtPct(v, 1)), " в год"];
+    if (kind === "xirr") return ["с учётом пополнений ", h("b", {}, fmtPct(v, 1)), " в год"];
+    if (kind === "total") return [h("b", {}, fmtPct(v, 1)), " за весь срок"];
+    if (kind === "gain") return [h("b", {}, fmtPct(v, 1)), " — прирост сверх внесённого за весь срок"];
+    return [];
+  };
+
   // --- карточки
   const kpis = h("div", { class: "kpis" });
   for (const n of names) {
     const r = results[n];
     const eq = r.equity;
+    const sub = kpiSub(growth(n, eq, p.contrib > 0));
+    if (p.contrib > 0) sub.push(`${sub.length ? " · " : ""}внесено ${fmtRub(r.invested.values.at(-1))}`);
     kpis.append(h("div", { class: "kpi", style: { "--kpi-color": colorOf(n) } },
       h("div", { class: "kpi-name" }, n),
       h("div", { class: "kpi-value" }, fmtRub(eq.values.at(-1))),
-      h("div", { class: "kpi-sub" }, "в среднем ", h("b", {}, fmtPct(E.metrics.cagr(eq), 1)), " в год",
-        p.contrib > 0 ? ` · внесено ${fmtRub(r.invested.values.at(-1))}` : "")));
+      h("div", { class: "kpi-sub" }, ...sub)));
   }
   if (benchScaled) {
     kpis.append(h("div", { class: "kpi bench", style: { "--kpi-color": colorOf(benchName, { bench: true }) } },
       h("div", { class: "kpi-name" }, `Бенчмарк ${benchName}`),
       h("div", { class: "kpi-value" }, fmtRub(benchScaled.values.at(-1))),
-      h("div", { class: "kpi-sub" }, "в среднем ", h("b", {}, fmtPct(E.metrics.cagr(bench), 1)), " в год")));
+      h("div", { class: "kpi-sub" }, ...kpiSub(growth(benchName, bench, false)))));
   }
   out.append(kpis);
 
   // --- итог простыми словами
-  const yrs = (Date.parse(p.till) - Date.parse(p.from)) / (365.25 * 864e5);
   out.append(h("section", { class: "card plain-summary" },
     h("h3", { class: "card-title" }, "Если коротко"),
     names.map((n) => {
       const eq = results[n].equity;
       const paid = p.contrib > 0 ? results[n].invested.values.at(-1) : p.cap;
-      return h("p", {}, h("b", {}, n), ": вложили ", fmtRub(paid), " — к ", fmtDate(p.till), " стало бы ", h("b", {}, fmtRub(eq.values.at(-1))),
-        yrs >= 1 ? `, в среднем ${fmtPct(E.metrics.cagr(eq), 1)} в год` : null,
-        ". В худший момент портфель был ниже прошлого максимума на ", h("b", {}, fmtPct(Math.abs(E.metrics.maxDrawdown(eq)), 0)), ".");
+      const gr = growth(n, eq, p.contrib > 0);
+      const rate = {
+        cagr: `, в среднем ${fmtPct(gr.v, 1)} в год`,
+        total: `, это ${fmtPct(gr.v, 1)} за весь срок`,
+        gain: `, прирост сверх внесённого за весь срок — ${fmtPct(gr.v, 1)}`,
+        xirr: `. Ваши деньги с учётом пополнений приносили в среднем ${fmtPct(gr.v, 1)} в год`,
+      }[gr.kind] || null;
+      return h("p", {}, h("b", {}, n), ": вложили ", fmtRub(paid), " с ", fmtDate(eq.dates[0]), " — к ", fmtDate(eq.dates.at(-1)),
+        " стало бы ", h("b", {}, fmtRub(eq.values.at(-1))), rate,
+        ". В худший момент портфель был ниже прошлого максимума на ", h("b", {}, fmtPct(Math.abs(reports[n].max_drawdown), 0)), ".");
     }),
     h("p", { class: "hint" }, "Расчёт на исторических данных. Прошлая доходность не гарантирует будущей. Не является индивидуальной инвестиционной рекомендацией.")));
 
@@ -371,7 +434,7 @@ function render() {
     h("div", { class: "chart-head" },
       h("div", {},
         h("h3", { class: "card-title" }, "Стоимость портфелей"),
-        h("p", { class: "card-sub" }, `${fmtDate(p.from)} — ${fmtDate(p.till)}, начальный капитал ${fmtRub(p.cap)}; бенчмарк приведён к тому же капиталу`)),
+        h("p", { class: "card-sub" }, `${fmtDate(names.map((n) => results[n].equity.dates[0]).sort()[0])} — ${fmtDate(names.map((n) => results[n].equity.dates.at(-1)).sort().at(-1))}, начальный капитал ${fmtRub(p.cap)}; бенчмарк приведён к тому же капиталу`)),
       h("label", { class: "switch" }, logBox, h("span", {}, "Логарифмическая шкала"))),
     h("div", { class: "chart-box" }, eqCanvas),
     p.contrib > 0
@@ -391,11 +454,9 @@ function render() {
   });
 
   // --- показатели эффективности
-  const reports = {};
-  for (const n of names) reports[n] = E.metrics.computeAll(results[n].equity, bench, g.rf, g.freq);
-  if (bench) reports[benchName] = E.metrics.computeAll(bench, bench, g.rf, g.freq);
   const cols = Object.keys(reports);
-  const metricsTable = buildMetricsTable(cols, reports, (c) => colorOf(c, { bench: c === benchName && !!bench }));
+  const metricsTable = buildMetricsTable(cols, reports, (c) => colorOf(c, { bench: c === benchName && !!bench }),
+    { hideGrowth: p.contrib > 0 });
   const costs = names.map((n) => {
     const r = results[n];
     return `${n}: оборот ${fmtNum(r.turnover, 1)}×, комиссии ${fmtRub(r.costs)}, налог ${fmtRub(r.taxes)}`;
@@ -440,14 +501,18 @@ function render() {
   drawTrades();
 }
 
-export function buildMetricsTable(cols, reports, colorFor) {
+// hideGrowth: при пополнениях CAGR и накопленная доходность ряда включают взносы — в «Просто» их не показываем
+export function buildMetricsTable(cols, reports, colorFor, { simple = true, hideGrowth = false } = {}) {
+  const GROWTH = new Set(["cagr", "total_return"]);
   const { LABELS_RU, PERCENT_FIELDS } = engine.metrics;
   const pf = toSet(PERCENT_FIELDS);
   const head = h("tr", {}, h("th", { scope: "col" }, "Показатель"),
     ...cols.map((c) => h("th", { scope: "col", class: "num" },
       h("span", { class: "swatch", style: { background: colorFor(c) }, "aria-hidden": "true" }), c)));
   const rows = entries(LABELS_RU).map(([key, label]) =>
-    h("tr", { class: SIMPLE_METRICS.has(key) ? null : "adv" }, h("th", { scope: "row" }, label, hint(key)),
+    // aria-label на th — чтобы кнопка «?» не попадала в имя заголовка строки
+    h("tr", { class: !simple || (SIMPLE_METRICS.has(key) && !(hideGrowth && GROWTH.has(key))) ? null : "adv" },
+      h("th", { scope: "row", "aria-label": label }, h("span", {}, label), hint(key)),
       ...cols.map((c) => h("td", { class: "num" }, fmtMetric(key, reports[c][key], pf)))));
   return h("table", { class: "metrics-table" }, h("thead", {}, head), h("tbody", {}, rows));
 }

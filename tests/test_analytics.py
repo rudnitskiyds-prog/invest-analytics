@@ -102,3 +102,23 @@ def test_frontier_properties():
 def test_xirr_simple():
     cf = [(pd.Timestamp("2020-01-01"), -100), (pd.Timestamp("2021-01-01"), 110)]
     assert xirr(cf) == pytest.approx(0.1, abs=2e-3)
+
+
+@pytest.mark.parametrize("growth", [0.0, 0.10])
+def test_xirr_of_backtest_with_contributions_synthetic(growth):
+    """Независимо от фикстур: цена растёт ровно на growth в год (по дням/365,25), 1 000 000 + 50 000 в месяц.
+    Потоки из invested (первый — −invested[0]: пополнение и в первую дату) → XIRR = growth."""
+    idx = pd.date_range("2020-01-31", "2022-12-31", freq="ME")
+    t = (idx - idx[0]).days / 365.25
+    px = pd.DataFrame({"A": 100 * (1 + growth) ** t, "B": 50 * (1 + growth) ** t}, index=idx)
+    r = run_backtest(px, BacktestConfig(weights={"A": 0.6, "B": 0.4}, initial=1_000_000, rebalance="A",
+                                        contribution=50_000, contribution_freq="M"))
+    inv = r.invested
+    assert inv.iloc[0] == 1_050_000, "пополнение в первую дату (конец месяца)"
+    flows = [(idx[0], -float(inv.iloc[0]))] + [(d, -float(v)) for d, v in inv.diff().iloc[1:].items() if v > 0]
+    flows.append((idx[-1], float(r.equity.iloc[-1])))
+    assert -sum(v for _, v in flows[:-1]) == pytest.approx(inv.iloc[-1])
+    assert xirr(flows) == pytest.approx(growth, abs=1e-6)
+    # с первым потоком −initial (без взноса первой даты) XIRR был бы завышен
+    wrong = [(idx[0], -1_000_000.0)] + flows[1:]
+    assert xirr(wrong) > growth + 1e-4
