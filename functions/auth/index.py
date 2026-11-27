@@ -68,7 +68,7 @@ def _login_page(event) -> dict:
         "headers": {"WWW-Authenticate": f'Basic realm="{REALM}", charset="UTF-8"',
                     "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store"},
         "body": "<!doctype html><meta charset=utf-8><title>Вход</title>"
-                "<p>Для доступа к ИнвестАналитике нужны логин и пароль. "
+                "<p>Для доступа к FinServ нужны логин и пароль. "
                 "<a href=\"/\">Попробовать снова</a></p>",
     }
 

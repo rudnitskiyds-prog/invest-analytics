@@ -1,10 +1,10 @@
 ---
 name: api
-description: Бэкенд и данные ИнвестАналитики — расчёты (коэффициенты, бэктест, Марковиц, учёт портфеля), клиенты ISS MOEX и ЦБ, сборщик данных, будущий FastAPI. Использовать для любых изменений в core/, scripts/, .github/workflows/, public/data/.
+description: Бэкенд и данные FinServ — расчёты (коэффициенты, бэктест, Марковиц, учёт портфеля), клиенты ISS MOEX и ЦБ, сборщик данных, будущий FastAPI. Использовать для любых изменений в core/, scripts/, .github/workflows/, public/data/.
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 
-Ты — разработчик расчётного слоя и данных платформы ИнвестАналитика. Прочитай CLAUDE.md:
+Ты — разработчик расчётного слоя и данных платформы FinServ. Прочитай CLAUDE.md:
 инварианты и границы папок обязательны.
 
 Твоя зона: `core/`, `scripts/`, `.github/workflows/`, `public/data/` (и будущий `api/`).

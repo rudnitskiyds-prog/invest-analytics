@@ -4,6 +4,7 @@
 // здесь только выбор данных, срезы по датам и вывод.
 
 import { fact, registerFacts } from "./assistant.js";
+import { assetBadge } from "./logo.js";
 import { barChart, colorOf, destroyChart, heatStyle, lineChart, priceDigits } from "./charts.js";
 import { DATA_BASE } from "./config.js";
 import { $, h, notice, put, tableWrap } from "./dom.js";
@@ -160,8 +161,7 @@ function skeleton(lines = 3) {
  * Создать блок и запустить его заполнение. fn(body, live) — асинхронная; live() === false,
  * если пользователь уже ушёл на другую бумагу. fn может вернуть "skip" — блок убирается.
  */
-/** Блоки для опытных — только в режиме «Подробно»; у остальных заголовков — подсказка «?». */
-const ADV_BLOCKS = new Set(["momentum", "rating", "relative", "riskret", "tail", "vol"]);
+/** Термин глоссария для подсказки «?» у заголовка блока. */
 const BLOCK_TERM = { periods: "total_return", momentum: "momentum", rating: "rating", relative: "beta", riskret: "sharpe",
   tail: "var_95", fund: "ter", divs: "dividend", coupons: "coupon", drawdowns: "max_drawdown", vol: "volatility", bond: "ytm" };
 
@@ -169,7 +169,7 @@ function block(container, { id, title, sub = "" }, fn) {
   const body = h("div", { class: "blk-body" }, skeleton(id === "chart" ? 6 : 3));
   const subEl = h("p", { class: "card-sub" }, sub);
   subEl.hidden = !sub;
-  const sec = h("section", { class: `card sym-block${ADV_BLOCKS.has(id) ? " adv" : ""}`, id: `sym-${id}`, "aria-labelledby": `sym-${id}-t`, "aria-busy": "true" },
+  const sec = h("section", { class: "card sym-block", id: `sym-${id}`, "aria-labelledby": `sym-${id}-t`, "aria-busy": "true" },
     h("h3", { class: "card-title" }, h("span", { id: `sym-${id}-t` }, title), hint(BLOCK_TERM[id])), subEl, body);
   container.append(sec);
   const my = gen;
@@ -240,7 +240,8 @@ function render() {
   const t = route.ticker;
   $("#sym-title").textContent = t;
   $("#sym-lead").textContent = "";
-  document.title = `${t} — ИнвестАналитика`;
+  $("#sym-badge").replaceChildren(assetBadge(t, 48));
+  document.title = `${t} — FinServ`;
 
   if (S.isDemo()) {
     put(root, h("div", { class: "notice notice-info", role: "status" },
@@ -295,8 +296,9 @@ function render() {
 function renderHead(head, t, info) {
   if (!info) throw new NoData("");
   $("#sym-title").textContent = info.name || info.shortName || t;
+  $("#sym-badge").replaceChildren(assetBadge(t, 48, info.cls));
   $("#sym-lead").textContent = `${t}${info.shortName && info.shortName !== info.name ? ` · ${info.shortName}` : ""}`;
-  document.title = `${info.shortName || t} (${t}) — ИнвестАналитика`;
+  document.title = `${info.shortName || t} (${t}) — FinServ`;
   const facts = [
     ["Тип", info.typeLabel || classLabel(info.cls)],
     ["ISIN", info.isin],
@@ -332,10 +334,10 @@ function renderToolbar(box, t, benchKey, cmp) {
   };
   const field = h("div", { class: "field" }, h("label", { for: "sym-cmp" }, "Сравнить с бумагой"), cmpInput);
   put(box,
-    h("div", { class: "field adv" }, h("div", {}, h("label", { for: "sym-bench" }, "Бенчмарк"), hint("benchmark")), sel),
+    h("div", { class: "field" }, h("div", {}, h("label", { for: "sym-bench" }, "Бенчмарк"), hint("benchmark")), sel),
     field,
     cmp ? h("button", { type: "button", class: "btn btn-sm", onclick: () => apply("") }, `Убрать ${cmp}`) : null,
-    h("p", { class: "hint adv" }, "Коэффициенты — по дневным доходностям; безрисковая ставка — доходность коротких ОФЗ на те же даты."),
+    h("p", { class: "hint" }, "Коэффициенты — по дневным доходностям; безрисковая ставка — доходность коротких ОФЗ на те же даты."),
   );
   attachSearch(cmpInput, { onPick: apply });
 }
@@ -491,7 +493,7 @@ function buildBlocks(root, ctx) {
     }
     if (!live()) return;
     setSub(`${withDivsNote(p)} Для периодов больше года — также CAGR (среднегодовая доходность).`);
-    const SRC = "расчёт ИнвестАналитики по данным ISS MOEX";
+    const SRC = "расчёт FinServ по данным ISS MOEX";
     for (const [key, rows] of [[t, mine], [benchKey, bm]]) {
       if (!rows) continue;
       for (const [k, label] of RETURN_PERIODS) {
@@ -567,7 +569,7 @@ function buildBlocks(root, ctx) {
     if (!stats || !stats.items) throw new NoData("Рейтинг появится после ночного пересчёта (public/data/symbol_stats.json).");
     const it = stats.items[t];
     const n = it ? stats.classes?.[it.class]?.n : null;
-    const src = `Источник: ${stats.source || "ISS MOEX (расчёт ИнвестАналитики)"}, обновлено ${fmtDate(String(stats.updated || "").slice(0, 10))}.`;
+    const src = `Источник: ${stats.source || "ISS MOEX (расчёт FinServ)"}, обновлено ${fmtDate(String(stats.updated || "").slice(0, 10))}.`;
     setSub(it
       ? `Перцентиль 0–100 среди ${it.class === "fund" ? "фондов" : "акций"}${n ? ` (${fmtNum(n)} ${papers(n)})` : ""}, торгуемых сейчас; 100 — лучший показатель класса. ` +
         `Рейтинг — по месячным доходностям ${it.tr ? "с реинвестированием дивидендов (T-Invest)" : "по цене"}; цены — месячные свечи ISS, скорректированные биржей на сплиты и консолидации; ` +

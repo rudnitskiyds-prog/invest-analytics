@@ -98,6 +98,13 @@ jobs:
         timeout-minutes: 10
         run: python -m scripts.collect_data --only portfolios
 
+      - name: Скринер облигаций
+        # облигации TQOB и TQCB для скринера (public/data/screener_bonds.json): две витрины ISS.
+        # Выполняется и при сбое предыдущих шагов; сбой не трогает прежний файл
+        if: success() || failure()
+        timeout-minutes: 5
+        run: python -m scripts.collect_data --only screener_bonds
+
       - name: Сохранить изменения
         if: always()          # уже записанные файлы (ЦБ, status.json) коммитим и при сбое/таймауте сбора и рейтингов
         run: |

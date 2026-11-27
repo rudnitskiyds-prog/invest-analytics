@@ -32,7 +32,7 @@ logic = _load("logic", FN / "logic.py")
 index = _load("assistant_index", FN / "index.py")
 
 NBSP, NNBSP = " ", " "
-SRC = "расчёт ИнвестАналитики по ISS MOEX, 2011–2025"
+SRC = "расчёт FinServ по ISS MOEX, 2011–2025"
 FACTS = [
     {"id": "pf1.cagr", "label": "Лежебока плюс: в среднем в год", "value": 0.123, "unit": "pct",
      "text": f"12,3{NBSP}%", "source": SRC},

@@ -584,3 +584,50 @@ export async function loadSymbolStats({ base, fetchImpl } = {}) {
     return null;
   }
 }
+
+// ------------------------------------------------------------------ последние цены (главная)
+const PRICE_BOARDS = ['TQBR', 'TQTF'];   // предпочтительный режим, если бумага торгуется в нескольких
+
+/**
+ * Последние цены списка бумаг двумя параллельными запросами ISS (без свечей):
+ * /engines/stock/markets/shares/securities (акции и фонды, все режимы) и /engines/stock/markets/index/securities.
+ * @returns {Promise<Object<string, {last, prevClose, change, changePct, board, currency}>>}
+ *   last — LAST, иначе LCURRENTPRICE, иначе PREVPRICE (вне торгов); у индексов CURRENTVALUE / LASTVALUE;
+ *   prevClose — PREVPRICE (у индексов LASTVALUE); change — доля (last / prevClose − 1);
+ *   changePct — то же в % (суффикс Pct, как правило модуля); currency — 'RUB'/'USD'/…, у индексов — null.
+ *   Бумаги, которых нет в ответах (облигации, металлы, ошибка запроса), в результат не попадают.
+ */
+export async function fetchLastPrices(secids, { fetchImpl } = {}) {
+  const ids = [...new Set((secids || []).map((s) => String(s || '').toUpperCase()).filter(Boolean))];
+  if (!ids.length) return {};
+  const q = (market, mdCols, secCols) => getCached(`${ISS_BASE}/engines/stock/markets/${market}/securities.json?${qs({
+    securities: ids.join(','), 'iss.meta': 'off', 'iss.only': 'securities,marketdata',
+    'securities.columns': secCols, 'marketdata.columns': mdCols,
+  })}`, fetchImpl, 'json', 2).catch(() => null);
+  const [sh, ix] = await Promise.all([
+    q('shares', 'SECID,BOARDID,LAST,LCURRENTPRICE', 'SECID,BOARDID,PREVPRICE,CURRENCYID'),
+    q('index', 'SECID,BOARDID,CURRENTVALUE,LASTVALUE', 'SECID,BOARDID'),
+  ]);
+  const out = {};
+  const put = (secid, board, last, prev, currency) => {
+    last = num(last) ?? num(prev);
+    prev = num(prev);
+    if (last === null) return;
+    const rank = (b) => { const i = PRICE_BOARDS.indexOf(b); return i < 0 ? PRICE_BOARDS.length : i; };
+    if (out[secid] && rank(out[secid].board) <= rank(board)) return;
+    const change = prev ? last / prev - 1 : null;
+    out[secid] = { last, prevClose: prev, change, changePct: change === null ? null : change * 100, board, currency };
+  };
+  const md = (data) => new Map(block(data, 'marketdata').map((r) => [`${r.SECID}|${r.BOARDID}`, r]));
+  if (sh) {
+    const m = md(sh);
+    for (const s of block(sh, 'securities')) {
+      const d = m.get(`${s.SECID}|${s.BOARDID}`) || {};
+      put(s.SECID, s.BOARDID, num(d.LAST) ?? num(d.LCURRENTPRICE), s.PREVPRICE, s.CURRENCYID ? currency(s.CURRENCYID) : null);
+    }
+  }
+  if (ix) {
+    for (const d of block(ix, 'marketdata')) if (!out[d.SECID]) put(d.SECID, d.BOARDID, d.CURRENTVALUE, d.LASTVALUE, null);
+  }
+  return out;
+}

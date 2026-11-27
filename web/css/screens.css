@@ -1,0 +1,55 @@
+/* Скринеры и портфели (page-screener.js, page-portfolios.js). Только токены из tokens.css. */
+
+.scr-tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-top: 8px; }
+.scr-tab { padding: 8px 14px; color: var(--text-muted); text-decoration: none; font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.scr-tab:hover { color: var(--text); }
+.scr-tab[aria-current="page"] { color: var(--brand); border-bottom-color: var(--brand); }
+
+.scr-meta { font-size: 13px; margin: 8px 0 12px; }
+.scr-count { font-size: 13px; margin: 12px 0 6px; }
+
+.scr-controls { display: grid; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.scr-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.scr-fields .field { display: grid; gap: 4px; font-size: 13px; color: var(--text-muted); }
+.scr-fields input, .scr-fields select { width: 100%; min-height: 36px; padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font: inherit; }
+.scr-search { grid-column: span 2; }
+.scr-range { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 6px; }
+.scr-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
+
+.scr-cols { position: relative; }
+.scr-cols > summary { list-style: none; cursor: pointer; }
+.scr-cols > summary::-webkit-details-marker { display: none; }
+.scr-cols-list { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; display: grid; gap: 6px; min-width: 220px; max-height: 320px; overflow: auto; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow); }
+
+.scr-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; }
+.scr-table th, .scr-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.scr-table thead th { position: sticky; top: 0; z-index: 2; background: var(--surface-2); font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.scr-table .scr-first, .scr-table thead th:first-child { position: sticky; left: 0; z-index: 1; text-align: left; }
+.scr-table thead th:first-child { z-index: 3; }
+.scr-table .scr-first { box-shadow: 1px 0 0 var(--border); }
+.th-sort { all: unset; cursor: pointer; display: inline-flex; gap: 4px; align-items: center; }
+.th-sort:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 4px; }
+.th-arrow { font-size: 10px; color: var(--brand); min-width: 8px; }
+.row-link { cursor: pointer; }
+.row-link:hover > * { background: var(--brand-soft); }
+.scr-ticker { display: inline-flex; align-items: center; gap: 8px; color: var(--text); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.scr-ticker:hover { color: var(--brand); }
+.scr-table .pos { color: var(--pos); }
+.scr-table .neg { color: var(--neg); }
+
+.scr-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 12px 0; }
+
+/* Портфели */
+.pf-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 16px; margin-top: 16px; }
+.pf-grid > .card { margin-top: 0; }
+.pf-bar { display: block; height: 6px; margin-top: 4px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.pf-bar > span { display: block; height: 100%; background: var(--brand); }
+.pf-repl + .pf-repl { margin-top: 12px; }
+details.card > summary { cursor: pointer; }
+
+@media (max-width: 760px) {
+  .scr-search { grid-column: auto; }
+  .pf-grid { grid-template-columns: minmax(0, 1fr); }  /* 1fr = minmax(auto,…): широкая таблица растягивала колонку */
+  .scr-table { font-size: 13px; }
+  .scr-table th, .scr-table td { padding: 6px 8px; }
+}

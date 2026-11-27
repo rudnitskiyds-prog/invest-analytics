@@ -53,7 +53,7 @@ REBALANCE_LABELS = {"none": "без ребалансировки", "M": "еже�
 METRIC_FIELDS = ("total_return", "cagr", "volatility", "sharpe", "sortino", "omega", "calmar", "martin",
                  "ulcer_index", "max_drawdown", "alpha", "beta", "r_squared", "correlation",
                  "up_capture", "down_capture")
-TABLE_COLUMNS = ["name", "group", "since", "last_date", "ret_1d", "ytd", "cagr_10y", "cagr_all",
+TABLE_COLUMNS = ["name", "group", "since", "last_date", "ret_1d", "ret_6m", "ytd", "cagr_10y", "cagr_all",
                  "max_drawdown", "current_drawdown", "fee", "fee_coverage", "sharpe", "sortino", "omega",
                  "martin", "calmar", "ulcer_index", "rank", "rank_window", "volatility_1y", "benchmark"]
 
@@ -690,7 +690,7 @@ def _table_row(rep: dict) -> dict:
         return (ret.get(k) or {}).get(f)
     return {
         "name": rep["name"], "group": rep["group"], "since": rep["since"], "last_date": rep["last_date"],
-        "ret_1d": g("1D"), "ytd": g("YTD"), "cagr_10y": g("10Y", "cagr"),
+        "ret_1d": g("1D"), "ret_6m": g("6M"), "ytd": g("YTD"), "cagr_10y": g("10Y", "cagr"),
         "cagr_all": g("ALL", "cagr"),
         "max_drawdown": mx.get("max_drawdown"), "current_drawdown": mx.get("current_drawdown"),
         "fee": rep.get("fee"), "fee_coverage": rep.get("fee_coverage"),
@@ -731,7 +731,7 @@ def _frame(rows: dict[str, dict]) -> pd.DataFrame:
 
 def portfolios_table(source: str = "auto") -> pd.DataFrame:
     """Листинг: строка на портфель (индекс — slug), колонки TABLE_COLUMNS:
-      name, group, since, last_date; ret_1d (1 день), ytd, cagr_10y (None — истории < 10 лет), cagr_all;
+      name, group, since, last_date; ret_1d (1 день), ret_6m (6 мес., metrics.period_returns "6M"), ytd, cagr_10y (None — истории < 10 лет), cagr_all;
       max_drawdown, current_drawdown (за всю историю, доли ≤ 0); fee (доля годовых), fee_coverage;
       sharpe, sortino, omega, martin, calmar, ulcer_index, volatility_1y — за 1 год;
       rank — ранг риск/доходность 0–100 (среднее перцентилей Шарпа, Сортино, Омеги, Кальмара, Мартина

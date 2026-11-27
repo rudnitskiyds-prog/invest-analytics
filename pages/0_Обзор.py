@@ -1,5 +1,5 @@
 """
-ИнвестАналитика — информационно-аналитическая платформа оценки эффективности инвестиций.
+FinServ — информационно-аналитическая платформа оценки эффективности инвестиций.
 Запуск:  streamlit run app.py
 """
 import pandas as pd
@@ -10,7 +10,7 @@ from core.data import iss, public_data
 from ui.common import (base_layout, fmt_date, fmt_num, fmt_pct, is_num, is_offline, line_chart, load_series, page_setup,
                        symbol_link, PALETTE)
 
-page_setup("ИнвестАналитика — обзор рынка", "📊")
+page_setup("FinServ — обзор рынка", "📊")
 
 st.caption("Моделирование портфелей, граница Марковица, бэктесты, учёт портфеля и "
            "витрина данных по бумагам Московской биржи.")

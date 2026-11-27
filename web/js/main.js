@@ -1,11 +1,12 @@
 // Точка входа: шапка с навигацией и поиском, hash-роутер, общие параметры, страницы.
 
 import { initAssistant } from "./assistant.js";
-import { getMode, setMode } from "./glossary.js";
 import { applyChartDefaults, registerEntities } from "./charts.js";
 import { $, $$, h, notice } from "./dom.js";
 import { catalogList, engine, entries, loadEngine } from "./engine.js";
 import * as home from "./page-home.js";
+import * as portfolios from "./page-portfolios.js";
+import * as screener from "./page-screener.js";
 import * as stub from "./page-stub.js";
 import * as symbol from "./page-symbol.js";
 import * as tools from "./page-tools.js";
@@ -18,7 +19,7 @@ import * as frontier from "./tab-frontier.js";
 import * as method from "./tab-method.js";
 import * as security from "./tab-security.js";
 
-const PAGES = { home, tools, backtest, frontier, security, method, symbol, stub };
+const PAGES = { home, tools, backtest, frontier, security, method, symbol, stub, screener, portfolios };
 const BENCH_KEYS = ["MCFTR", "IMOEX", "MEBCTR", "RGBITR", "RUONIA", "GOLD_CBR"];
 let ready = false;
 let active = null;     // текущий маршрут
@@ -43,7 +44,7 @@ function show(route) {
   // общие параметры: на инструментах — все, на странице бумаги — только безрисковая ставка
   $("#params-bar").hidden = !route.paramsScope;
   for (const el of $$("[data-param-scope='tools']")) el.hidden = route.paramsScope !== "all";
-  document.title = `${route.title} — ИнвестАналитика`;
+  document.title = `${route.title} — FinServ`;
   if (S.isDemo()) $("#live-link").href = S.liveHref();
 
   // страница бумаги сразу показывает демо-сообщение / ошибку тикера, каталог инструментов (STATIC)
@@ -86,19 +87,7 @@ function setupGlobals() {
   });
 }
 
-function setupMode() {
-  const btn = $("#mode-toggle");
-  const apply = (m) => {
-    setMode(m);
-    btn.title = m === "pro" ? "Показать только главное" : "Показать все показатели и настройки";
-    btn.textContent = m === "pro" ? "Просто" : "Подробно";
-  };
-  apply(getMode());
-  btn.addEventListener("click", () => apply(getMode() === "pro" ? "simple" : "pro"));
-}
-
 function setupChrome() {
-  setupMode();
   // ссылка «К содержимому»: hash занят маршрутом — переводим фокус без смены адреса
   $(".skip-link").addEventListener("click", (e) => {
     e.preventDefault();
@@ -111,10 +100,22 @@ function setupChrome() {
     toggle.setAttribute("aria-expanded", open ? "true" : "false");
     $("#site-nav").classList.toggle("open", open);
   });
+  // подменю «Скринеры»: на компьютере — по наведению и по нажатию, в мобильном меню раскрыто всегда
+  const subBtn = $("#nav-sub-btn");
+  const setSub = (open) => subBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  subBtn.addEventListener("click", () => setSub(subBtn.getAttribute("aria-expanded") !== "true"));
+  document.addEventListener("click", (e) => { if (!e.target.closest(".has-sub")) setSub(false); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && subBtn.getAttribute("aria-expanded") === "true") {
+      setSub(false);
+      subBtn.focus();
+    }
+  });
   $("#site-nav").addEventListener("click", (e) => {
     if (e.target.closest("a")) {
       toggle.setAttribute("aria-expanded", "false");
       $("#site-nav").classList.remove("open");
+      setSub(false);
     }
   });
 }
@@ -165,9 +166,6 @@ async function start() {
   }
   ready = true;
   activePage().onShow(active);
-
-  // смена темы: графики перерисовываются сами, тепловые карты и подписи — перестроить
-  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => activePage().rerender());
 }
 
 start().catch((e) => {

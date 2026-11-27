@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 156 40" width="156" height="40">
+  <title>FinServ</title>
+  <g transform="translate(2 4)">
+    <rect width="32" height="32" rx="8" fill="#0F766E"/>
+    <path d="M10.5 24.5V11.6L20.6 8.4M10.5 17.4H18" fill="none" stroke="#FFFFFF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="23.4" cy="7.6" r="2.5" fill="#F59E0B"/>
+  </g>
+  <text x="44" y="28.5" font-family="Montserrat, 'Segoe UI', system-ui, sans-serif" font-size="22" font-weight="700" letter-spacing="-0.4" fill="#0E1726">Fin<tspan fill="#0F766E">Serv</tspan></text>
+</svg>

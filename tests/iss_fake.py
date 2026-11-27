@@ -129,6 +129,29 @@ def _snapshot(secid: str) -> dict:
     return out
 
 
+_MARKET_CLS = {"shares": {"share", "fund"}, "index": {"index"}, "bonds": {"bond"}}
+
+
+def _batch(market: str, q: dict) -> dict:
+    """Снимок нескольких бумаг рынка: /engines/stock/markets/{market}/securities.json?securities=A,B
+    (блоки securities и marketdata, столбцы — из *.columns; незнакомые бумаги ISS просто не возвращает)."""
+    ids = [x for x in (q.get("securities") or "").upper().split(",")
+           if x in SECURITIES and SECURITIES[x]["cls"] in _MARKET_CLS.get(market, ())]
+    sec, md = [], []
+    for k in ids:
+        s, df = SECURITIES[k], ohlc(k)
+        last = float(df["close"].iloc[-1])
+        now = round(last * 1.004, 6)
+        sec.append({"SECID": k, "BOARDID": s["board"], "PREVPRICE": last, "CURRENCYID": "SUR", "SHORTNAME": s["short"]})
+        md.append({"SECID": k, "BOARDID": s["board"], "LAST": now, "LCURRENTPRICE": now, "CURRENTVALUE": now,
+                   "LASTVALUE": last, "MARKETPRICE": now})
+    out = {}
+    for name, rows in (("securities", sec), ("marketdata", md)):
+        cols = (q.get(f"{name}.columns") or ",".join(rows[0] if rows else ["SECID"])).split(",")
+        out[name] = block(cols, [tuple(r.get(c) for c in cols) for r in rows])
+    return out
+
+
 def _candles(secid: str, q: dict) -> dict:
     df = _window(ohlc(secid), q)
     start = int(q.get("start") or 0)
@@ -190,6 +213,9 @@ def respond(url: str):
     m = re.fullmatch(r"/iss/engines/[^/]+/markets/[^/]+/boards/[^/]+/securities/([^/]+)\.json", path)
     if m and m.group(1) in SECURITIES:
         return 200, _snapshot(m.group(1))
+    m = re.fullmatch(r"/iss/engines/stock/markets/([^/]+)/securities\.json", path)
+    if m and q.get("securities"):
+        return 200, _batch(m.group(1), q)
     m = re.fullmatch(r"/iss/history/engines/stock/markets/index/securities/([^/]+)\.json", path)
     if m and m.group(1) in SECURITIES:
         return 200, _history(m.group(1), q)
@@ -208,7 +234,7 @@ def symbol_stats() -> dict:
                 "score": 20.0 * k}
     items = {"SBER": item("share", 4), "GAZP": item("share", 1), "LKOH": item("share", 5),
              "LQDT": item("fund", 3), "TMOS": item("fund", 2)}
-    return {"updated": f"{TODAY.isoformat()}T03:00:00+00:00", "source": "ISS MOEX (расчёт ИнвестАналитики)",
+    return {"updated": f"{TODAY.isoformat()}T03:00:00+00:00", "source": "ISS MOEX (расчёт FinServ)",
             "total_return": True, "rf": 0.16,
             "window": {"from": "2016-09-30", "till": "2026-09-30", "max_months": 120, "min_months": 36},
             "classes": {"share": {"n": 3}, "fund": {"n": 2}}, "items": items}

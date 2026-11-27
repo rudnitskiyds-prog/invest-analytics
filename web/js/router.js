@@ -17,8 +17,9 @@ export const ROUTES = [
   { re: /^\/tools\/metrics$/, page: "security", panel: "security", nav: "tools", tool: "metrics", paramsScope: "all", title: "Коэффициенты бумаги" },
   { re: /^\/docs$/, page: "method", panel: "method", nav: "docs", title: "Методика" },
   { re: /^\/symbol\/([^/]+)$/, page: "symbol", panel: "symbol", nav: null, paramsScope: "rf", title: (m) => m[1] },
-  { re: /^\/screener\/(stocks|funds|bonds)$/, page: "stub", panel: "stub", nav: "screener", title: "Скринеры" },
-  { re: /^\/portfolios\/lazy$/, page: "stub", panel: "stub", nav: "portfolios", title: "Ленивые портфели" },
+  { re: /^\/screener\/(stocks|funds|bonds)$/, page: "screener", panel: "screener", nav: "screener", title: "Скринеры" },
+  { re: /^\/portfolios\/lazy$/, page: "portfolios", panel: "portfolios", nav: "portfolios", title: "Портфели" },
+  { re: /^\/portfolio\/([^/]+)$/, page: "portfolios", panel: "portfolios", nav: "portfolios", title: "Портфель" },
 ];
 
 const NOT_FOUND = { page: "stub", panel: "stub", nav: null, title: "Страница не найдена", notFound: true };
@@ -53,6 +54,8 @@ export function match(path) {
       const params = {};
       if (r.page === "symbol") params.ticker = m[1].trim().toUpperCase();
       if (r.page === "stub") params.kind = path.slice(1);
+      if (r.page === "screener") params.kind = m[1];
+      if (r.page === "portfolios") params.slug = m[1] ? decodeURIComponent(m[1]) : null;
       return { ...r, params, title: typeof r.title === "function" ? r.title(m) : r.title };
     }
   }

@@ -20,7 +20,8 @@
 
 Источники T-Invest API (kind = "tinvest") требуют токена в переменной окружения
 TINVEST_TOKEN (только чтение). Их файлы — {"updated", "source": "T-Invest API", "data": ...}:
-    tinvest_shares.json  — акции TQBR: тикер, ISIN, сектор, лот, uid, asset_uid, флаги;
+    tinvest_shares.json  — акции TQBR: тикер, ISIN, сектор, лот, uid, asset_uid, флаги, logo / logo_color
+                           (brand.logo_name / logo_base_color, если есть; то же в tinvest_etfs.json);
     tinvest_etfs.json    — фонды TQBR/TQTF: тип активов, fixed_commission (% год.), …;
     dividends.json       — {"TICKER": [выплаты по возрастанию record_date]}, 2008-01-01 … сегодня+365 дн.;
     fundamentals.json    — {"TICKER": {pe, pb, …}} (соответствие полям proto — FUNDAMENTAL_FIELDS).
@@ -32,8 +33,9 @@ TINVEST_TOKEN (только чтение). Их файлы — {"updated", "sour
                             commission_pct (% год.), СЧА aum_rub (руб.), класс активов, …]}.
 Источник symbol_stats (kind = "iss", default = False — только явно: --only symbol_stats) — ночной
 расчёт рейтингов по месячным свечам ISS (core/analytics/ranking.py):
-    symbol_stats.json    — {"updated", "source": "ISS MOEX (расчёт ИнвестАналитики)", "rf", "window",
-                            "classes": {"share": {"n"}, "fund": {"n"}}, "items": {"SBER": {"class",
+    symbol_stats.json    — {"updated", "source": "ISS MOEX (расчёт FinServ)", "rf", "window",
+                            "classes": {"share": {"n"}, "fund": {"n"}}, "items": {"SBER": {"class", "name" (SHORTNAME ISS), "ret_6m" (period_returns
+                            "6M" на конец прошлого месяца: у акций — с дивидендами, у фондов — по цене),
                             sharpe, sortino, omega, calmar, martin, cagr, volatility, max_drawdown, months,
                             "rank": {…}, "score"}}}; котировки в файл не пишутся.
 Источник portfolios (kind = "portfolios", default = False — только явно: --only portfolios) — портфели
@@ -44,7 +46,12 @@ TINVEST_TOKEN (только чтение). Их файлы — {"updated", "sour
                             бенчмарк на тех же датах}, "risk_return": {"1Y"|"5Y"|"10Y": [{id, name, group, ret,
                             volatility, from, to}]}, "skipped": {slug: причина}, "stale": {slug: {stale_date,
                             reason}}, "last"}; доли — в долях.
-Порядок сбора: ряды ЦБ -> RusETFs -> T-Invest -> ISS (рейтинги) -> портфели.
+Источник screener_bonds (kind = "bonds", default = False — только явно: --only screener_bonds) — витрины ISS
+TQOB и TQCB для скринера облигаций:
+    screener_bonds.json  — {"updated", "source": "ISS MOEX", "boards", "data": [{secid, name, board, yield,
+                            duration_days, coupon_pct, coupon_freq, maturity_date, offer_date, listing_level,
+                            volume_rub, price_pct, nkd, face_currency}]}; yield и coupon_pct — доли, price_pct — % номинала.
+Порядок сбора: ряды ЦБ -> RusETFs -> T-Invest -> ISS (рейтинги) -> портфели -> облигации.
     python -m scripts.collect_data --skip symbol_stats   # исключить источник
 
 Если источник не ответил, прежний файл остаётся нетронутым, а в status.json
@@ -381,7 +388,7 @@ SOURCES["rusetfs_funds"] = {"kind": "rusetfs", "title": "Фонды: комис�
 
 
 # ------------------------------------------------------------------ рейтинги (ISS)
-SYMBOL_STATS_SOURCE = "ISS MOEX (расчёт ИнвестАналитики)"
+SYMBOL_STATS_SOURCE = "ISS MOEX (расчёт FinServ)"
 SYMBOL_STATS_BUDGET_MIN = 10.0     # бюджет времени источника, мин (шаг workflow «Рейтинги» — 15 мин)
 SYMBOL_STATS_YEARS = 10            # окно — до 10 лет полных месяцев
 SYMBOL_STATS_MIN_MONTHS = 36       # минимум месячных доходностей для попадания в рейтинг
@@ -451,15 +458,18 @@ def symbol_stats(spec: dict) -> tuple:
 
     # полная доходность акций: дивиденды из dividends.json (T-Invest), собранного шагом «Сбор» или ранее;
     # нет файла — акции по ценам, "total_return": false (сайт покажет пометку)
-    from core.analytics.metrics import total_return_series
+    from core.analytics.metrics import period_returns, total_return_series
     div_data = _previous("dividends").get("data")
     div_data = div_data if isinstance(div_data, dict) and div_data else None
 
     loader = _symbol_stats_loader()
     df = loader.securities()
     classes: dict[str, str] = {}
+    names: dict[str, str] = {}
     for _, r in df.iterrows():
         sec, st = r.get("SECID"), str(r.get("SECTYPE"))
+        if sec and isinstance(r.get("SHORTNAME"), str) and r.get("SHORTNAME"):
+            names[sec] = r.get("SHORTNAME")
         if sec and st in SHARE_TYPES:
             classes[sec] = "share"
         elif sec and st in FUND_TYPES:
@@ -501,7 +511,9 @@ def symbol_stats(spec: dict) -> tuple:
         # историей (2022–2026, ставка выше средней за 10 лет) Шарп/Сортино/Омега/Мартин завышены
         rf_sec = ranking.mean_rate(rf_rate, s.index[0], s.index[-1])
         rf_sec = rf_sec if math.isfinite(rf_sec) else rf
-        items[sec] = {"class": classes[sec], "tr": tr, "rf": round(rf_sec, 6), **ranking.symbol_metrics(s, rf_sec)}
+        r6 = period_returns(s)["6M"]          # по тому же ряду, что и коэффициенты (у акций — полная доходность)
+        items[sec] = {"class": classes[sec], "name": names.get(sec), "tr": tr, "rf": round(rf_sec, 6),
+                      "ret_6m": round(r6["ret"], 6) if r6 else None, **ranking.symbol_metrics(s, rf_sec)}
     if len(failed) > 20:
         print(f"  … всего пропусков свечей: {len(failed)}", file=sys.stderr)
     if secs and len(failed) / len(secs) > MAX_FAIL_SHARE:
@@ -543,7 +555,7 @@ SOURCES["symbol_stats"] = {"kind": "iss", "default": False,
 
 
 # ------------------------------------------------------------------ портфели и стратегии
-PORTFOLIOS_SOURCE = "ISS MOEX, Банк России, RusETFs (расчёт ИнвестАналитики)"
+PORTFOLIOS_SOURCE = "ISS MOEX, Банк России, RusETFs (расчёт FinServ)"
 
 
 def portfolios(spec: dict) -> tuple:
@@ -582,6 +594,93 @@ def collect_portfolios(name: str, spec: dict) -> dict:
 SOURCES["portfolios"] = {"kind": "portfolios", "default": False,
                          "title": "Портфели и стратегии (расчёт по ISS и ЦБ)",
                          "collect": portfolios, "min_rows": 10}
+
+
+# ------------------------------------------------------------------ скринер облигаций (ISS)
+SCREENER_BONDS_SOURCE = "ISS MOEX"
+SCREENER_BONDS_BOARDS = ("TQOB", "TQCB")     # ОФЗ и корпоративные, основной режим
+
+
+def _num(v, digits: int, scale: float = 1.0, zero_none: bool = False):
+    """Число ISS -> округлённый float или None (NaN/пусто; 0 — тоже None, если zero_none)."""
+    try:
+        f = float(v) * scale
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(f) or (zero_none and f == 0):
+        return None
+    return round(f, digits)
+
+
+def _iss_date(v):
+    """Дата ISS -> 'YYYY-MM-DD' или None ('0000-00-00', пусто, NaT)."""
+    try:
+        t = pd.Timestamp(v)
+    except (TypeError, ValueError):
+        return None
+    return None if pd.isna(t) else t.date().isoformat()
+
+
+def screener_bonds(spec: dict) -> tuple:
+    """Облигации режимов TQOB и TQCB для скринера (одна витрина ISS на режим через core.data.iss.bonds).
+    В файл попадают все непогашенные выпуски с ценой (LAST, иначе PREVPRICE), без отсечения по обороту:
+    сбор идёт ночью, и оборот «за сегодня» не годится как критерий состава — фильтрует пользователь.
+    Единицы: yield и coupon_pct — доли (ISS отдаёт проценты); price_pct — % от номинала, как в ISS;
+    nkd — в валюте расчётов (в TQOB/TQCB — рубли); volume_rub — VALTODAY_RUR на момент сбора;
+    yield — EFFECTIVEYIELD (marketdata_yields), иначе YIELD; к погашению или к оферте, как считает биржа;
+    0 у доходности и дюрации — нет данных (null). coupon_freq — round(365 / COUPONPERIOD)."""
+    from core.data import iss
+    today = dt.date.today().isoformat()
+    rows, extra = [], {}
+    for board in SCREENER_BONDS_BOARDS:
+        df = iss.bonds(board)
+        n = 0
+        for r in df.to_dict("records"):
+            mat = _iss_date(r.get("MATDATE"))
+            price = _num(r.get("PRICE"), 4, zero_none=True)
+            if not r.get("SECID") or price is None or (mat is not None and mat < today):
+                continue
+            y = _num(r.get("EFFECTIVEYIELD"), 6, 0.01, zero_none=True)
+            dur = _num(r.get("DURATION"), 0, zero_none=True)
+            dur = dur if dur is not None else _num(r.get("DURATION_y"), 0, zero_none=True)
+            period = _num(r.get("COUPONPERIOD"), 0, zero_none=True)
+            vol = _num(r.get("VALTODAY_RUR"), 0)
+            rows.append({
+                "secid": r["SECID"], "name": next((v for v in (r.get("SHORTNAME"), r.get("SECNAME")) if isinstance(v, str) and v), r["SECID"]),
+                "board": board,
+                "yield": y if y is not None else _num(r.get("YIELD"), 6, 0.01, zero_none=True),
+                "duration_days": int(dur) if dur is not None else None,
+                "coupon_pct": _num(r.get("COUPONPERCENT"), 6, 0.01),
+                "coupon_freq": round(365 / period) if period else None,
+                "maturity_date": mat, "offer_date": _iss_date(r.get("OFFERDATE")),
+                "listing_level": int(r["LISTLEVEL"]) if _num(r.get("LISTLEVEL"), 0) is not None else None,
+                "volume_rub": int(vol) if vol is not None else None,
+                "price_pct": price, "nkd": _num(r.get("ACCRUEDINT"), 2),
+                "face_currency": r.get("FACE_CURRENCY") or "RUB",
+            })
+            n += 1
+        extra[board] = n
+        _check(f"облигаций {board}", n, spec["min_rows"][board])
+    rows.sort(key=lambda r: (r["board"], r["secid"]))
+    return rows, len(rows), extra
+
+
+def collect_screener_bonds(name: str, spec: dict) -> dict:
+    """Как collect_rusetfs: атомарная запись, updated меняется только при изменении data;
+    при сбое (исключение до _write) прежний файл не трогается."""
+    data, n, extra = spec["collect"](spec)
+    prev = _previous(name)
+    updated = prev.get("updated") if prev.get("data") == data and prev.get("updated") else _now()
+    _write(name, {"updated": updated, "source": SCREENER_BONDS_SOURCE,
+                  "boards": list(SCREENER_BONDS_BOARDS), "data": data})
+    return {"ok": True, "rows": n, "last": dt.date.today().isoformat(), **extra}
+
+
+# kind "bonds": default=False — только явно (--only screener_bonds), отдельным шагом workflow
+# «Скринер облигаций»: полный прогон без аргументов его не запускает (и тесты main([]) не уходят в ISS)
+SOURCES["screener_bonds"] = {"kind": "bonds", "default": False,
+                             "title": "Скринер облигаций TQOB/TQCB (ISS)",
+                             "collect": screener_bonds, "min_rows": {"TQOB": 20, "TQCB": 300}}
 
 
 # ------------------------------------------------------------------ ряды ЦБ
@@ -626,7 +725,7 @@ def main(argv: list[str] | None = None) -> int:
     # ЦБ — первым, затем RusETFs, T-Invest — последним: долгий или упавший T-Invest
     # не должен помешать сохранить остальное (сортировка устойчивая — порядок внутри группы прежний)
     is_ti = lambda n: SOURCES[n].get("kind") == "tinvest"   # noqa: E731
-    order = {"rusetfs": 1, "tinvest": 2, "iss": 3, "portfolios": 4}
+    order = {"rusetfs": 1, "tinvest": 2, "iss": 3, "portfolios": 4, "bonds": 5}
     names = sorted(names, key=lambda n: order.get(SOURCES[n].get("kind"), 0))
     failed = skipped = ti_tried = ti_failed = 0
     ctx: dict = {"budget_min": args.tinvest_budget}   # общий клиент T-Invest и список акций на прогон
@@ -641,6 +740,8 @@ def main(argv: list[str] | None = None) -> int:
                 res = collect_symbol_stats(name, spec)
             elif spec.get("kind") == "portfolios":
                 res = collect_portfolios(name, spec)
+            elif spec.get("kind") == "bonds":
+                res = collect_screener_bonds(name, spec)
             else:
                 res = collect(name, spec)
             print(f"OK   {name}: {res['rows']} строк, до {res['last']}")

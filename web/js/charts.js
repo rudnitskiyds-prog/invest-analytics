@@ -3,20 +3,16 @@
 
 import { fmtDate, fmtMonth, fmtNum, fmtPct, fmtRub } from "./format.js";
 
-const PALETTE_LIGHT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
-const PALETTE_DARK = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"];
-const BENCH_LIGHT = "#6f6e69";
-const BENCH_DARK = "#a3a29c";
+// Светлая тема FinServ: первый цвет — фирменный (--brand), дальше — различимые по тону и яркости.
+const PALETTE = ["#0F766E", "#2563EB", "#F59E0B", "#DB2777", "#7C3AED", "#EA580C", "#0891B2", "#65A30D"];
+const BENCH = "#8A94A3";
 
-// Последовательная синяя шкала (для облака портфелей по Шарпу)
-const SEQ_BLUE_LIGHT = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"];
-const SEQ_BLUE_DARK = ["#123a6b", "#184f95", "#256abf", "#3987e5", "#6da7ec", "#9ec5f4", "#cde2fb"];
+// Последовательная шкала (облако портфелей по Шарпу): от светлого к фирменному тёмному
+const SEQ = ["#CCEBE7", "#99D5CE", "#5EB8AE", "#2A9A8E", "#0F766E", "#0B5D57", "#073F3B"];
 
-const darkQuery = matchMedia("(prefers-color-scheme: dark)");
-export const isDark = () => darkQuery.matches;
-export const palette = () => (isDark() ? PALETTE_DARK : PALETTE_LIGHT);
-export const benchColor = () => (isDark() ? BENCH_DARK : BENCH_LIGHT);
-export const seqBlue = () => (isDark() ? SEQ_BLUE_DARK : SEQ_BLUE_LIGHT);
+export const palette = () => PALETTE;
+export const benchColor = () => BENCH;
+export const seqBlue = () => SEQ;
 
 // ---------------------------------------------------------------- цвет за сущностью
 
@@ -38,12 +34,12 @@ export function colorOf(name, { bench = false } = {}) {
 export function themeColors() {
   const cs = getComputedStyle(document.documentElement);
   const v = (n) => cs.getPropertyValue(n).trim();
-  return { text: v("--text"), muted: v("--text-muted"), grid: v("--grid"), surface: v("--surface") };
+  return { text: v("--text"), muted: v("--text-muted"), grid: v("--chart-grid"), surface: v("--surface") };
 }
 
 const live = new Map(); // canvas → {chart, factory}
 
-/** Отрисовать график; при смене темы он будет пересоздан с новыми цветами. */
+/** Отрисовать график (старый на том же canvas уничтожается). */
 export function renderChart(canvas, factory) {
   live.get(canvas)?.chart.destroy();
   const chart = new window.Chart(canvas, factory());
@@ -56,22 +52,10 @@ export function destroyChart(canvas) {
   live.delete(canvas);
 }
 
-darkQuery.addEventListener("change", () => {
-  for (const [canvas, rec] of live) {
-    if (!canvas.isConnected) {
-      rec.chart.destroy();
-      live.delete(canvas);
-      continue;
-    }
-    rec.chart.destroy();
-    rec.chart = new window.Chart(canvas, rec.factory());
-  }
-});
-
 export function applyChartDefaults() {
   const C = window.Chart;
   if (!C) return false;
-  C.defaults.font.family = getComputedStyle(document.body).fontFamily;
+  C.defaults.font.family = '"Montserrat", system-ui, sans-serif';
   C.defaults.font.size = 12;
   C.defaults.animation = false;
   C.defaults.responsive = true;
@@ -96,7 +80,7 @@ export function baseOptions({ legend = true } = {}) {
         labels: { color: t.text, boxWidth: 18, boxHeight: 2, padding: 12, font: { size: 12 } },
       },
       tooltip: {
-        backgroundColor: isDark() ? "rgba(30,32,36,.96)" : "rgba(255,255,255,.97)",
+        backgroundColor: "rgba(255,255,255,.98)",
         titleColor: t.text,
         bodyColor: t.text,
         borderColor: t.grid,
@@ -289,12 +273,11 @@ function mix(c1, c2, t) {
   return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(",")})`;
 }
 
-/** Цвет ячейки тепловой карты доходностей: синий — рост, красный — снижение; lim — модуль крайнего значения. */
+/** Цвет ячейки тепловой карты доходностей: бирюзовый — рост, красный — снижение; lim — модуль крайнего значения. */
 export function heatStyle(v, lim) {
-  const dark = isDark();
-  const NEG = dark ? "#e66767" : "#e34948";
-  const POS = dark ? "#3987e5" : "#2a78d6";
-  const MID = dark ? "#34363a" : "#f0efec";
+  const NEG = "#DC2626";
+  const POS = "#0F766E";
+  const MID = "#F1F3F6";
   const t = Math.min(1, Math.abs(v) / (lim || 1));
   return { background: mix(MID, v < 0 ? NEG : POS, t), color: t > 0.55 ? "#ffffff" : "var(--text)" };
 }

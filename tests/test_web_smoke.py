@@ -69,16 +69,10 @@ def browser():
 class Session:
     """Страница с журналами: ошибки консоли, внешние запросы, незнакомые запросы к ISS."""
 
-    def __init__(self, browser, server, *, live: bool, stats: bool = True, width: int | None = None,
-                 mode: str = "pro"):
+    def __init__(self, browser, server, *, live: bool, stats: bool = True, width: int | None = None):
         self.server = server
         kw = {"viewport": {"width": width, "height": 812}} if width else {}
         self.page = browser.new_page(**kw)
-        # режим «Просто / Подробно» (web/js/glossary.js); старые проверки — на полном интерфейсе
-        # только при первой загрузке вкладки: перезагрузка должна видеть выбор, сделанный переключателем
-        self.page.add_init_script(f"try {{ if (!sessionStorage.getItem('ia-mode-init')) {{"
-                                  f" localStorage.setItem('ia-mode', '{mode}'); sessionStorage.setItem('ia-mode-init', '1') }} }}"
-                                  " catch (e) {}")
         self.errors: list[str] = []
         self.external: list[str] = []
         self.unknown_iss: list[str] = []
@@ -178,17 +172,66 @@ def _current(page, attr: str) -> list[str]:
 
 # ================================================================ демо: главная и инструменты
 def test_demo_home(demo):
+    """Главная из 6 блоков: герой с поиском, лента портфелей, 5 шагов, диверсификация, сравнение, популярные + лидеры."""
     demo.goto("?demo=1")
     page = demo.page
     assert demo.hash() == "#/", "?demo=1 без маршрута открывает главную"
     assert page.locator("#demo-banner").is_visible(), "нет плашки демо-режима"
     assert demo.visible_panel() == ["panel-home"]
-    assert _current(page, "data-nav") == ["home"]
-    assert page.locator("#nav-search").is_visible()
+    assert _current(page, "data-nav") == [], "пункта «Главная» в меню нет"
+    assert page.locator("a[data-nav=home]").count() == 0
+    assert page.locator("#nav-search").is_visible() and page.locator("#home-search").is_visible()
+    assert page.locator("#panel-home .hero a[href='#/tools/backtest']").is_visible(), "кнопка «Проверить портфель»"
+    page.wait_for_selector("#home-portfolios a.pf-card[href^='#/portfolio/']", timeout=TIMEOUT)
+    assert page.locator("#home-portfolios a.pf-card[href^='#/portfolio/'] svg.spark").count() >= 3
+    steps = page.evaluate("() => [...document.querySelectorAll('#home-steps a')].map((a) => a.getAttribute('href'))")
+    assert steps == ["#/screener/stocks", "#/tools/metrics", "#/portfolios/lazy", "#/tools/backtest", "#/tools/frontier"], steps
+    assert page.locator("#panel-home .divers a[href='#/tools/frontier']").count() == 1
+    assert page.locator("#home-compare #cmp-a").is_visible() and page.locator("#home-pairs button.pair").count() >= 3
     assert page.locator("#home-popular li").count() >= 10
-    assert page.locator("#home-sections a").count() >= 4
+    assert page.locator("#home-popular .asset-badge").count() >= 10
+    assert page.locator("#home-leaders").is_visible()
     assert page.locator("#tool-nav").is_hidden()
     assert page.locator("#engine-banner .notice-error").count() == 0, page.locator("#engine-banner").inner_text()
+    _assert_no_bad_text(page, "#panel-home")
+    demo.check_clean()
+
+
+def test_demo_home_compare_opens_backtest_5050(demo):
+    demo.goto("?demo=1")
+    page = demo.page
+    page.locator("#home-compare button[type=submit]").click()
+    assert "обе" in page.locator("#cmp-status").inner_text()
+    page.locator("#home-pairs button.pair", has_text="SBER и GAZP").click()
+    page.wait_for_function("() => location.hash === '#/tools/backtest' && !document.querySelector('#panel-backtest').hidden",
+                           timeout=TIMEOUT)
+    rows = page.evaluate("() => [...document.querySelectorAll('#bt-pf-table tbody tr')].map((tr) =>"
+                         " [...tr.querySelectorAll('input')].map((i) => i.value))")
+    assert [r[:2] for r in rows] == [["SBER", "50"], ["GAZP", "50"]], rows
+    assert page.locator("#bt-pf-on").is_checked()
+    demo.check_clean()
+
+
+def test_header_brand_and_screener_submenu(demo):
+    """Главная — через логотип .brand; «Скринеры» — кнопка подменю (aria-expanded), пункты ведут на скринеры."""
+    demo.goto("?demo=1", "#/docs")
+    page = demo.page
+    btn = page.locator("#nav-sub-btn")
+    assert btn.evaluate("(e) => e.tagName") == "BUTTON" and btn.get_attribute("aria-expanded") == "false"
+    btn.click()
+    assert btn.get_attribute("aria-expanded") == "true"
+    page.locator("#nav-screeners a[href='#/screener/funds']").click()
+    page.wait_for_function("() => location.hash === '#/screener/funds' && !document.querySelector('#panel-screener').hidden",
+                           timeout=TIMEOUT)
+    assert btn.get_attribute("aria-expanded") == "false"
+    assert btn.get_attribute("aria-current") == "page"
+    btn.click()
+    page.keyboard.press("Escape")
+    assert btn.get_attribute("aria-expanded") == "false"
+    page.locator("header a.brand").click()
+    page.wait_for_function("() => location.hash === '#/' && !document.querySelector('#panel-home').hidden", timeout=TIMEOUT)
+    assert demo.visible_panel() == ["panel-home"]
+    page.wait_for_function(IDLE, timeout=TIMEOUT)
     demo.check_clean()
 
 
@@ -273,19 +316,20 @@ def test_demo_tools_catalog_and_stubs(demo):
     for h in ("#/tools/backtest", "#/tools/frontier", "#/tools/metrics"):
         assert any(x and x.startswith(h) for x in hrefs), f"в каталоге нет ссылки {h}"
 
-    for route, title, nav in (("#/screener/stocks", "Скринер акций", "screener"), ("#/screener/funds", "Скринер фондов", "screener"),
-                              ("#/screener/bonds", "Скринер облигаций", "screener"), ("#/portfolios/lazy", "Ленивые портфели", "portfolios")):
+    for route, panel, nav in (("#/screener/stocks", "screener", "screener"), ("#/screener/funds", "screener", "screener"),
+                              ("#/screener/bonds", "screener", "screener"), ("#/portfolios/lazy", "portfolios", "portfolios"),
+                              ("#/portfolio/60-40", "portfolios", "portfolios")):
         page.evaluate(f"() => {{ location.hash = '{route}'; }}")
-        page.wait_for_function(f"() => document.querySelector('#stub-title').textContent === '{title}' && "
-                               f"!document.querySelector('#panel-stub').hidden", timeout=TIMEOUT)
-        assert demo.visible_panel() == ["panel-stub"], route
-        assert _current(page, "data-nav") == [nav], route
+        page.wait_for_function(f"() => !document.querySelector('#panel-{panel}').hidden", timeout=TIMEOUT)
+        assert demo.visible_panel() == [f"panel-{panel}"], route
+        cur = page.evaluate("() => [...document.querySelectorAll('[data-nav][aria-current=page]')].map((a) => a.dataset.nav)")
+        assert cur == [nav], route
 
     page.evaluate("() => { location.hash = '#/no/such/page'; }")
     page.wait_for_function("() => document.querySelector('#stub-title').textContent === 'Страница не найдена'", timeout=TIMEOUT)
     assert demo.visible_panel() == ["panel-stub"]
     assert _current(page, "data-nav") == []
-    demo.check_clean()
+    demo.check_clean(allow=(r"404.*screener_bonds\.json",))   # файла скринера облигаций ещё нет
 
 
 def test_demo_symbol_page_explains_live_only(demo):
@@ -361,9 +405,11 @@ def test_live_home_leaders_and_search(live):
     page = live.page
     assert live.hash() == "#/"
     assert page.locator("#demo-banner").is_hidden()
-    page.wait_for_selector("#home-leaders table", timeout=TIMEOUT)
+    page.wait_for_selector("#home-leaders ol li", timeout=TIMEOUT)
     leaders = page.locator("#home-leaders").inner_text()
-    assert "LKOH" in leaders and "LQDT" in leaders, leaders[:500]
+    assert "LKOH" in leaders, leaders[:500]
+    page.locator("#home-leaders button.seg-btn", has_text="Фонды").click()
+    assert "LQDT" in page.locator("#home-leaders").inner_text()
     # поиск в шапке: подсказки ISS, выбор стрелкой и Enter -> страница бумаги
     page.locator("#nav-search").fill("сбер")
     page.wait_for_selector(".search-list:not([hidden]) .search-opt", timeout=TIMEOUT)
@@ -500,26 +546,32 @@ def test_live_symbol_without_symbol_stats(browser, server):
 
 
 # ================================================================ мобильная ширина
-@pytest.mark.parametrize("mode", ["simple", "pro"])
-@pytest.mark.parametrize("live_mode, hash_", [
-    (False, "#/"), (False, "#/tools"), (False, "#/tools/backtest"), (False, "#/docs"),
-    (True, "#/symbol/SBER"), (True, "#/symbol/SU26238RMFS4"),
-])
-def test_mobile_375_no_horizontal_scroll(browser, server, live_mode, hash_, mode):
-    s = Session(browser, server, live=live_mode, width=375, mode=mode)
-    try:
-        s.goto("" if live_mode else "?demo=1", hash_)
-        if hash_.startswith("#/symbol"):
-            _wait_blocks(s.page, 8)
-        sw = s.page.evaluate("() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]")
-        assert sw[0] <= sw[1], f"{hash_}: горизонтальная прокрутка {sw[0]} > {sw[1]}"
-        wide = s.page.evaluate(
-            "() => [...document.querySelectorAll('body *')].filter((e) => { const r = e.getBoundingClientRect();"
+_WIDE_JS = ("() => [...document.querySelectorAll('body *')].filter((e) => { const r = e.getBoundingClientRect();"
             " if (!(r.width > 0 && r.right > document.documentElement.clientWidth + 1)) return false;"
             " for (let a = e.parentElement; a && a !== document.body; a = a.parentElement) {"
             "   const o = getComputedStyle(a).overflowX; if (o === 'auto' || o === 'scroll' || o === 'hidden') return false; }"
             " return true; })"
             ".slice(0, 5).map((e) => e.tagName + '#' + e.id + '.' + e.className)")
+
+
+@pytest.mark.parametrize("live_mode, hash_, ready", [
+    (False, "#/", "#home-portfolios .pf-card[href]"), (False, "#/tools", None), (False, "#/tools/backtest", "#bt-out table"),
+    (False, "#/docs", None), (False, "#/screener/stocks", "#screener-root table"),
+    (False, "#/portfolios/lazy", "#portfolios-root table"), (False, "#/portfolio/lazy-plus", "#portfolios-root canvas"),
+    (True, "#/", "#home-leaders ol"), (True, "#/screener/stocks", "#screener-root table"),
+    (True, "#/symbol/SBER", None), (True, "#/symbol/SU26238RMFS4", None),
+])
+def test_mobile_375_no_horizontal_scroll(browser, server, live_mode, hash_, ready):
+    s = Session(browser, server, live=live_mode, width=375)
+    try:
+        s.goto("" if live_mode else "?demo=1", hash_)
+        if hash_.startswith("#/symbol"):
+            _wait_blocks(s.page, 8)
+        if ready:
+            s.page.wait_for_selector(ready, timeout=TIMEOUT)
+        sw = s.page.evaluate("() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]")
+        assert sw[0] <= sw[1], f"{hash_}: горизонтальная прокрутка {sw[0]} > {sw[1]}"
+        wide = s.page.evaluate(_WIDE_JS)
         assert not wide, f"{hash_}: элементы шире экрана: {wide}"
         assert s.page.locator("#nav-toggle").is_visible(), "на мобильной ширине меню — за кнопкой"
         s.check_clean()
@@ -527,36 +579,29 @@ def test_mobile_375_no_horizontal_scroll(browser, server, live_mode, hash_, mode
         s.close()
 
 
-def test_simple_mode_hides_expert_parts(browser, server):
-    """Режим «Просто» (по умолчанию для новых посетителей): итог словами, подсказки «?», без экспертных настроек."""
-    s = Session(browser, server, live=False, mode="simple")
-    try:
-        page = s.page
-        s.goto("?demo=1", "#/")
-        assert page.locator("#home-goals a").count() == 3
-        s.goto("?demo=1", "#/tools/backtest")
-        assert page.locator("#params-bar").is_hidden(), "в «Просто» общие параметры скрыты"
-        assert page.locator("#bt-band").is_hidden() and page.locator("#bt-cap").is_visible()
-        _rerun(page, "Посчитать", "#bt-out")
-        summary = page.locator("#bt-out .plain-summary").inner_text()
-        assert "стало бы" in summary and "не гарантирует" in summary, summary[:500]
-        table = page.locator("#bt-out table.metrics-table").inner_text()
-        assert "Макс. просадка" in table and "Коэф. Шарпа" not in table, table[:500]
-        # подсказка открывается по нажатию (телефон — без наведения)
-        page.locator("#bt-out .metrics-table .gl-btn").first.click()
-        assert page.locator(".gl-pop:popover-open").count() == 1
-        page.keyboard.press("Escape")
-        # переключатель возвращает полный интерфейс
-        page.locator("#mode-toggle").click()
-        assert page.locator("#params-bar").is_visible()
-        assert "Коэф. Шарпа" in page.locator("#bt-out table.metrics-table").inner_text()
-        assert page.evaluate("() => localStorage.getItem('ia-mode')") == "pro"
-        s.check_clean()
-    finally:
-        s.close()
+def test_no_simple_mode_leftovers(demo):
+    """Режим «Просто / Подробно» удалён: нет кнопки, ia-mode, data-mode и скрытых строк таблицы."""
+    demo.goto("?demo=1", "#/tools/backtest")
+    page = demo.page
+    assert page.locator("#mode-toggle").count() == 0
+    assert page.evaluate("() => document.documentElement.dataset.mode") is None
+    assert page.evaluate("() => localStorage.getItem('ia-mode')") is None
+    assert page.locator(".adv").count() == 0
+    assert page.locator("#params-bar").is_visible() and page.locator("#bt-band").is_visible()
+    _rerun(page, "Посчитать", "#bt-out")
+    assert page.locator("#bt-out table.metrics-table tbody tr:not(:visible)").count() == 0
+    table = page.locator("#bt-out table.metrics-table").inner_text()
+    assert "Коэф. Шарпа" in table and "Макс. просадка" in table
+    summary = page.locator("#bt-out .plain-summary").inner_text()
+    assert "стало бы" in summary and "не гарантирует" in summary, summary[:500]
+    # подсказка «?» открывается по нажатию (телефон — без наведения)
+    page.locator("#bt-out .metrics-table .gl-btn").first.click()
+    assert page.locator(".gl-pop:popover-open").count() == 1
+    page.keyboard.press("Escape")
+    demo.check_clean()
 
 
-# ================================================================ «Просто»: сводка «Если коротко» и подписи
+# ================================================================ сводка «Если коротко» и подписи
 _PCT = re.compile(r"(−?\d[\d ]*(?:,\d+)?) %")
 _NBSP_JS = ".replace(/\\u00a0/g, ' ')"  # в тексте интерфейса — неразрывные пробелы; сравниваем с обычными
 
@@ -585,17 +630,13 @@ def _metrics(page, out="#bt-out") -> dict[str, dict[str, str]]:
     }}""")
 
 
-@pytest.fixture
-def simple(browser, server):
-    s = Session(browser, server, live=False, mode="simple")
-    yield s
-    s.close()
+CONTRIB = " (по стоимости, включая взносы)"
 
 
-def test_simple_summary_matches_metrics_table(simple):
+def test_summary_matches_metrics_table(demo):
     """«в среднем X % в год» и «ниже максимума на Y %» в сводке — те же CAGR и макс. просадка, что в таблице."""
-    simple.goto("?demo=1", "#/tools/backtest")
-    page = simple.page
+    demo.goto("?demo=1", "#/tools/backtest")
+    page = demo.page
     _rerun(page, "Посчитать", "#bt-out")
     summ, table = _summary(page), _metrics(page)
     assert len(summ) >= 3, summ
@@ -608,7 +649,7 @@ def test_simple_summary_matches_metrics_table(simple):
         assert m, f"{name}: нет просадки: {text}"
         dd = abs(_pct(table["Макс. просадка"][name]))  # в таблице 1 знак, в сводке — целые
         assert abs(_pct(m.group(1)) - dd) <= 0.5 + 1e-9, f"{name}: сводка {m.group(1)} ≠ просадка {dd}"
-    simple.check_clean()
+    demo.check_clean()
 
 
 def _xirr_reference(cap: float, contrib: float) -> dict[str, float]:
@@ -630,14 +671,20 @@ def _xirr_reference(cap: float, contrib: float) -> dict[str, float]:
     return out
 
 
-def test_simple_summary_with_contributions_shows_xirr(simple):
-    """С пополнениями показывается денежно-взвешенная доходность (XIRR потоков), а не CAGR ряда стоимости."""
-    simple.goto("?demo=1", "#/tools/backtest")
-    page = simple.page
+def test_summary_with_contributions_shows_xirr(demo):
+    """С пополнениями показывается денежно-взвешенная доходность (XIRR потоков), а не CAGR ряда стоимости;
+    строки CAGR и накопленной доходности видны и подписаны «(по стоимости, включая взносы)»."""
+    demo.goto("?demo=1", "#/tools/backtest")
+    page = demo.page
     page.wait_for_selector("#bt-out table.metrics-table", timeout=TIMEOUT)
     page.fill("#bt-contrib", "50000")
     _rerun(page, "Посчитать", "#bt-out")
     summ, table = _summary(page), _metrics(page)
+    for label in ("CAGR (среднегод.)", "Накопленная доходность"):
+        assert label not in table, f"«{label}» без пометки о взносах"
+        row = page.locator("#bt-out table.metrics-table tbody tr", has=page.locator(f"th[aria-label='{label}{CONTRIB}']"))
+        assert row.count() == 1 and row.is_visible(), f"«{label}{CONTRIB}» не видна"
+        assert f"{label}{CONTRIB}" in row.locator("th").inner_text()
     kpis = page.evaluate("() => Object.fromEntries([...document.querySelectorAll('#bt-out .kpi:not(.bench)')]"
                          ".map((k) => [k.querySelector('.kpi-name').textContent, k.querySelector('.kpi-sub').textContent" + _NBSP_JS + "]))")
     ref = _xirr_reference(1_000_000, 50_000)
@@ -652,14 +699,14 @@ def test_simple_summary_with_contributions_shows_xirr(simple):
         assert _pct(kpis[name].split("с учётом пополнений", 1)[1]) == shown, (kpis[name], text)
         assert abs(shown - ref[name] * 100) <= 0.05 + 1e-6, f"{name}: показано {shown} %, XIRR {ref[name] * 100:.3f} %"
         # CAGR ряда стоимости включает взносы и поэтому заметно выше
-        assert shown < _pct(table["CAGR (среднегод.)"][name]) - 1, (name, shown, table["CAGR (среднегод.)"][name])
-    simple.check_clean()
+        assert shown < _pct(table["CAGR (среднегод.)" + CONTRIB][name]) - 1, (name, shown)
+    demo.check_clean()
 
 
-def test_simple_summary_short_period_total_return(simple):
-    """Срок < 1 года: годовой процент не показывается, только «за весь срок»."""
-    simple.goto("?demo=1&from=2024-01-01&till=2024-06-30", "#/tools/backtest")
-    page = simple.page
+def test_summary_short_period_total_return(demo):
+    """Срок < 1 года: годовой процент не показывается, только «за весь срок»; с пополнениями — «сверх внесённого»."""
+    demo.goto("?demo=1&from=2024-01-01&till=2024-06-30", "#/tools/backtest")
+    page = demo.page
     _rerun(page, "Посчитать", "#bt-out")
     summ = _summary(page)
     assert summ
@@ -668,89 +715,235 @@ def test_simple_summary_short_period_total_return(simple):
         assert "за весь срок" in text, f"{name}: {text}"
     kpi = page.locator("#bt-out .kpis").inner_text()
     assert "в год" not in kpi and "за весь срок" in kpi, kpi
-    simple.check_clean()
 
-
-def test_simple_security_metrics_full_table(simple):
-    """«Коэффициенты бумаги» — полная таблица и в «Просто» (buildMetricsTable(..., {simple: false}))."""
-    simple.goto("?demo=1", "#/tools/metrics")
-    page = simple.page
-    page.wait_for_selector("#sec-out table.metrics-table", timeout=TIMEOUT)
-    row = page.locator("#sec-out table.metrics-table tbody tr", has=page.locator("th[aria-label='Коэф. Шарпа']"))
-    assert row.count() == 1 and row.is_visible(), "строка «Коэф. Шарпа» скрыта в «Просто»"
-    assert page.locator("#sec-out table.metrics-table tbody tr:not(:visible)").count() == 0
-    simple.check_clean()
-
-
-def test_simple_strategy_labels_grouped_without_codes(simple):
-    """Подписи готовых портфелей: доли по классам без повторов, коды индексов (MCFTR…) — только в «Подробно»."""
-    simple.goto("?demo=1", "#/tools/backtest")
-    page = simple.page
-    page.wait_for_selector("#bt-strategies .check-note", timeout=TIMEOUT)
-    notes = page.evaluate("() => Object.fromEntries([...document.querySelectorAll('#bt-strategies label')]"
-                          ".map((l) => [l.querySelector('.check-title').innerText, l.querySelector('.check-note').innerText" + _NBSP_JS + "]))")
-    allw = next(v for k, v in notes.items() if k.startswith("Всепогодный"))
-    assert allw.count("Акции") == 1, allw
-    assert "37,5 %" in allw, f"MCFTR 30 % + MEEUTR 7,5 % должны сложиться в «Акции 37,5 %»: {allw}"
-    codes = re.compile(r"\b(MCFTR|MEEUTR|RGBITR|RUGBITR\w*|GOLD_CBR|CORP_CHAIN|RUCBITR|RUONIA)\b")
-    for name, text in notes.items():
-        assert not codes.search(text), f"{name}: код индекса в «Просто»: {text}"
-        words = [w.split(" ")[0] for w in text.split(" · ") if w]
-        assert len(words) == len(set(words)), f"{name}: класс повторяется: {text}"
-    simple.check_clean()
-
-
-def test_mode_toggle_persists_before_scripts(simple):
-    """«Подробно» запоминается: после перезагрузки data-mode=pro стоит уже до main.js (inline-скрипт в <head>)."""
-    simple.page.add_init_script("document.addEventListener('readystatechange', () => {"
-                                " if (document.readyState === 'interactive') window.__modeAtParse = document.documentElement.dataset.mode; })")
-    simple.goto("?demo=1", "#/")
-    page = simple.page
-    assert page.evaluate("() => document.documentElement.dataset.mode") != "pro"
-    page.locator("#mode-toggle").click()
-    assert page.evaluate("() => localStorage.getItem('ia-mode')") == "pro"
-    page.reload(wait_until="load")
-    page.wait_for_function(IDLE, timeout=TIMEOUT)
-    assert page.evaluate("() => window.__modeAtParse") == "pro", "data-mode не выставлен inline-скриптом до модулей"
-    assert page.evaluate("() => document.documentElement.dataset.mode") == "pro"
-    assert page.locator("#mode-toggle").inner_text().strip() == "Просто"
-    simple.check_clean()
-
-
-def test_simple_contrib_hides_cagr_rows_and_short_period(simple):
-    """При пополнениях CAGR и накопленная доходность ряда стоимости (с взносами) в «Просто» скрыты, в «Подробно» видны;
-    короткий срок + пополнения — результат «за весь срок» «сверх внесённого»."""
-    simple.goto("?demo=1&contrib=50000", "#/tools/backtest")
-    page = simple.page
-    _rerun(page, "Посчитать", "#bt-out")
-    row = lambda label: page.locator("#bt-out table.metrics-table tbody tr",
-                                     has=page.locator(f"th[aria-label='{label}']"))
-    for label in ("CAGR (среднегод.)", "Накопленная доходность"):
-        assert row(label).count() == 1 and row(label).is_hidden(), f"«{label}» видна в «Просто» при пополнениях"
-    assert row("Макс. просадка").is_visible()
-    page.locator("#mode-toggle").click()
-    for label in ("CAGR (среднегод.)", "Накопленная доходность"):
-        assert row(label).is_visible(), f"«{label}» не видна в «Подробно»"
-    page.locator("#mode-toggle").click()
-
-    simple.goto("?demo=1&contrib=50000&from=2024-01-01&till=2024-06-30", "#/tools/backtest")
+    demo.goto("?demo=1&contrib=50000&from=2024-01-01&till=2024-06-30", "#/tools/backtest")
     _rerun(page, "Посчитать", "#bt-out")
     summ = _summary(page)
     assert summ
     for name, text in summ.items():
         assert "за весь срок" in text and "сверх внесённого" in text, f"{name}: {text}"
         assert "в год" not in text, f"{name}: {text}"
-    simple.check_clean()
+    demo.check_clean()
 
 
-def test_mode_toggle_has_no_aria_label(demo):
-    """Имя кнопки — её видимый текст («Подробно»/«Просто»); aria-label его бы подменял (WCAG 2.5.3)."""
-    demo.goto("?demo=1", "#/")
-    btn = demo.page.locator("#mode-toggle")
-    assert btn.get_attribute("aria-label") is None
-    btn.click()
-    assert btn.get_attribute("aria-label") is None
-    assert demo.page.get_by_role("button", name=btn.inner_text().strip()).count() >= 1
+def test_security_metrics_full_table(demo):
+    demo.goto("?demo=1", "#/tools/metrics")
+    page = demo.page
+    page.wait_for_selector("#sec-out table.metrics-table", timeout=TIMEOUT)
+    row = page.locator("#sec-out table.metrics-table tbody tr", has=page.locator("th[aria-label='Коэф. Шарпа']"))
+    assert row.count() == 1 and row.is_visible()
+    assert page.locator("#sec-out table.metrics-table tbody tr:not(:visible)").count() == 0
+    demo.check_clean()
+
+
+def test_strategy_labels_grouped_with_codes(demo):
+    """Подписи готовых портфелей: доли по классам без повторов, коды индексов — в скобках и видны."""
+    demo.goto("?demo=1", "#/tools/backtest")
+    page = demo.page
+    page.wait_for_selector("#bt-strategies .check-note", timeout=TIMEOUT)
+    notes = page.evaluate("() => Object.fromEntries([...document.querySelectorAll('#bt-strategies label')]"
+                          ".map((l) => [l.querySelector('.check-title').innerText, l.querySelector('.check-note').innerText" + _NBSP_JS + "]))")
+    allw = next(v for k, v in notes.items() if k.startswith("Всепогодный"))
+    assert allw.count("Акции") == 1, allw
+    assert re.search(r"Акции 37,5 % \((MCFTR, MEEUTR|MEEUTR, MCFTR)\)", allw), \
+        f"MCFTR 30 % + MEEUTR 7,5 % должны сложиться в «Акции 37,5 % (MCFTR, MEEUTR)»: {allw}"
+    codes = re.compile(r"\b(MCFTR|MEEUTR|RGBITR|RUGBITR\w*|GOLD_CBR|CORP_CHAIN|RUCBITR|RUONIA)\b")
+    for name, text in notes.items():
+        assert codes.search(text), f"{name}: нет кодов индексов: {text}"
+        for part in text.split(" · "):
+            assert not codes.search(part) or re.search(r"\([^)]*\)", part), f"{name}: код не в скобках: {part}"
+        words = [w.split(" ")[0] for w in text.split(" · ") if w]
+        assert len(words) == len(set(words)), f"{name}: класс повторяется: {text}"
+    visible = page.locator("#bt-strategies .check-note .muted").first
+    assert visible.is_visible(), "коды индексов скрыты"
+    demo.check_clean()
+
+
+# ================================================================ скринеры (web/js/page-screener.js)
+def _scr_rows(page) -> list[str]:
+    return page.evaluate("() => [...document.querySelectorAll('#screener-root tbody tr th a.scr-ticker')].map((a) => a.textContent.trim())")
+
+
+def _scr_count(page) -> str:
+    return page.locator("#screener-root .scr-count").inner_text()
+
+
+def test_screener_stocks(demo):
+    demo.goto("?demo=1", "#/screener/stocks")
+    page = demo.page
+    page.wait_for_selector("#screener-root tbody tr", timeout=TIMEOUT)
+    assert demo.visible_panel() == ["panel-screener"]
+    n0 = page.locator("#screener-root tbody tr").count()
+    assert n0 >= 10
+    meta = page.locator("#screener-root .scr-meta").inner_text()
+    assert "FinServ" in meta and "T-Invest" in meta, meta
+
+    # поиск сужает
+    page.locator("#screener-root .scr-search input").fill("SBER")
+    page.wait_for_function("() => document.querySelectorAll('#screener-root tbody tr').length >= 1"
+                           " && document.querySelectorAll('#screener-root tbody tr').length < 5", timeout=TIMEOUT)
+    assert any(r.startswith("SBER") for r in _scr_rows(page)), _scr_rows(page)
+    assert "Найдено" in _scr_count(page)
+    page.locator("#screener-root .scr-search input").fill("")
+
+    # фильтр сектора
+    sel = page.locator("#screener-root label.field", has_text="Сектор").locator("select")
+    sel.select_option("Финансы")
+    page.wait_for_function("() => location.hash.includes('sector=')", timeout=TIMEOUT)
+    col = page.evaluate("() => [...document.querySelectorAll('#screener-root thead th')].findIndex((th) => th.textContent.startsWith('Сектор'))")
+    sectors = page.evaluate(f"() => [...document.querySelectorAll('#screener-root tbody tr')].map((tr) => tr.children[{col}].textContent)")
+    assert sectors and set(sectors) == {"Финансы"}, sectors
+
+    # сортировка по клику меняет aria-sort
+    th = page.locator("#screener-root thead th", has=page.locator("button.th-sort", has_text="Шарп"))
+    assert th.get_attribute("aria-sort") is None
+    th.locator("button.th-sort").click()
+    th = page.locator("#screener-root thead th", has=page.locator("button.th-sort", has_text="Шарп"))
+    assert th.get_attribute("aria-sort") == "descending"
+    th.locator("button.th-sort").click()
+    th = page.locator("#screener-root thead th", has=page.locator("button.th-sort", has_text="Шарп"))
+    assert th.get_attribute("aria-sort") == "ascending"
+    assert "sort=sharpe" in demo.hash() and "dir=asc" in demo.hash()
+
+    # состояние в hash переживает перезагрузку
+    rows_before = _scr_rows(page)
+    page.reload(wait_until="load")
+    page.wait_for_selector("#screener-root tbody tr", timeout=TIMEOUT)
+    assert page.locator("#screener-root label.field", has_text="Сектор").locator("select").input_value() == "Финансы"
+    assert _scr_rows(page) == rows_before
+    th = page.locator("#screener-root thead th", has=page.locator("button.th-sort", has_text="Шарп"))
+    assert th.get_attribute("aria-sort") == "ascending"
+
+    # CSV
+    with page.expect_download() as dl:
+        page.get_by_role("button", name="Скачать CSV").click()
+    assert dl.value.suggested_filename == "screener-stocks.csv"
+    text = open(dl.value.path(), encoding="utf-8-sig").read()
+    assert text.splitlines()[0].startswith("Тикер;") and len(text.splitlines()) == len(rows_before) + 1
+
+    # клик по строке (не по ссылке) — страница бумаги
+    first = rows_before[0]
+    page.locator("#screener-root tbody tr").first.locator("td").first.click()
+    page.wait_for_function(f"() => location.hash === '#/symbol/{first}'", timeout=TIMEOUT)
+    page.wait_for_function(IDLE, timeout=TIMEOUT)
+    demo.check_clean()
+
+
+def test_screener_funds(demo):
+    demo.goto("?demo=1", "#/screener/funds")
+    page = demo.page
+    page.wait_for_selector("#screener-root tbody tr", timeout=TIMEOUT)
+    assert page.locator("#screener-root tbody tr").count() >= 5
+    assert page.locator("#screener-root .scr-tab[aria-current=page]").inner_text() == "Фонды"
+    heads = page.locator("#screener-root thead").inner_text()
+    assert "Комиссия" in heads and "Управляющая компания" in heads
+    _assert_no_bad_text(page, "#panel-screener")
+    demo.check_clean()
+
+
+def test_screener_bonds_without_file(demo):
+    """screener_bonds.json ещё нет (сборщик не запускался): понятное пустое состояние, без ошибок (404 разрешён)."""
+    demo.goto("?demo=1", "#/screener/bonds")
+    page = demo.page
+    page.wait_for_selector("#screener-root .scr-body .notice, #screener-root .scr-body [role=status], #screener-root tbody tr",
+                           timeout=TIMEOUT)
+    page.wait_for_function("() => !document.querySelector('#screener-root [aria-busy]')", timeout=TIMEOUT)
+    text = page.locator("#screener-root").inner_text()
+    assert "пока нет" in text, text
+    assert page.locator("#screener-root .notice-error").count() == 0
+    demo.check_clean(allow=(r"Failed to load resource.*404",))
+
+
+# ================================================================ портфели (web/js/page-portfolios.js)
+def test_portfolios_listing_page_and_backtest(demo):
+    demo.goto("?demo=1", "#/portfolios/lazy")
+    page = demo.page
+    page.wait_for_selector("#portfolios-root table.pf-list tbody tr", timeout=TIMEOUT)
+    assert demo.visible_panel() == ["panel-portfolios"]
+    assert page.locator("#portfolios-root table.pf-list tbody tr").count() >= 10
+    page.wait_for_selector("#portfolios-root canvas", timeout=TIMEOUT)   # «риск — доходность»
+    _assert_no_bad_text(page, "#panel-portfolios")
+
+    page.locator("#portfolios-root table.pf-list a[href='#/portfolio/lazy-plus']").click()
+    page.wait_for_function("() => location.hash === '#/portfolio/lazy-plus'", timeout=TIMEOUT)
+    page.wait_for_selector("#portfolios-root .pf-grid canvas", timeout=TIMEOUT)
+    assert page.locator("#portfolios-root h2").first.inner_text().strip()
+    assert page.locator("#portfolios-root .pf-grid table tbody tr").count() >= 2, "нет состава"
+    _assert_no_bad_text(page, "#panel-portfolios")
+
+    page.get_by_role("button", name="Открыть в бэктесте").click()
+    page.wait_for_function("() => location.hash === '#/tools/backtest' && !document.querySelector('#panel-backtest').hidden",
+                           timeout=TIMEOUT)
+    assert page.locator("#bt-pf-on").is_checked(), "«Свой портфель» не включён"
+    rows = page.evaluate("() => [...document.querySelectorAll('#bt-pf-table tbody tr')].map((tr) =>"
+                         " [...tr.querySelectorAll('input')].map((i) => i.value))")
+    assert len(rows) >= 2 and all(r[0] for r in rows), rows
+    assert "Свой портфель" in page.locator("#bt-out").inner_text()
+    page.wait_for_function(IDLE, timeout=TIMEOUT)
+    demo.check_clean()
+
+
+def test_portfolio_unknown_slug(demo):
+    demo.goto("?demo=1", "#/portfolio/no-such")
+    page = demo.page
+    page.wait_for_function("() => document.querySelector('#portfolios-root').textContent.includes('не найден')", timeout=TIMEOUT)
+    demo.check_clean()
+
+
+# ================================================================ логотипы компаний (web/js/logo.js)
+CDN = "https://invest-brands.cdn-tinkoff.ru/"
+_PNG = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+                     "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082")
+
+
+def _with_logo(session):
+    """tinvest_shares.json: репозиторный + logo у SBER."""
+    body = json.loads((ROOT / "public/data/tinvest_shares.json").read_text(encoding="utf-8"))
+    for r in body["data"]:
+        if r["ticker"] == "SBER":
+            r["logo"], r["logo_color"] = "sber.png", "#309C0B"
+    session.page.route("**/public/data/tinvest_shares.json",
+                       lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps(body, ensure_ascii=False)))
+
+
+def _sber_badge(page):
+    return page.locator("#home-popular a[href='#/symbol/SBER'] .asset-badge")
+
+
+def test_logo_initials_without_data(demo):
+    demo.goto("?demo=1")
+    badge = _sber_badge(demo.page)
+    demo.page.wait_for_function("() => document.querySelector(\"#home-popular a[href='#/symbol/SBER'] .asset-badge\")?.dataset.initials",
+                                timeout=TIMEOUT)
+    assert badge.get_attribute("data-initials") == "SB"
+    assert badge.locator("img").count() == 0
+    demo.check_clean()
+
+
+def test_logo_image_from_cdn(demo):
+    _with_logo(demo)
+    got = []
+    demo.page.route(f"{CDN}**", lambda r: (got.append(r.request.url), r.fulfill(status=200, content_type="image/png", body=_PNG)))
+    demo.goto("?demo=1")
+    page = demo.page
+    page.wait_for_selector("#home-popular a[href='#/symbol/SBER'] .asset-badge img", timeout=TIMEOUT)
+    img = _sber_badge(page).locator("img")
+    assert img.get_attribute("src") == f"{CDN}sberx160.png"
+    assert img.get_attribute("alt") == ""
+    page.wait_for_function("() => document.querySelector(\"#home-popular a[href='#/symbol/SBER'] .asset-badge img\").complete", timeout=TIMEOUT)
+    assert got and all(u.startswith(CDN) for u in got)
+    demo.check_clean()
+
+
+def test_logo_falls_back_to_initials_on_error(demo):
+    _with_logo(demo)
+    demo.page.route(f"{CDN}**", lambda r: r.abort())
+    demo.goto("?demo=1")
+    page = demo.page
+    page.wait_for_function("() => { const b = document.querySelector(\"#home-popular a[href='#/symbol/SBER'] .asset-badge\");"
+                           " return b && b.dataset.initials === 'SB' && !b.querySelector('img') && b.style.background; }", timeout=TIMEOUT)
+    assert _sber_badge(page).evaluate("(e) => getComputedStyle(e).backgroundColor") == "rgb(48, 156, 11)"
+    demo.check_clean(allow=(r"ERR_FAILED|Failed to load resource",))
 
 
 # ================================================================ ассистент «Спросить ИИ» (web/js/assistant.js)

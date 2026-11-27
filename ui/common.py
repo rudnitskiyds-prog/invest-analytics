@@ -44,7 +44,7 @@ def color_map(names: list[str], benchmark: Optional[str] = None) -> dict[str, st
 
 
 def page_setup(title: str, icon: str = "📈"):
-    st.set_page_config(page_title=f"{title} · ИнвестАналитика", page_icon=icon, layout="wide")
+    st.set_page_config(page_title=f"{title} · FinServ", page_icon=icon, layout="wide")
     st.markdown("""<style>
       .block-container {padding-top: 1.6rem; max-width: 1400px}
       div[data-testid="stMetricValue"] {font-size: 1.5rem}

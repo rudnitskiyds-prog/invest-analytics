@@ -184,7 +184,7 @@ def test_symbol_stats_happy_path(env):
     d = _read(out, "symbol_stats")
     till = _till()
     first = (pd.Timestamp(till) - pd.DateOffset(months=120)).to_period("M")
-    assert d["source"] == "ISS MOEX (расчёт ИнвестАналитики)"
+    assert d["source"] == "ISS MOEX (расчёт FinServ)"
     assert d["rf"] == pytest.approx(0.1)
     assert d["window"] == {"from": first.to_timestamp("M").date().isoformat(), "till": till.isoformat(),
                            "max_months": 120, "min_months": 36}
@@ -219,9 +219,11 @@ def test_symbol_stats_file_has_no_quotes(env):
     assert d["total_return"] is False                     # в tmp нет dividends.json — акции по ценам
     assert d["split_adjusted"] is True                    # свечи ISS скорректированы биржей
     assert not any(it["tr"] for it in d["items"].values())
-    allowed = {"class", "tr", "rf", *ranking.STAT_FIELDS, "months", "rank", "score"}
+    allowed = {"class", "tr", "rf", "name", "ret_6m", *ranking.STAT_FIELDS, "months", "rank", "score"}
     for sec, it in d["items"].items():
         assert set(it) == allowed, sec
+        assert it["name"] is None or isinstance(it["name"], str), sec
+        assert it["ret_6m"] is None or (isinstance(it["ret_6m"], float) and -1 < it["ret_6m"] < 10), sec
         assert not any(isinstance(v, list) for v in it.values()), sec
         # ни одна цена закрытия не попала в файл
     prices = set(np.round(loader.series("S001", *loader.calls[0][1:]).to_numpy(), 6))

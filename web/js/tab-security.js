@@ -120,7 +120,7 @@ function render() {
   const reports = { [key]: E.metrics.computeAll(s, b, g.rf, g.freq) };
   if (b && !same) reports[g.bench] = E.metrics.computeAll(b, b, g.rf, g.freq);
   const cols = Object.keys(reports);
-  const SRC = "расчёт ИнвестАналитики по данным ISS MOEX и Банка России";
+  const SRC = "расчёт FinServ по данным ISS MOEX и Банка России";
   const pf = toSet(E.metrics.PERCENT_FIELDS);
   const labels = Object.fromEntries(entries(E.metrics.LABELS_RU));
   facts = [fact("period", "Период расчёта", null, "period",
@@ -134,8 +134,8 @@ function render() {
   }
   out.append(h("section", { class: "card" },
     h("h3", { class: "card-title" }, "Показатели эффективности"),
-    h("p", { class: "card-sub adv" }, `${g.rfNote} Доходности ${FREQ_LABELS[g.freq]}, бенчмарк ${g.bench}.`),
-    tableWrap(buildMetricsTable(cols, reports, (c) => colorOf(c, { bench: c === g.bench }), { simple: false }))));
+    h("p", { class: "card-sub" }, `${g.rfNote} Доходности ${FREQ_LABELS[g.freq]}, бенчмарк ${g.bench}.`),
+    tableWrap(buildMetricsTable(cols, reports, (c) => colorOf(c, { bench: c === g.bench })))));
 }
 
 export function rerender() {

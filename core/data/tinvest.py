@@ -282,8 +282,17 @@ def shares(client: TInvestClient) -> list[dict]:
             "div_yield_flag": bool(_get(x, "div_yield_flag", False)),
             "for_qual_investor_flag": bool(_get(x, "for_qual_investor_flag", False)),
             "liquidity_flag": bool(_get(x, "liquidity_flag", False)),
+            **_brand(x),
         })
     return _one_per_ticker(out)
+
+
+def _brand(x: dict) -> dict:
+    """Логотип из Brand (instruments.proto): {"logo": logo_name, "logo_color": logo_base_color};
+    отсутствующих полей в результате нет."""
+    b = _get(x, "brand") or {}
+    out = {"logo": _get(b, "logo_name"), "logo_color": _get(b, "logo_base_color")}
+    return {k: v for k, v in out.items() if v}
 
 
 def _one_per_ticker(rows: list[dict]) -> list[dict]:
@@ -313,6 +322,7 @@ def etfs(client: TInvestClient) -> list[dict]:
             "num_shares": quotation(_get(x, "num_shares")),
             "currency": (_get(x, "currency") or "").upper() or None,
             "uid": _get(x, "uid"), "asset_uid": _get(x, "asset_uid"),
+            **_brand(x),
         })
     return out
 
