@@ -3,56 +3,56 @@
   "ok": true,
   "rows": 4677,
   "last": "2026-11-28",
-  "checked": "2026-11-28T09:37:27+00:00"
+  "checked": "2026-11-28T11:38:36+00:00"
  },
  "ruonia_rate": {
   "ok": true,
   "rows": 4160,
   "last": "2026-11-26",
-  "checked": "2026-11-28T09:37:28+00:00"
+  "checked": "2026-11-28T11:38:36+00:00"
  },
  "ruonia_index": {
   "ok": true,
   "rows": 4160,
   "last": "2026-11-26",
-  "checked": "2026-11-28T09:37:28+00:00"
+  "checked": "2026-11-28T11:38:36+00:00"
  },
  "key_rate": {
   "ok": true,
   "rows": 3310,
   "last": "2026-11-27",
-  "checked": "2026-11-28T09:37:28+00:00"
+  "checked": "2026-11-28T11:38:37+00:00"
  },
  "tinvest_shares": {
   "ok": true,
   "rows": 254,
   "last": "2026-11-28",
-  "checked": "2026-11-28T09:37:47+00:00"
+  "checked": "2026-11-28T11:38:56+00:00"
  },
  "tinvest_etfs": {
   "ok": true,
   "rows": 63,
   "last": "2026-11-28",
-  "checked": "2026-11-28T09:37:47+00:00"
+  "checked": "2026-11-28T11:38:57+00:00"
  },
  "dividends": {
   "ok": true,
   "rows": 200,
   "last": "2026-11-28",
-  "checked": "2026-11-28T09:39:29+00:00"
+  "checked": "2026-11-28T11:40:38+00:00"
  },
  "fundamentals": {
   "ok": true,
   "rows": 252,
   "last": "2026-11-28",
-  "checked": "2026-11-28T09:39:31+00:00"
+  "checked": "2026-11-28T11:40:40+00:00"
  },
  "rusetfs_funds": {
   "ok": true,
   "rows": 214,
   "last": "2026-11-28",
   "with_commission": 214,
-  "checked": "2026-11-28T09:37:45+00:00"
+  "checked": "2026-11-28T11:38:54+00:00"
  },
  "symbol_stats": {
   "ok": true,
@@ -63,13 +63,13 @@
   "short_history": 242,
   "failed": 0,
   "total_return": true,
-  "checked": "2026-11-28T09:42:11+00:00"
+  "checked": "2026-11-28T11:43:29+00:00"
  },
  "risk_free": {
   "ok": true,
   "rows": 5968,
   "last": "2026-11-27",
-  "checked": "2026-11-28T09:37:43+00:00"
+  "checked": "2026-11-28T11:38:53+00:00"
  },
  "portfolios": {
   "ok": true,
@@ -77,7 +77,7 @@
   "last": "2026-11-27",
   "skipped": 0,
   "stale": 0,
-  "checked": "2026-11-28T09:44:55+00:00"
+  "checked": "2026-11-28T11:46:19+00:00"
  },
  "screener_bonds": {
   "ok": true,
@@ -85,13 +85,13 @@
   "last": "2026-11-28",
   "TQOB": 60,
   "TQCB": 2632,
-  "checked": "2026-11-28T09:44:59+00:00"
+  "checked": "2026-11-28T11:46:23+00:00"
  },
  "tinvest_bonds": {
   "ok": true,
   "rows": 1612,
   "last": "2026-11-28",
-  "checked": "2026-11-28T09:45:02+00:00"
+  "checked": "2026-11-28T11:46:26+00:00"
  },
  "indices": {
   "ok": true,
@@ -99,6 +99,6 @@
   "last": "2026-11-28",
   "skipped": 0,
   "skipped_keys": {},
-  "checked": "2026-11-28T09:47:02+00:00"
+  "checked": "2026-11-28T11:48:27+00:00"
  }
 }
