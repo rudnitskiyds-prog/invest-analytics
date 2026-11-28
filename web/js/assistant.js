@@ -14,7 +14,6 @@ const DISCLAIMER = "Ответ ИИ может ошибаться. Цифры �
 const OFFLINE = "Ассистент работает на опубликованном сайте. Здесь (демо-режим или локальный запуск) запрос к ИИ недоступен.";
 const UNVERIFIED = "Этого числа нет в расчёте — проверьте";
 // на этих маршрутах кнопка видна и без фактов — ассистент отвечает про термины
-const ALWAYS = /^\/(symbol|tools)\//;
 
 const EXAMPLES = {
   backtest: ["Почему у портфелей разная итоговая сумма?", "Что такое максимальная просадка?",
@@ -57,13 +56,10 @@ function facts() {
   }
 }
 
-// ponytail: видимость пересчитывается при смене маршрута; для маршрутов вне ALWAYS кнопка появится после
-// перехода, а не сразу после расчёта — сейчас все сборщики стоят на маршрутах из ALWAYS.
+// Кнопка видна на всех маршрутах (CONTRACT «Ассистент — на всех страницах»); без фактов — вопросы о терминах.
 function sync() {
-  const f = facts();
-  ui.fab.hidden = !(f && (f.length || ALWAYS.test(`${route.path}/`)));
-  document.body.classList.toggle("has-ai", !ui.fab.hidden);
-  if (ui.fab.hidden && ui.dlg.open) ui.dlg.close();
+  ui.fab.hidden = false;
+  document.body.classList.add("has-ai");
 }
 
 export function initAssistant() {

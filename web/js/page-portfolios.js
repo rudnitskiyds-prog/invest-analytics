@@ -320,10 +320,10 @@ function metricsBlock(rep, bench) {
   const box = h("div");
   const draw = (withB) => put(box, tableWrap(h("table", { class: "metrics-table" },
     h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "Показатель"),
-      windows.map(([k, lab]) => [h("th", { scope: "col", class: "num" }, lab),
+      windows.flatMap(([k, lab]) => [h("th", { scope: "col", class: "num" }, lab),
         withB ? h("th", { scope: "col", class: "num muted" }, `${lab} · ${bench}`) : null]))),
     h("tbody", {}, rows.map(([k, lab]) => h("tr", {}, h("th", { scope: "row" }, lab, colHint(k)),
-      windows.map(([wk]) => [h("td", { class: "num" }, f(k, mt[wk][k])),
+      windows.flatMap(([wk]) => [h("td", { class: "num" }, f(k, mt[wk][k])),
         withB ? h("td", { class: "num muted" }, REL_KEYS.has(k) ? "" : f(k, bmt[wk]?.[k])) : null])))))));
   draw(false);
   const rates = windows.filter(([k]) => isNum(mt[k].rf)).map(([k, lab]) => `${lab} — ${fmtPct(mt[k].rf, 2)}`).join("; ");
@@ -341,12 +341,17 @@ function metricsBlock(rep, bench) {
 function drawdownsBlock(rep, ser, name) {
   const dd = rep.drawdowns || {};
   const cur = dd.current || {};
+  const mx = dd.top?.[0] || {};
   const kpi = (name, value, sub) => h("div", { class: "kpi" }, h("span", { class: "kpi-name" }, name), h("span", { class: "kpi-value" }, value), sub ? h("span", { class: "kpi-sub" }, sub) : null);
   return section("Просадки",
-    h("div", { class: "kpis" },
-      kpi(["Максимальная", hint("max_drawdown")], fmtPct(dd.max, 1)),
-      kpi("Текущая", fmtPct(cur.depth, 1), cur.days ? `${fmtNum(cur.days)} дн. от максимума ${fmtDate(cur.peak)}` : "портфель на максимуме"),
-      kpi(["Индекс язвы (вся история)", hint("ulcer_index")], fmtPct(dd.ulcer_index, 2))),
+    h("div", { class: "kpis dd-kpis" },
+      kpi(["Макс. глубина ", hint("max_drawdown")], fmtPct(dd.max, 1)),
+      kpi("Дата пика", mx.peak ? fmtDate(mx.peak) : "—"),
+      kpi("Дата дна", mx.trough ? fmtDate(mx.trough) : "—"),
+      kpi("Длительность", isNum(mx.daysToRecover) ? `${fmtNum(mx.daysToRecover)} дн.` : mx.peak ? "не восстановлена" : "—", "от пика до восстановления"),
+      kpi("Восстановление", mx.recovery ? fmtDate(mx.recovery) : mx.peak ? "не восстановлена" : "—"),
+      kpi("Текущая", fmtPct(cur.depth, 1), cur.days ? `${fmtNum(cur.days)} дн. от пика ${fmtDate(cur.peak)}` : "на максимуме"),
+      kpi(["Индекс язвы ", hint("ulcer_index")], fmtPct(dd.ulcer_index, 2), "за всю историю")),
     ddChart(ser, name),
     h("h4", { class: "sub-title" }, "Пять крупнейших просадок"),
     dd.top?.length ? tableWrap(h("table", {},
@@ -364,7 +369,7 @@ function ddChart(ser, name) {
   if (ser.length < 2 || !window.Chart) return null;
   const dd = drawdownSeries({ dates: ser.map((p) => p[0]), values: ser.map((p) => p[1]) });
   const canvas = h("canvas", { role: "img", "aria-label": `Просадки: ${name}` });
-  requestAnimationFrame(() => lineChart(canvas, { series: [{ name, ...dd }], yTitle: "Просадка, %", yFormat: "pct", fill: true }));
+  requestAnimationFrame(() => lineChart(canvas, { series: [{ name, ...dd }], yTitle: "Просадка, %", yFormat: "pct" }));
   return h("div", { class: "chart-box short" }, canvas);
 }
 
@@ -385,7 +390,7 @@ function fundTable(funds) {
   return tableWrap(h("table", {},
     h("thead", {}, h("tr", {}, ["Фонд", "Название", "УК", "Комиссия в год", "СЧА", "Торги"].map((t, i) => h("th", { scope: "col", class: i === 3 || i === 4 ? "num" : null }, t)))),
     h("tbody", {}, funds.map((f) => (typeof f === "string" ? { secid: f } : f || {})).map((f) => h("tr", {},
-      h("th", { scope: "row" }, f.secid ? h("a", { href: href(`/symbol/${f.secid}`), class: "mono" }, f.secid) : "—"),
+      h("th", { scope: "row" }, f.secid ? h("a", { href: href(`/symbol/${f.secid}`), }, f.secid) : "—"),
       h("td", {}, f.name || ""), h("td", {}, f.issuer || ""),
       h("td", { class: "num" }, fmtPct(f.fee, 2)), h("td", { class: "num" }, fmtBigRub(f.aum_rub)), h("td", {}, f.trade_status || ""))))));
 }

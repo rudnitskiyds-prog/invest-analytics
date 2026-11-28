@@ -172,7 +172,7 @@ def _current(page, attr: str) -> list[str]:
 
 # ================================================================ демо: главная и инструменты
 def test_demo_home(demo):
-    """Главная из 6 блоков: герой с поиском, лента портфелей, 5 шагов, диверсификация, сравнение, популярные + лидеры."""
+    """Главная v2 (CONTRACT «Главная v2»): 8 блоков по порядку и их ссылки; кнопка ассистента видна."""
     demo.goto("?demo=1")
     page = demo.page
     assert demo.hash() == "#/", "?demo=1 без маршрута открывает главную"
@@ -180,20 +180,98 @@ def test_demo_home(demo):
     assert demo.visible_panel() == ["panel-home"]
     assert _current(page, "data-nav") == [], "пункта «Главная» в меню нет"
     assert page.locator("a[data-nav=home]").count() == 0
+    # 1 герой
     assert page.locator("#nav-search").is_visible() and page.locator("#home-search").is_visible()
     assert page.locator("#panel-home .hero a[href='#/tools/backtest']").is_visible(), "кнопка «Проверить портфель»"
+    assert page.locator("#panel-home .hero a[href='#/portfolios/lazy']").is_visible(), "кнопка «Готовые портфели»"
+    assert page.locator("#h-home .hl").count() == 1, "выделенное слово в заголовке героя"
+    # 2–7 блоки по порядку (8 — подвал)
+    order = page.evaluate("""() => [...document.querySelectorAll('#panel-home > .hero, #panel-home > .home-block')]
+        .map((e) => e.classList.contains('hero') ? 'hero' : (e.querySelector('[id^=home-], .cta-links') || e).id || 'cta')""")
+    assert order == ["hero", "home-portfolios", "home-steps", "home-corr", "home-compare", "home-popular", "cta"], order
+    assert page.locator("footer").count() >= 1, "нет подвала"
     page.wait_for_selector("#home-portfolios a.pf-card[href^='#/portfolio/']", timeout=TIMEOUT)
-    assert page.locator("#home-portfolios a.pf-card[href^='#/portfolio/'] svg.spark").count() >= 3
-    steps = page.evaluate("() => [...document.querySelectorAll('#home-steps a')].map((a) => a.getAttribute('href'))")
-    assert steps == ["#/screener/stocks", "#/tools/metrics", "#/portfolios/lazy", "#/tools/backtest", "#/tools/frontier"], steps
+    assert page.locator("#home-steps > li > a.tile").count() == 5
     assert page.locator("#panel-home .divers a[href='#/tools/frontier']").count() == 1
+    assert page.locator("#panel-home .divers a[href='#/tools/backtest']").count() == 1
     assert page.locator("#home-compare #cmp-a").is_visible() and page.locator("#home-pairs button.pair").count() >= 3
     assert page.locator("#home-popular li").count() >= 10
-    assert page.locator("#home-popular .asset-badge").count() >= 10
-    assert page.locator("#home-leaders").is_visible()
+    cta = page.evaluate("() => [...document.querySelectorAll('.cta-strip a')].map((a) => a.getAttribute('href'))")
+    assert cta == ["#/portfolios/lazy", "#/screener/stocks", "#/docs"], cta
     assert page.locator("#tool-nav").is_hidden()
+    assert page.locator(".ai-fab").is_visible(), "кнопка «Спросить ИИ» видна и на главной"
     assert page.locator("#engine-banner .notice-error").count() == 0, page.locator("#engine-banner").inner_text()
+    page.wait_for_function(IDLE, timeout=TIMEOUT)
     _assert_no_bad_text(page, "#panel-home")
+    demo.check_clean()
+
+
+def test_demo_home_strategies_strip(demo):
+    """Лента стратегий: ≥ 10 карточек, у каждой SVG-спарклайн и бейдж 6М/YTD."""
+    demo.goto("?demo=1")
+    page = demo.page
+    page.wait_for_selector("#home-portfolios a.pf-card[href^='#/portfolio/']", timeout=TIMEOUT)
+    cards = page.evaluate("""() => [...document.querySelectorAll('#home-portfolios a.pf-card')].map((c) => ({
+        spark: !!c.querySelector('svg.spark'), badge: (c.querySelector('.badge') || {}).textContent || ''}))""")
+    assert len(cards) >= 10, len(cards)
+    assert all(c["spark"] for c in cards), "у карточки нет спарклайна"
+    assert all(c["badge"].strip() in ("6М", "YTD") for c in cards), [c["badge"] for c in cards]
+    demo.check_clean()
+
+
+def test_demo_home_bento(demo):
+    """Бенто 01–05: каждая плашка — ссылка в свой раздел; в 02 строки с тикерами; в 05 кольцевая диаграмма."""
+    demo.goto("?demo=1")
+    page = demo.page
+    page.wait_for_selector("#tile-5 svg.donut circle", timeout=TIMEOUT)
+    page.wait_for_selector("#tile-2 .mt-row:not(.mt-head)", timeout=TIMEOUT)
+    tiles = page.evaluate("""() => [...document.querySelectorAll('#home-steps > li > a.tile')].map((a) => [
+        a.querySelector('.tile-n').textContent, a.getAttribute('href')])""")
+    assert [t[0][-2:] for t in tiles] == ["01", "02", "03", "04", "05"], tiles
+    # содержимое плашки определяет раздел: 01 портфели, 02 рейтинг акций, 03 фонды, 04 бэктест, 05 доли
+    assert [t[1] for t in tiles] == ["#/portfolios/lazy", "#/screener/stocks", "#/screener/funds",
+                                     "#/tools/backtest", "#/tools/frontier"], tiles
+    keys = page.evaluate("() => [...document.querySelectorAll('#tile-2 .mt-row:not(.mt-head) .mt-key')].map((e) => e.textContent.trim())")
+    # тест подменяет symbol_stats.json синтетикой iss_fake (в ней 3 акции): топ — min(5, число акций)
+    n_shares = sum(1 for v in iss_fake.symbol_stats()["items"].values() if v.get("class") == "share")
+    assert len(keys) == min(5, n_shares) and all(re.fullmatch(r"[A-Z0-9]{1,6}", k) for k in keys), keys
+    assert page.locator("#tile-5 svg.donut circle").count() >= 2
+    assert page.locator("#tile-5 .lg-row").count() == page.locator("#tile-5 svg.donut circle").count()
+    demo.check_clean()
+
+
+def test_demo_home_correlation_heatmap(demo):
+    """Тепловая карта N×N: значения в [-1;1], диагональ = 1; карточки содержат числа из карты."""
+    demo.goto("?demo=1")
+    page = demo.page
+    page.wait_for_selector("#home-corr table.heatmap tbody tr", timeout=TIMEOUT)
+    m = page.evaluate("""() => [...document.querySelectorAll('#home-corr table.heatmap tbody tr')]
+        .map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent.trim()))""")
+    n = len(m)
+    assert 5 <= n <= 6 and all(len(r) == n for r in m), m
+    v = [[float(x.replace("−", "-").replace(",", ".")) for x in r] for r in m]
+    assert all(-1 <= x <= 1 for r in v for x in r), v
+    assert all(v[i][i] == 1 for i in range(n)), "диагональ не 1"
+    assert all(v[i][j] == v[j][i] for i in range(n) for j in range(n)), "карта несимметрична"
+    off = [m[i][j] for i in range(n) for j in range(n) if i != j]
+    offv = [v[i][j] for i in range(n) for j in range(n) if i != j]
+    nums = page.evaluate("() => [...document.querySelectorAll('#corr-seen .num, #corr-means .num')].map((e) => e.textContent.trim())")
+    hi, lo = off[offv.index(max(offv))], off[offv.index(min(offv))]
+    assert hi in nums and lo in nums, (nums, hi, lo)
+    assert all(x in off for x in nums), (nums, off)
+    demo.check_clean()
+
+
+def test_demo_home_popular_with_logos(demo):
+    demo.goto("?demo=1")
+    page = demo.page
+    page.wait_for_selector("#home-popular a.pop-card", timeout=TIMEOUT)
+    cards = page.evaluate("""() => [...document.querySelectorAll('#home-popular a.pop-card')].map((a) => ({
+        href: a.getAttribute('href'), logo: !!a.querySelector('.asset-badge'),
+        key: (a.querySelector('.pop-key') || {}).textContent || '', name: (a.querySelector('.pop-name') || {}).textContent || ''}))""")
+    assert len(cards) >= 10, cards
+    for c in cards:
+        assert c["logo"] and c["key"] and c["name"] and c["href"] == f"#/symbol/{c['key']}", c
     demo.check_clean()
 
 
@@ -239,8 +317,12 @@ def test_demo_tools_backtest_frontier_metrics_docs(demo):
     demo.goto("?demo=1", "#/tools/backtest")
     page = demo.page
     assert demo.visible_panel() == ["panel-backtest"]
-    assert _current(page, "data-nav") == ["tools"] and _current(page, "data-tool") == ["backtest"]
+    assert _current(page, "data-tool") == ["backtest"]
+    tbtn = page.locator("#nav-tools-btn")
+    assert tbtn.evaluate("(e) => e.tagName") == "BUTTON" and tbtn.get_attribute("aria-current") == "page"
+    assert tbtn.get_attribute("aria-expanded") == "false"
     assert page.locator("#tool-nav").is_visible()
+    assert page.locator("#panel-backtest .crumbs a[href='#/tools']").count() == 1, "хлебные крошки"
 
     # Бэктест: в демо считается сразу; плюс явный запуск кнопкой
     page.wait_for_selector("#bt-out table.metrics-table", timeout=TIMEOUT)
@@ -253,16 +335,20 @@ def test_demo_tools_backtest_frontier_metrics_docs(demo):
     page.locator("#tool-nav a[data-tool=frontier]").click()
     page.wait_for_function("() => location.hash === '#/tools/frontier' && !document.querySelector('#panel-frontier').hidden", timeout=TIMEOUT)
     assert demo.visible_panel() == ["panel-frontier"]
-    assert _current(page, "data-tool") == ["frontier"] and _current(page, "data-nav") == ["tools"]
+    assert _current(page, "data-tool") == ["frontier"]
+    assert page.locator("#nav-tools-btn").get_attribute("aria-current") == "page"
     page.wait_for_selector("#fr-out canvas", timeout=TIMEOUT)
     _rerun(page, "Построить границу", "#fr-out")
     _assert_table_and_chart(page, "#fr-out")
 
-    # Коэффициенты бумаги (по умолчанию MCFTR против MCFTR)
-    page.locator("#tool-nav a[data-tool=metrics]").click()
+    # Коэффициенты бумаги (по умолчанию MCFTR против MCFTR) — через подменю «Инструменты»
+    tbtn.click()
+    assert tbtn.get_attribute("aria-expanded") == "true"
+    page.locator("#nav-tools a[href='#/tools/metrics']").click()
     page.wait_for_function("() => location.hash === '#/tools/metrics' && !document.querySelector('#panel-security').hidden", timeout=TIMEOUT)
     assert demo.visible_panel() == ["panel-security"]
     assert _current(page, "data-tool") == ["metrics"]
+    assert tbtn.get_attribute("aria-expanded") == "false"
     page.wait_for_selector("#sec-out table.metrics-table", timeout=TIMEOUT)
     _rerun(page, "Рассчитать", "#sec-out")
     _assert_table_and_chart(page, "#sec-out", "table.metrics-table")
@@ -275,6 +361,7 @@ def test_demo_tools_backtest_frontier_metrics_docs(demo):
     page.wait_for_function("() => location.hash === '#/docs' && !document.querySelector('#panel-method').hidden", timeout=TIMEOUT)
     assert demo.visible_panel() == ["panel-method"]
     assert _current(page, "data-nav") == ["docs"] and _current(page, "data-tool") == []
+    assert tbtn.get_attribute("aria-current") is None
     assert page.locator("#tool-nav").is_hidden()
     assert page.locator("#formula-list .formula").count() >= 10
     page.wait_for_function(IDLE, timeout=TIMEOUT)
@@ -311,7 +398,7 @@ def test_demo_tools_catalog_and_stubs(demo):
     demo.goto("?demo=1", "#/tools")
     page = demo.page
     assert demo.visible_panel() == ["panel-tools"]
-    assert _current(page, "data-nav") == ["tools"]
+    assert page.locator("#nav-tools-btn").get_attribute("aria-current") == "page"
     hrefs = page.evaluate("() => [...document.querySelectorAll('#tools-groups a')].map((a) => a.getAttribute('href'))")
     for h in ("#/tools/backtest", "#/tools/frontier", "#/tools/metrics"):
         assert any(x and x.startswith(h) for x in hrefs), f"в каталоге нет ссылки {h}"
@@ -405,11 +492,9 @@ def test_live_home_leaders_and_search(live):
     page = live.page
     assert live.hash() == "#/"
     assert page.locator("#demo-banner").is_hidden()
-    page.wait_for_selector("#home-leaders ol li", timeout=TIMEOUT)
-    leaders = page.locator("#home-leaders").inner_text()
-    assert "LKOH" in leaders, leaders[:500]
-    page.locator("#home-leaders button.seg-btn", has_text="Фонды").click()
-    assert "LQDT" in page.locator("#home-leaders").inner_text()
+    # «Лидеры рейтинга» в v2 — плашка 02 бенто (топ-5 по symbol_stats)
+    page.wait_for_selector("#tile-2 .mt-row:not(.mt-head)", timeout=TIMEOUT)
+    assert "LKOH" in page.locator("#tile-2").inner_text(), page.locator("#tile-2").inner_text()[:500]
     # поиск в шапке: подсказки ISS, выбор стрелкой и Enter -> страница бумаги
     page.locator("#nav-search").fill("сбер")
     page.wait_for_selector(".search-list:not([hidden]) .search-opt", timeout=TIMEOUT)
@@ -555,10 +640,10 @@ _WIDE_JS = ("() => [...document.querySelectorAll('body *')].filter((e) => { cons
 
 
 @pytest.mark.parametrize("live_mode, hash_, ready", [
-    (False, "#/", "#home-portfolios .pf-card[href]"), (False, "#/tools", None), (False, "#/tools/backtest", "#bt-out table"),
+    (False, "#/", "#home-corr table.heatmap"), (False, "#/tools", None), (False, "#/tools/backtest", "#bt-out table"),
     (False, "#/docs", None), (False, "#/screener/stocks", "#screener-root table"),
     (False, "#/portfolios/lazy", "#portfolios-root table"), (False, "#/portfolio/lazy-plus", "#portfolios-root canvas"),
-    (True, "#/", "#home-leaders ol"), (True, "#/screener/stocks", "#screener-root table"),
+    (True, "#/", "#tile-2 .mt-row"), (True, "#/screener/stocks", "#screener-root table"),
     (True, "#/symbol/SBER", None), (True, "#/symbol/SU26238RMFS4", None),
 ])
 def test_mobile_375_no_horizontal_scroll(browser, server, live_mode, hash_, ready):
@@ -963,7 +1048,7 @@ def test_ai_demo_panel(demo):
     demo.goto("?demo=1", "#/")
     page = demo.page
     fab = page.locator(".ai-fab")
-    assert fab.count() == 1 and fab.is_hidden(), "на главной кнопки «Спросить ИИ» нет"
+    assert fab.count() == 1 and fab.is_visible(), "на главной кнопка «Спросить ИИ» видна"
 
     page.evaluate("() => { location.hash = '#/tools/backtest'; }")
     page.wait_for_selector("#bt-out table.metrics-table", timeout=TIMEOUT)
@@ -1001,7 +1086,7 @@ def test_ai_demo_panel(demo):
 
     page.evaluate("() => { location.hash = '#/docs'; }")
     page.wait_for_function("() => !document.querySelector('#panel-method').hidden", timeout=TIMEOUT)
-    assert fab.is_hidden(), "в методике кнопки нет"
+    assert fab.is_visible(), "в методике кнопка тоже видна"
     demo.check_clean()
 
 
@@ -1093,4 +1178,54 @@ def test_ai_plural(demo):
                              ".map((n) => m.plural(n, 'показатель', 'показателя', 'показателей')); }")
     one, few, many = "показатель", "показателя", "показателей"
     assert got == [one, few, few, few, many, many, many, many, one, few, many, many, one, many, many]
+    demo.check_clean()
+
+
+# ================================================================ v2: страница портфеля, шрифт, ассистент
+def test_portfolio_page_metrics_drawdowns_charts(demo):
+    """Таблица коэффициентов — числа (не [object …]); 7 KPI просадок; графики без заливки."""
+    demo.goto("?demo=1", "#/portfolio/lazy-plus")
+    page = demo.page
+    page.wait_for_selector("#portfolios-root table.metrics-table tbody tr", timeout=TIMEOUT)
+    page.wait_for_selector("#portfolios-root .pf-grid canvas", timeout=TIMEOUT)
+    page.wait_for_function(IDLE, timeout=TIMEOUT)
+    rows = page.evaluate("""() => [...document.querySelectorAll('#portfolios-root table.metrics-table tbody tr')]
+        .map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent.trim()))""")
+    flat = " ".join(" ".join(r) for r in rows)
+    assert "[object" not in flat, flat[:300]
+    with_num = [r for r in rows if any(re.search(r"\d", c) for c in r)]
+    assert len(with_num) >= 10, rows
+    assert page.locator("#portfolios-root .dd-kpis .kpi").count() == 7
+    # графики строятся в requestAnimationFrame
+    page.wait_for_function("() => [...document.querySelectorAll('#portfolios-root canvas')].some((c) => window.Chart.getChart(c))",
+                           timeout=TIMEOUT)
+    fills = page.evaluate("""() => [...document.querySelectorAll('#portfolios-root canvas')].map((c) => window.Chart.getChart(c))
+        .filter((ch) => ch && ch.config.type === 'line').flatMap((ch) => ch.data.datasets.map((d) => d.fill))""")
+    assert fills and all(f in (False, None) for f in fills), fills
+    _assert_no_bad_text(page, "#panel-portfolios")
+    demo.check_clean()
+
+
+def _font(page, sel):
+    page.wait_for_selector(sel, timeout=TIMEOUT)
+    return page.locator(sel).first.evaluate("(e) => getComputedStyle(e).fontFamily")
+
+
+def test_tickers_font_montserrat(demo):
+    demo.goto("?demo=1", "#/tools/backtest")
+    page = demo.page
+    f = _font(page, "#bt-out table.trades td.mono")
+    assert f.strip('"\' ').startswith("Montserrat"), f
+    page.evaluate("() => { location.hash = '#/screener/stocks'; }")
+    f = _font(page, "#screener-root .scr-ticker")
+    assert f.strip('"\' ').startswith("Montserrat"), f
+    demo.check_clean()
+
+
+@pytest.mark.parametrize("hash_", ["#/", "#/screener/stocks", "#/portfolios/lazy", "#/docs"])
+def test_ai_fab_visible_everywhere(demo, hash_):
+    demo.goto("?demo=1", hash_)
+    fab = demo.page.locator(".ai-fab")
+    assert fab.is_visible() and "Спросить ИИ" in fab.inner_text(), hash_
+    demo.page.wait_for_function(IDLE, timeout=TIMEOUT)
     demo.check_clean()

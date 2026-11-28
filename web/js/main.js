@@ -24,6 +24,7 @@ const BENCH_KEYS = ["MCFTR", "IMOEX", "MEBCTR", "RGBITR", "RUONIA", "GOLD_CBR"];
 let ready = false;
 let active = null;     // текущий маршрут
 let firstRoute = true;
+let rfNoted = false;
 
 function activePage() {
   return PAGES[active?.page] || home;
@@ -41,8 +42,12 @@ function show(route) {
     else a.removeAttribute("aria-current");
   }
   $("#tool-nav").hidden = !route.tool;
+  const scr = { stocks: "Акции", funds: "Фонды", bonds: "Облигации" }[location.hash.split("/")[2]];
+  if (scr) $("#scr-crumb").textContent = scr;
   // общие параметры: на инструментах — все, на странице бумаги — только безрисковая ставка
   $("#params-bar").hidden = !route.paramsScope;
+  // risk_free.json грузим, только когда панель параметров впервые видна (на главной не нужен)
+  if (route.paramsScope && !rfNoted) { rfNoted = true; rfHeaderNote().then((t) => { $("#g-rf-hint").textContent = t; }); }
   for (const el of $$("[data-param-scope='tools']")) el.hidden = route.paramsScope !== "all";
   document.title = `${route.title} — FinServ`;
   if (S.isDemo()) $("#live-link").href = S.liveHref();
@@ -54,7 +59,7 @@ function show(route) {
   if (!firstRoute) {
     // переход внутри сайта: наверх и фокус на заголовок страницы (для экранных дикторов)
     window.scrollTo({ top: 0 });
-    const head = $(`#panel-${route.panel} h2`);
+    const head = $(`#panel-${route.panel} :is(h1, h2)`);
     if (head) {
       head.setAttribute("tabindex", "-1");
       head.focus({ preventScroll: true });
@@ -65,7 +70,6 @@ function show(route) {
 
 function setupGlobals() {
   // безрисковая ставка не вводится: подпись с текущей доходностью коротких ОФЗ (web/lib/data.js)
-  rfHeaderNote().then((t) => { $("#g-rf-hint").textContent = t; });
   const bench = $("#g-bench");
   const labels = engine.ok ? Object.fromEntries(entries(engine.strategies.BENCHMARKS)) : {};
   const keys = [...new Set([...BENCH_KEYS, S.get("bench")])];
@@ -101,21 +105,23 @@ function setupChrome() {
     $("#site-nav").classList.toggle("open", open);
   });
   // подменю «Скринеры»: на компьютере — по наведению и по нажатию, в мобильном меню раскрыто всегда
-  const subBtn = $("#nav-sub-btn");
-  const setSub = (open) => subBtn.setAttribute("aria-expanded", open ? "true" : "false");
-  subBtn.addEventListener("click", () => setSub(subBtn.getAttribute("aria-expanded") !== "true"));
-  document.addEventListener("click", (e) => { if (!e.target.closest(".has-sub")) setSub(false); });
+  // подменю «Инструменты» и «Скринеры»: открыто не больше одного
+  const subBtns = [...document.querySelectorAll(".nav-sub-btn")];
+  const setSub = (btn) => { for (const b of subBtns) b.setAttribute("aria-expanded", b === btn ? "true" : "false"); };
+  for (const b of subBtns) b.addEventListener("click", () => setSub(b.getAttribute("aria-expanded") === "true" ? null : b));
+  document.addEventListener("click", (e) => { if (!e.target.closest(".has-sub")) setSub(null); });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && subBtn.getAttribute("aria-expanded") === "true") {
-      setSub(false);
-      subBtn.focus();
+    const open = subBtns.find((b) => b.getAttribute("aria-expanded") === "true");
+    if (e.key === "Escape" && open) {
+      setSub(null);
+      open.focus();
     }
   });
   $("#site-nav").addEventListener("click", (e) => {
     if (e.target.closest("a")) {
       toggle.setAttribute("aria-expanded", "false");
       $("#site-nav").classList.remove("open");
-      setSub(false);
+      setSub(null);
     }
   });
 }
