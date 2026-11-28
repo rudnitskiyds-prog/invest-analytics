@@ -83,7 +83,7 @@ function initIndexStrip() {
     list.replaceChildren(...items.map((it) => h("li", { "data-idx": IDX_SLUG[it.class] || "eq" },
       h("a", { class: "idx-mini idx-card card", href: symbolHref(it.key) },
         h("span", { class: "idx-top" }, assetBadge(it.key, 28, { kind: "index" }),
-          h("span", { class: "idx-names" }, h("span", { class: "idx-name" }, it.short || it.name || it.key),
+          h("span", { class: "idx-names" }, h("span", { class: "idx-name", title: it.name || it.short || it.key }, it.short || it.name || it.key),
             h("span", { class: "idx-sub muted" }, it.class || ""))),
         idxSpark(it.series),
         h("span", { class: "idx-ret" }, h("span", { class: "idx-ret-val" }, idxPct(it.ret_1y)), h("span", { class: "idx-ret-lbl muted" }, "за 1 год"))))));
