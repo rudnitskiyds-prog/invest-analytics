@@ -43,6 +43,8 @@
   --brand: #0ABAB5;
   --brand-strong: #067470;
   --brand-soft: #E3F7F6;
+  --brand-fill: #4FCCC6;        /* мягче и светлее --brand: заливка кнопок, кружков и плашек */
+  --brand-fill-hover: #39C2BC;
   --accent: var(--rose);
   --pos: #138A7A;   /* линии и заливки */
   --neg: #D8574C;
