@@ -88,3 +88,31 @@ export function frameFromRef(f) {
     cols: Object.fromEntries(Object.entries(f.cols).map(([k, v]) => [k, v.map((x) => (x === null ? NaN : x))])),
   };
 }
+
+/**
+ * Рекурсивное сравнение с допуском: числа — |Δ| ≤ tol·max(1,|e|); null/NaN/undefined в эталоне = «нет значения»
+ * (в результате допустимы null/NaN/undefined); остальное — строго. Ключи эталона обязаны быть в результате.
+ */
+export function deepClose(actual, expected, tol = 1e-9, msg = '') {
+  if (expected === null || expected === undefined) {
+    assert.ok(actual === null || actual === undefined || Number.isNaN(actual), `${msg}: ожидалось пусто/NaN, получено ${JSON.stringify(actual)}`);
+  } else if (typeof expected === 'number') {
+    close(actual, expected, tol, msg);
+  } else if (Array.isArray(expected)) {
+    assert.ok(Array.isArray(actual), `${msg}: ожидался массив`);
+    assert.equal(actual.length, expected.length, `${msg}: длина ${actual.length} vs ${expected.length}`);
+    expected.forEach((e, i) => deepClose(actual[i], e, tol, `${msg}[${i}]`));
+  } else if (typeof expected === 'object') {
+    assert.ok(actual && typeof actual === 'object', `${msg}: ожидался объект`);
+    for (const k of Object.keys(expected)) deepClose(actual[k], expected[k], tol, `${msg}.${k}`);
+  } else {
+    assert.equal(actual, expected, msg);
+  }
+}
+
+let _lref = null;
+/** Эталон Python для учёта портфеля и ребалансировок (tests/fixtures/ledger_reference.json; tests/web/make_ledger_reference.py). */
+export function ledgerReference() {
+  _lref ??= JSON.parse(fs.readFileSync(path.join(FIXTURES, 'ledger_reference.json'), 'utf8'));
+  return _lref;
+}

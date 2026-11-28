@@ -12,6 +12,7 @@ const SORTS = { class: "По классам", ret: "По доходности з
 
 let promise = null;
 let sort = "class";
+let drawn = null;   // data, уже нарисованный в корне: onShow зовётся повторно (STATIC + после загрузки lib), перерисовка сбросила бы фокус кнопки сортировки
 
 /** indices.json (кэш на сессию; ошибку можно повторить). Нет файла — null. */
 export function loadIndices() {
@@ -118,6 +119,8 @@ export async function onShow() {
       notice("info", "Данных по индексам пока нет: файл indices.json собирается ночью из выгрузок Мосбиржи и ЦБ. Загляните завтра."));
     return;
   }
+  if (drawn === data && root.querySelector(".idx-body")) return;
+  drawn = data;
   render(root, data);
 }
 export function onGlobalChange() {}

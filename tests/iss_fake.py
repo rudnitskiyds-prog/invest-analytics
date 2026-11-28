@@ -36,7 +36,8 @@ SECURITIES = {
               "type": "stock_index", "group": "stock_index", "typename": "Индекс фондового рынка", "sectype": None},
 }
 INDEX_ONLY = {"MCFTR": (3000.0, 0.0005), "RGBITR": (400.0, 0.0003), "RUCBTRNS": (150.0, 0.0003),
-              "MEBCTR": (2000.0, 0.0004), "IRDIVTR": (5000.0, 0.0005), "RUCBITR": (300.0, 0.0003)}
+              "MEBCTR": (2000.0, 0.0004), "IRDIVTR": (5000.0, 0.0005), "RUCBITR": (300.0, 0.0003),
+              "RUGBITR10Y": (500.0, 0.0002)}      # «Постоянный портфель (Браун)» в сравнении со стратегиями («Мой портфель»)
 for _k, (_p0, _mu) in INDEX_ONLY.items():
     SECURITIES[_k] = {"cls": "index", "engine": "stock", "market": "index", "board": "SNDX", "start": "2013-01-08",
                       "p0": _p0, "mu": _mu, "sigma": 0.01, "name": f"Индекс {_k}", "short": _k, "isin": None,
@@ -152,6 +153,31 @@ def _batch(market: str, q: dict) -> dict:
     return out
 
 
+LOT = {"SBER": 10}      # размер лота (у остальных — 1)
+
+
+def _board_table(market: str, board: str, q: dict) -> dict:
+    """Таблица режима: /engines/stock/markets/{shares|bonds}/boards/{BOARD}/securities.json
+    ?iss.only=securities,marketdata[&securities=A,B][&securities.columns=…&marketdata.columns=…] — как у ISS:
+    цены PREVPRICE (последнее закрытие) и LAST (на 0,4 % выше), бумаги других режимов не возвращаются."""
+    want = [x for x in (q.get("securities") or "").upper().split(",") if x]
+    ids = [k for k, s in SECURITIES.items()
+           if s["board"] == board and s["cls"] in _MARKET_CLS.get(market, ()) and (not want or k in want)]
+    sec, md = [], []
+    for k in ids:
+        s, df = SECURITIES[k], ohlc(k)
+        last = float(df["close"].iloc[-1])
+        sec.append({"SECID": k, "BOARDID": board, "SHORTNAME": s["short"], "LOTSIZE": LOT.get(k, 1), "PREVPRICE": last,
+                    "CURRENCYID": "SUR", "FACEUNIT": "SUR", "FACEVALUE": 1000 if s["cls"] == "bond" else None,
+                    "ACCRUEDINT": 12.5 if s["cls"] == "bond" else None})
+        md.append({"SECID": k, "BOARDID": board, "LAST": round(last * 1.004, 6)})
+    out = {}
+    for name, rows in (("securities", sec), ("marketdata", md)):
+        cols = (q.get(f"{name}.columns") or ",".join(rows[0] if rows else ["SECID"])).split(",")
+        out[name] = block(cols, [tuple(r.get(c) for c in cols) for r in rows])
+    return out
+
+
 def _candles(secid: str, q: dict) -> dict:
     df = _window(ohlc(secid), q)
     start = int(q.get("start") or 0)
@@ -213,6 +239,9 @@ def respond(url: str):
     m = re.fullmatch(r"/iss/engines/[^/]+/markets/[^/]+/boards/[^/]+/securities/([^/]+)\.json", path)
     if m and m.group(1) in SECURITIES:
         return 200, _snapshot(m.group(1))
+    m = re.fullmatch(r"/iss/engines/stock/markets/(shares|bonds)/boards/([A-Z0-9]+)/securities\.json", path)
+    if m:
+        return 200, _board_table(m.group(1), m.group(2), q)
     m = re.fullmatch(r"/iss/engines/stock/markets/([^/]+)/securities\.json", path)
     if m and q.get("securities"):
         return 200, _batch(m.group(1), q)

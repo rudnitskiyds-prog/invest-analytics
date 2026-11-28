@@ -83,17 +83,25 @@ def rebalance_orders(values: pd.Series, target: pd.Series, prices: pd.Series,
     return df.sort_values("Действие", key=lambda s: s.map({"Продать": 0, "Купить": 1, "—": 2}))
 
 
+def _ics_text(s: str) -> str:
+    """Экранирование текстового значения по RFC 5545: \\ , ; и переводы строк."""
+    s = str(s).replace("\r\n", "\n").replace("\r", "")
+    return s.replace("\\", "\\\\").replace(",", "\\,").replace(";", "\\;").replace("\n", "\\n")
+
+
 def to_ics(dates: list[pd.Timestamp], portfolio: str, description: str = "") -> str:
+    portfolio = " ".join(str(portfolio).split())  # без CR/LF
+    pf, desc = _ics_text(portfolio), _ics_text(description)
     lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//invest-platform//RU", "CALSCALE:GREGORIAN"]
-    stamp = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     for d in dates:
         day = pd.Timestamp(d).strftime("%Y%m%d")
         nxt = (pd.Timestamp(d) + pd.Timedelta(days=1)).strftime("%Y%m%d")
         lines += ["BEGIN:VEVENT", f"UID:{uuid.uuid4()}@invest-platform", f"DTSTAMP:{stamp}",
                   f"DTSTART;VALUE=DATE:{day}", f"DTEND;VALUE=DATE:{nxt}",
-                  f"SUMMARY:Ребалансировка — {portfolio}",
-                  f"DESCRIPTION:{description}".replace("\n", "\\n"),
+                  f"SUMMARY:Ребалансировка — {pf}",
+                  f"DESCRIPTION:{desc}",
                   "BEGIN:VALARM", "TRIGGER:-P1D", "ACTION:DISPLAY",
-                  f"DESCRIPTION:Завтра ребалансировка {portfolio}", "END:VALARM", "END:VEVENT"]
+                  f"DESCRIPTION:Завтра ребалансировка {pf}", "END:VALARM", "END:VEVENT"]
     lines.append("END:VCALENDAR")
     return "\r\n".join(lines)

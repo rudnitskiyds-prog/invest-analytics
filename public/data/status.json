@@ -100,5 +100,13 @@
   "skipped": 0,
   "skipped_keys": {},
   "checked": "2026-11-28T11:48:27+00:00"
+ },
+ "uk_logos": {
+  "ok": true,
+  "rows": 27,
+  "last": "2026-11-28",
+  "with_logo": 10,
+  "bonds_issuer": 264,
+  "checked": "2026-11-28T13:39:46+00:00"
  }
 }

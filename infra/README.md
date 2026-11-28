@@ -6,6 +6,7 @@
 браузер ──► API Gateway (https://<id>.apigw.yandexcloud.net)
               ├─ /               → функция auth: окно логина браузера, после входа — переход на /web/
               ├─ /{path+}        → закрытый бакет Object Storage (web/, public/data/, tests/fixtures/)
+              ├─ /iss/{path+}, /cbr/{path+} → функция iss-proxy → iss.moex.com / www.cbr.ru
               └─ POST /api/assistant → функция assistant → YandexGPT
 ```
 
@@ -190,3 +191,12 @@ GitHub → Actions → «Выкладка в Yandex Cloud» → Run workflow. Ч
 
 Секрет Lockbox теперь содержит только `SITE_USERS`. Ключ `GIGACHAT_AUTH_KEY` в уже созданном секрете остаётся
 неиспользованным — его можно удалить в консоли (новой версией секрета без этого ключа).
+
+## Прокси биржи и ЦБ (функция `iss-proxy`)
+
+`iss.moex.com` отдаёт сертификат УЦ Минцифры, которому браузеры без корневого сертификата не доверяют.
+Поэтому на домене шлюза есть `/iss/...` и `/cbr/...`: функция `functions/iss-proxy` сама ходит на биржу
+(сертификаты — `functions/iss-proxy/russian_trusted_ca.pem`) и на сайт ЦБ. Только GET, пути из белого списка,
+без секретов; создаётся и обновляется тем же `deploy-yc.yml`, отдельной настройки не нужно.
+Проверка после выкладки: откройте `https://<домен шлюза>/iss/index.json?iss.meta=off` (после логина) —
+должен прийти JSON; `/cbr/scripts/XML_daily.asp?date_req=01/12/2025` — XML с курсами.

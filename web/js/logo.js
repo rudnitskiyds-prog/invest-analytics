@@ -20,6 +20,7 @@ const ICONS = {
 export const IDX_SLUG = { "Акции": "eq", "Облигации гос.": "gov", "Облигации корп.": "corp", "Золото": "gold", "Денежный рынок": "cash" };
 
 const brands = { share: new Map(), fund: new Map(), bond: new Map() };   // SECID → {logo, color, name, brand}
+let uk = null;                                                           // uk_logos.json (или null: нет файла / ошибка — запоминается)
 const idxClass = new Map();                                              // key → класс индекса
 const loads = {};
 
@@ -46,8 +47,15 @@ function loadKind(kind) {
   return loads[kind];
 }
 
+// Логотипы УК и эмитентов облигаций (public/data/uk_logos.json): один запрос на сессию
+function loadUk() {
+  loads.uk ||= fetch(DATA_BASE + "uk_logos.json").then((r) => (r.ok ? r.json() : null)).catch(() => null).then((j) => { uk = j && typeof j === "object" ? j : null; });
+  return loads.uk;
+}
+const ukOf = (key) => uk?.funds?.[key] || null;
+
 /** Загрузить справочник один раз (акции и фонды; облигации — только при bonds=true). Ошибки сети не мешают — останутся кружки с буквами. */
-export const loadLogos = (bonds = false) => Promise.all([loadKind("share"), loadKind("fund"), bonds && loadKind("bond")]).then(() => brands);
+export const loadLogos = (bonds = false) => Promise.all([loadKind("share"), loadKind("fund"), loadUk(), bonds && loadKind("bond")]).then(() => brands);
 
 function loadIndexClasses() {
   loads.index ||= readRows("indices.json").then((rows) => rows.forEach((r) => r?.key && idxClass.set(String(r.key).toUpperCase(), r.class)));
@@ -63,17 +71,44 @@ const find = (key, kind) => {
 /** Название бумаги из справочника T-Invest (после loadLogos) или null. */
 export const nameFor = (secid) => find(String(secid || "").toUpperCase())?.name || null;
 
+const hex = (c) => typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c) ? c : null;
+const cdnUrl = (logo) => {
+  const name = logo ? String(logo).replace(/\.png$/i, "") : "";
+  return name ? `${CDN}${encodeURIComponent(name)}x160.png` : null;
+};
+
+// Единая монограмма УК: инициалы названия + стабильный цвет из хэша названия
+function ukMono(name) {
+  const words = String(name).replace(/["«»“”]/g, "").split(/[\s-]+/).filter((w) => w && !/^(УК|ООО|АО)$/i.test(w));
+  const ini = (words.length > 1 ? Array.from(words[0])[0] + Array.from(words[1])[0] : Array.from(words[0] || name).slice(0, 2).join("")).toUpperCase();
+  let n = 0;
+  for (const ch of String(name)) n = (n * 31 + ch.codePointAt(0)) >>> 0;
+  const hue = n % 360, s = 0.55, l = 0.42, f = (k) => {
+    const a = s * Math.min(l, 1 - l), t = (k + hue / 30) % 12;
+    return Math.round(255 * (l - a * Math.max(-1, Math.min(t - 3, 9 - t, 1)))).toString(16).padStart(2, "0");
+  };
+  return { initials: ini, color: `#${f(0)}${f(8)}${f(4)}` };
+}
+
 /**
  * {url|null, color|null, initials, title|null} — синхронно, по уже загруженным справочникам.
- * Акция/облигация — логотип эмитента, фонд — логотип УК (brand), индекс — без логотипа.
+ * Фонд — логотип (или монограмма) его УК из uk_logos.json, одинаковый у всех фондов УК; акция/облигация — логотип эмитента.
  */
 export function logoFor(secid, kind = null) {
   const key = String(secid || "").toUpperCase();
+  const ukName = (kind === "fund" || !kind) ? ukOf(key) : null;
+  if (ukName) {
+    const e = uk.uk?.[ukName] || {};
+    const mono = ukMono(ukName);
+    const file = typeof e.file === "string" && /^img\/uk\/[a-z0-9-]+\.(svg|png)$/.test(e.file) ? e.file : null;   // из JSON — только локальные логотипы
+    return { url: file || cdnUrl(e.logo), color: hex(e.logo_color) || mono.color, initials: mono.initials, title: ukName, mono: mono.color };
+  }
   const b = kind === "index" ? null : find(key, kind);
-  const name = b?.logo ? String(b.logo).replace(/\.png$/i, "") : "";
+  const iss = kind === "index" || kind === "share" || kind === "fund" ? null : uk?.bonds_issuer?.[key];
+  const useIss = !b?.logo && iss?.logo;
   return {
-    url: name ? `${CDN}${encodeURIComponent(name)}x160.png` : null,
-    color: b?.color && /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : null,
+    url: cdnUrl(b?.logo || (useIss && iss.logo)),
+    color: hex(b?.logo ? b.color : useIss ? iss.logo_color : b?.color),
     initials: key.replace(/[^A-ZА-Я0-9]/g, "").slice(0, 2) || "?",
     title: b ? (b.kind === "fund" ? b.brand : b.brand || b.name) || null : null,
   };
@@ -100,7 +135,7 @@ function textOn(hex) {
 }
 
 function fill(el, key, cls) {
-  const { url, color, initials, title } = logoFor(key, cls === "share" || cls === "fund" || cls === "bond" || cls === "index" ? cls : null);
+  const { url, color, initials, title, mono } = logoFor(key, cls === "share" || cls === "fund" || cls === "bond" || cls === "index" ? cls : null);
   const kind = cls || guessClass(key);
   const icon = (kind === "index" || !url) && ICONS[kind];
   if (title) el.title = title;
@@ -124,7 +159,8 @@ function fill(el, key, cls) {
   const letters = () => {
     el.replaceChildren();
     el.dataset.initials = initials;  // буквы — через CSS ::before, чтобы не попадать в текст заголовков
-    if (color) { el.style.background = color; el.style.color = textOn(color); }
+    const c = mono || color;   // у фонда под монограммой — хэш-цвет УК, а не цвет фона логотипа
+    if (c) { el.style.background = c; el.style.color = textOn(c); }
   };
   if (!url) return letters();
   const img = h("img", { src: url, alt: "", loading: "lazy", decoding: "async", width: el.dataset.size, height: el.dataset.size });
@@ -143,7 +179,7 @@ export function assetBadge(secid, size = 24, opts = null) {
   const pending = kind === "index" ? loadIndexClasses().then(() => idxClass.has(key))
     : loadLogos(kind === "bond").then(async () => {
       if (!typed && !find(key)) await loadIndexClasses();   // неизвестная бумага: вдруг это индекс из indices.json
-      return find(key, typed ? cls : null) || idxClass.has(key);
+      return typed || find(key) || ukOf(key) || idxClass.has(key);
     });
   pending.then((ok) => { if (ok) fill(el, key, cls); });
   return el;

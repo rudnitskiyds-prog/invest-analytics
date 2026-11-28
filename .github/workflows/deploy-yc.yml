@@ -143,20 +143,23 @@ jobs:
           }
           ASSISTANT_FUNCTION_ID=$(fid assistant)
           AUTH_FUNCTION_ID=$(fid auth)
+          ISS_PROXY_FUNCTION_ID=$(fid iss-proxy)
           deploy assistant \
             --environment "YC_FOLDER_ID=${YC_FOLDER_ID},YANDEX_MODEL=yandexgpt"
           deploy auth \
             --secret "environment-variable=SITE_USERS,id=$YC_LOCKBOX_SECRET_ID,key=SITE_USERS"
+          deploy iss-proxy
           echo "ASSISTANT_FUNCTION_ID=$ASSISTANT_FUNCTION_ID" >> "$GITHUB_ENV"
+          echo "ISS_PROXY_FUNCTION_ID=$ISS_PROXY_FUNCTION_ID" >> "$GITHUB_ENV"
           echo "AUTH_FUNCTION_ID=$AUTH_FUNCTION_ID" >> "$GITHUB_ENV"
 
       - name: API Gateway
         if: steps.cfg.outputs.enabled == 'true'
         run: |
           set -euo pipefail
-          export BUCKET="$YC_BUCKET" SA_ID="$YC_SA_ID" ASSISTANT_FUNCTION_ID AUTH_FUNCTION_ID
+          export BUCKET="$YC_BUCKET" SA_ID="$YC_SA_ID" ASSISTANT_FUNCTION_ID AUTH_FUNCTION_ID ISS_PROXY_FUNCTION_ID
           spec="$RUNNER_TEMP/gateway.yaml"
-          envsubst '${BUCKET} ${ASSISTANT_FUNCTION_ID} ${AUTH_FUNCTION_ID} ${SA_ID}' < infra/gateway.yaml > "$spec"
+          envsubst '${BUCKET} ${ASSISTANT_FUNCTION_ID} ${AUTH_FUNCTION_ID} ${ISS_PROXY_FUNCTION_ID} ${SA_ID}' < infra/gateway.yaml > "$spec"
           if grep -n '\${[A-Z_]*}' "$spec"; then echo "::error::В спецификации шлюза остались неподставленные переменные"; exit 1; fi
           yc serverless api-gateway update --id "$YC_GATEWAY_ID" --spec "$spec" >/dev/null
           domain=$(yc serverless api-gateway get --id "$YC_GATEWAY_ID" --format json | jq -r .domain)
@@ -165,5 +168,5 @@ jobs:
             echo ""
             echo "Сайт: https://$domain/ (откройте корень — появится окно логина)"
             echo ""
-            echo "Обновлены: статика в бакете, функции \`assistant\` и \`auth\`, спецификация шлюза."
+            echo "Обновлены: статика в бакете, функции \`assistant\`, \`auth\` и \`iss-proxy\`, спецификация шлюза."
           } >> "$GITHUB_STEP_SUMMARY"

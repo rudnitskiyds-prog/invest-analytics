@@ -229,4 +229,5 @@ def test_host_available_bad_bundle_false_with_warning(tmp_path, monkeypatch, cap
 
 def test_tinvest_bonds_stub_valid():
     d = json.loads((config.ROOT / "public" / "data" / "tinvest_bonds.json").read_text(encoding="utf-8"))
-    assert {"updated", "source", "data"} <= set(d) and d["data"] == [] and d["source"]
+    assert {"updated", "source", "data"} <= set(d) and d["source"] and isinstance(d["data"], list)
+    assert all(r.get("ticker") and "logo" in r for r in d["data"]), "у каждой записи есть ticker и logo (может быть null)"

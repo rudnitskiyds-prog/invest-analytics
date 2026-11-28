@@ -11,7 +11,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 GATEWAY = ROOT / "infra" / "gateway.yaml"
 WORKFLOW = ROOT / ".github" / "workflows" / "deploy-yc.yml"
-SUBST = {"BUCKET", "ASSISTANT_FUNCTION_ID", "AUTH_FUNCTION_ID", "SA_ID"}
+SUBST = {"BUCKET", "ASSISTANT_FUNCTION_ID", "AUTH_FUNCTION_ID", "ISS_PROXY_FUNCTION_ID", "SA_ID"}
 
 
 def _placeholders(text: str) -> set:
@@ -124,8 +124,8 @@ def test_workflow_envsubst_same_variables():
 def test_workflow_envsubst_real(tmp_path):
     if not shutil.which("envsubst"):
         pytest.skip("нет envsubst (gettext)")
-    env = {"BUCKET": "bkt", "ASSISTANT_FUNCTION_ID": "fa", "AUTH_FUNCTION_ID": "fb", "SA_ID": "sa"}
-    r = subprocess.run(["envsubst", "${BUCKET} ${ASSISTANT_FUNCTION_ID} ${AUTH_FUNCTION_ID} ${SA_ID}"],
+    env = {"BUCKET": "bkt", "ASSISTANT_FUNCTION_ID": "fa", "AUTH_FUNCTION_ID": "fb", "ISS_PROXY_FUNCTION_ID": "fi", "SA_ID": "sa"}
+    r = subprocess.run(["envsubst", " ".join("${%s}" % v for v in sorted(SUBST))],
                        input=GATEWAY.read_text(encoding="utf-8"), env=env, capture_output=True, text=True)
     assert r.returncode == 0
     assert not re.search(r"\$\{[A-Z_]*\}", r.stdout)
@@ -177,8 +177,10 @@ def test_no_secrets_in_code():
 
 def test_no_cert_or_key_files_in_functions():
     bad = [p for p in (ROOT / "functions").rglob("*") if p.suffix in {".pem", ".key", ".crt", ".env"}]
-    # сертификат кладёт workflow при выкладке; в рабочей копии его быть не должно
-    assert not bad, bad
+    # единственное исключение — публичные сертификаты УЦ Минцифры для прокси ISS (отпечатки: tests/test_iss_proxy.py)
+    allowed = ROOT / "functions" / "iss-proxy" / "russian_trusted_ca.pem"
+    assert [p for p in bad if p != allowed] == [], bad
+    assert b"PRIVATE KEY" not in allowed.read_bytes()
 
 
 def test_gitignore_keys_and_cert():
@@ -236,3 +238,60 @@ def test_setup_sh_yandexgpt_role_no_gigachat_key():
     assert re.search(r'^folder ai\.languageModels\.user "\$RUNTIME_ID"', text, re.M)
     readme = (ROOT / "infra" / "README.md").read_text(encoding="utf-8")
     assert "ai.languageModels.user" in readme and "ia-runtime" in readme
+
+
+# ---------------------------------------------------------------- прокси ISS и ЦБ (CONTRACT A)
+def _gateway_spec():
+    yaml = pytest.importorskip("yaml", reason="pyyaml не установлен")
+    text = GATEWAY.read_text(encoding="utf-8")
+    for v in SUBST:
+        text = text.replace("${%s}" % v, f"test-{v.lower()}")
+    return yaml.safe_load(text)
+
+
+def test_gateway_substitutions_all_listed_in_workflow():
+    """Каждая переменная из gateway.yaml есть в списке envsubst и в export; лишних в списке нет."""
+    used = _placeholders(_no_comments(GATEWAY.read_text(encoding="utf-8")))
+    wf = WORKFLOW.read_text(encoding="utf-8")
+    listed = _placeholders(re.search(r"envsubst '([^']*)' < infra/gateway.yaml", wf).group(1))
+    assert used == listed and "ISS_PROXY_FUNCTION_ID" in listed
+    exported = re.search(r"export (BUCKET=.*)", wf).group(1)
+    assert all(re.search(rf"\b{v}\b", exported) for v in used)
+
+
+def test_gateway_iss_and_cbr_routes_before_catch_all_with_auth():
+    spec = _gateway_spec()
+    order = list(spec["paths"])
+    assert "/iss/{path+}" in order and "/cbr/{path+}" in order and "/{path+}" in order
+    assert order.index("/iss/{path+}") < order.index("/{path+}") and order.index("/cbr/{path+}") < order.index("/{path+}")
+    for route in ("/iss/{path+}", "/cbr/{path+}"):
+        assert list(spec["paths"][route]) == ["get"], "прокси — только GET"
+        op = spec["paths"][route]["get"]
+        assert op["security"] == [{"siteAuth": []}]
+        integ = op["x-yc-apigateway-integration"]
+        assert integ["type"] == "cloud_functions" and integ["function_id"] == "test-iss_proxy_function_id"
+        assert integ["tag"] == "$latest" and integ["service_account_id"] == "test-sa_id"
+        p = op["parameters"][0]
+        assert p["name"] == "path" and p["in"] == "path" and p["required"] is True
+
+
+def test_gateway_proxy_routes_text_order():
+    """То же без pyyaml: порядок в файле."""
+    text = GATEWAY.read_text(encoding="utf-8")
+    pos = [text.index(f"\n  {r}:\n") for r in ("/iss/{path+}", "/cbr/{path+}", "/{path+}")]
+    assert pos == sorted(pos)
+    for route, nxt in (("/iss/{path+}", "/cbr/{path+}"), ("/cbr/{path+}", "/{path+}")):
+        block = text[text.index(f"\n  {route}:\n"):text.index(f"\n  {nxt}:\n")]
+        assert re.search(r"^    get:", block, re.M) and not re.search(r"^    (post|put|delete|patch):", block, re.M)
+        assert "- siteAuth: []" in block and "${ISS_PROXY_FUNCTION_ID}" in block and "type: cloud_functions" in block
+
+
+def test_workflow_deploys_iss_proxy_without_secrets():
+    wf = WORKFLOW.read_text(encoding="utf-8")
+    assert re.search(r"^\s*deploy iss-proxy\s*$", wf, re.M), "iss-proxy выкладывается без секретов и доп. флагов"
+    assert "ISS_PROXY_FUNCTION_ID=$(fid iss-proxy)" in wf
+    assert 'echo "ISS_PROXY_FUNCTION_ID=$ISS_PROXY_FUNCTION_ID" >> "$GITHUB_ENV"' in wf
+    # общие параметры версии (deploy): 256 МБ, 30 с, сервисный аккаунт ia-runtime (YC_SA_ID)
+    assert "--memory 256m" in wf and "--execution-timeout 30s" in wf
+    # архив функции — каталог целиком, значит russian_trusted_ca.pem уезжает вместе с index.py
+    assert 'zip -qr "$zip_path" .' in wf

@@ -21,6 +21,14 @@ export function loadEngine() {
       } catch (e) {
         engine.symbolError = e;
       }
+      // «Мой портфель» — отдельно: пока модули не готовы, остальные разделы работают
+      for (const name of ["ledger", "rebalance", "quotes"]) {
+        try {
+          engine[name] = await import(`../lib/${name}.js`);
+        } catch (e) {
+          engine[`${name}Error`] = e;
+        }
+      }
       return engine;
     })
     .catch((e) => {

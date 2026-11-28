@@ -18,6 +18,8 @@ export const ROUTES = [
   { re: /^\/docs$/, page: "method", panel: "method", nav: "docs", title: "Методика" },
   { re: /^\/symbol\/([^/]+)$/, page: "symbol", panel: "symbol", nav: null, paramsScope: "rf", title: (m) => m[1] },
   { re: /^\/screener\/(stocks|funds|bonds)$/, page: "screener", panel: "screener", nav: "screener", title: "Скринеры" },
+  { re: /^\/my$/, page: "myportfolio", panel: "my", nav: "my", title: "Мой портфель" },
+  { re: /^\/my\/rebalance$/, page: "rebalance", panel: "rebalance", nav: "my", title: "Ребалансировки" },
   { re: /^\/indices$/, page: "indices", panel: "indices", nav: "indices", title: "Индексы" },
   { re: /^\/portfolios\/lazy$/, page: "portfolios", panel: "portfolios", nav: "portfolios", title: "Портфели" },
   { re: /^\/portfolio\/([^/]+)$/, page: "portfolios", panel: "portfolios", nav: "portfolios", title: "Портфель" },
