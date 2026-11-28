@@ -1115,7 +1115,7 @@ def test_ai_live_answer_marks_unverified(live):
         route.fulfill(status=200, content_type="application/json", body=json.dumps({
             "answer": "Итоговая сумма у портфеля выросла, в среднем 15 % в год.",
             "facts_used": ["pf1.final"], "unverified_numbers": ["15 %"],
-            "label": "Ответ ИИ (GigaChat). Не является индивидуальной инвестиционной рекомендацией."},
+            "label": "Ответ ИИ (YandexGPT). Не является индивидуальной инвестиционной рекомендацией."},
             ensure_ascii=False))
 
     page.route("**/api/assistant", fake)
@@ -1153,13 +1153,12 @@ def test_ai_live_answer_marks_unverified(live):
 
 @pytest.mark.parametrize("status, needle", [
     (429, "Слишком много вопросов"), (502, "недоступен"), (400, "Вопрос не принят: Введите вопрос."),
-    (402, "Бесплатный лимит GigaChat исчерпан"),
-    (502, "Бесплатный лимит GigaChat исчерпан"),   # так отвечает функция на 402 от GigaChat
+    (502, "Лимит запросов YandexGPT, попробуйте позже."),   # так отвечает функция на 429 от YandexGPT
 ])
 def test_ai_live_errors(live, status, needle):
     page = _live_backtest(live)
     page.route("**/api/assistant", lambda r: r.fulfill(status=status, content_type="application/json",
-                                                         body=json.dumps({"error": needle if "лимит" in needle else "Введите вопрос."},
+                                                         body=json.dumps({"error": needle if "лимит" in needle.lower() else "Введите вопрос."},
                                                                          ensure_ascii=False)))
     page.locator(".ai-fab").click()
     page.locator("#ai-q").fill("Что такое просадка?")

@@ -1,7 +1,7 @@
 """Cloud Function `assistant` (functions/assistant/): чистая логика и handler без сети.
 
 functions/assistant — не пакет (в облаке index.py лежит в корне архива и делает `from logic import …`),
-поэтому модули грузятся по пути: logic — под своим именем, index — под уникальным. GigaChat подменяется
+поэтому модули грузятся по пути: logic — под своим именем, index — под уникальным. YandexGPT подменяется
 через monkeypatch `requests.post`.
 """
 from __future__ import annotations
@@ -156,12 +156,12 @@ def test_verify_numbers_from_text_and_source():
 
 # ============================================================ build_messages
 def test_build_messages_single_user_message():
-    """Одно сообщение user: два подряд GigaChat обрабатывал ~17 с вместо ~1 с (проверено на живом API)."""
+    """Одно сообщение user: system + один user (факты и вопрос)."""
     _, screen = logic.parse_request(_body("Что такое просадка?"))
     msgs = logic.build_messages("SYS", "Что такое просадка?", screen)
     assert [m["role"] for m in msgs] == ["system", "user"]
-    assert msgs[0]["content"] == "SYS"
-    user = msgs[1]["content"]
+    assert msgs[0]["text"] == "SYS"
+    user = msgs[1]["text"]
     assert user.endswith("\n\nВопрос: Что такое просадка?")
     assert "Бэктест портфелей" in user and "/tools/backtest" in user
     payload = json.loads(user.split("\n")[1])
@@ -173,7 +173,7 @@ def test_build_messages_single_user_message():
 def test_build_messages_sources_indexed():
     facts = [{"id": "a", "source": "S1"}, {"id": "b", "source": ""}, {"id": "c", "source": "S2"}, {"id": "d", "source": "S1"}]
     msgs = logic.build_messages("SYS", "?", {"route": "/r", "title": "T", "facts": facts})
-    payload = json.loads(msgs[1]["content"].split("\n")[1])
+    payload = json.loads(msgs[1]["text"].split("\n")[1])
     assert payload == {"sources": ["S1", "S2"],
                        "facts": [{"id": "a", "source": 0}, {"id": "b"}, {"id": "c", "source": 1}, {"id": "d", "source": 0}]}
 
@@ -199,45 +199,42 @@ class FakeResp:
             raise requests.HTTPError(f"{self.status_code}", response=self)  # как в requests
 
 
-class Giga:
-    """Подмена requests.post: OAuth и чат по URL; ответы чата — по очереди из chat_responses."""
+def _ok(text="Ответ.", status="ALTERNATIVE_STATUS_FINAL"):
+    return FakeResp(200, {"result": {"alternatives": [{"message": {"role": "assistant", "text": text},
+                                                       "status": status}]}})
 
-    def __init__(self, answer="Ответ.", chat_responses=None, oauth=None):
+
+class FakeContext:
+    def __init__(self, token="iam1"):
+        self.token = {"access_token": token, "expires_in": 43200, "token_type": "Bearer"} if token else None
+
+
+class YGPT:
+    """Подмена requests.post для YandexGPT; ответы — по очереди из responses, иначе обычный ответ."""
+
+    def __init__(self, answer="Ответ."):
         self.calls = []
-        self.chat_responses = list(chat_responses or [])
+        self.responses = []
         self.answer = answer
-        self.oauth = oauth
-        self.n_oauth = 0
 
     def __call__(self, url, **kw):
-        self.calls.append((url, kw))
-        if url == index.OAUTH_URL:
-            self.n_oauth += 1
-            if self.oauth is not None:
-                return self.oauth
-            return FakeResp(200, {"access_token": f"tok{self.n_oauth}",
-                                  "expires_at": int((time.time() + 1800) * 1000)})
         assert url == index.CHAT_URL, url
-        if self.chat_responses:
-            r = self.chat_responses.pop(0)
+        self.calls.append(kw)
+        if self.responses:
+            r = self.responses.pop(0)
             if isinstance(r, Exception):
                 raise r
             return r
-        return FakeResp(200, {"choices": [{"message": {"content": f"  {self.answer}  "}}]})
-
-    def chat_calls(self):
-        return [kw for url, kw in self.calls if url == index.CHAT_URL]
+        return _ok(f"  {self.answer}  ")
 
 
 @pytest.fixture
-def giga(monkeypatch):
-    monkeypatch.setenv("GIGACHAT_AUTH_KEY", "dGVzdDp0ZXN0")
-    monkeypatch.delenv("GIGACHAT_CA_BUNDLE", raising=False)
+def ygpt(monkeypatch):
+    monkeypatch.setenv("YC_FOLDER_ID", "b1gfolder")
+    monkeypatch.setenv("YANDEX_MODEL", "yandexgpt-lite")
     monkeypatch.delenv("RATE_LIMIT_PER_MIN", raising=False)
-    monkeypatch.setitem(index._token, "value", None)
-    monkeypatch.setitem(index._token, "expires_at", 0.0)
     index._hits.clear()
-    g = Giga()
+    g = YGPT()
     monkeypatch.setattr(index.requests, "post", g)
     yield g
     index._hits.clear()
@@ -252,63 +249,73 @@ def _event(body=None, ip="10.0.0.1", b64=False):
             "requestContext": {"identity": {"sourceIp": ip}}}
 
 
-def _call(event):
-    r = index.handler(event, None)
+def _call(event, context="default"):
+    r = index.handler(event, FakeContext() if context == "default" else context)
     return r["statusCode"], json.loads(r["body"]), r
 
 
-def test_handler_ok(giga):
-    giga.answer = "CAGR портфеля 12,3 %, итог 5 618 575 ₽, а в будущем — 15 %."
+def test_handler_ok(ygpt):
+    ygpt.answer = "CAGR портфеля 12,3 %, итог 5 618 575 ₽, а в будущем — 15 %."
     status, data, r = _call(_event())
     assert status == 200
     assert r["headers"]["Content-Type"].startswith("application/json")
-    assert data["answer"] == giga.answer, "ответ модели обрезан от пробелов"
-    assert data["label"] == logic.LABEL and "Ответ ИИ" in data["label"]
+    assert data["answer"] == ygpt.answer, "ответ модели обрезан от пробелов"
+    assert data["label"] == logic.LABEL and "Ответ ИИ (YandexGPT)" in data["label"]
     assert data["facts_used"] == ["pf1.cagr", "pf1.final"]
     assert data["unverified_numbers"] == ["15 %"]
-    chat = giga.chat_calls()[0]
-    assert chat["json"]["max_tokens"] <= 800
-    assert chat["json"]["model"] == "GigaChat"
+    assert len(ygpt.calls) == 1
+    chat = ygpt.calls[0]
+    assert chat["json"]["modelUri"] == "gpt://b1gfolder/yandexgpt-lite/latest"
+    assert chat["json"]["completionOptions"] == {"stream": False, "temperature": 0.2, "maxTokens": "500"}
     msgs = chat["json"]["messages"]
-    assert msgs[0] == {"role": "system", "content": index.SYSTEM_PROMPT}
-    assert len(msgs) == 2 and msgs[-1]["content"].endswith("Вопрос: Почему CAGR ниже, чем у индекса?")
-    assert chat["headers"]["Authorization"] == "Bearer tok1"
+    assert msgs[0] == {"role": "system", "text": index.SYSTEM_PROMPT}
+    assert len(msgs) == 2 and msgs[-1]["role"] == "user"
+    assert msgs[-1]["text"].endswith("Вопрос: Почему CAGR ниже, чем у индекса?")
+    assert chat["headers"]["Authorization"] == "Bearer iam1"
+    assert chat["headers"]["x-folder-id"] == "b1gfolder"
+    assert chat["timeout"] == index.CHAT_TIMEOUT
 
 
-def test_handler_base64_body(giga):
+def test_handler_default_model(ygpt, monkeypatch):
+    monkeypatch.delenv("YANDEX_MODEL")
+    assert _call(_event())[0] == 200
+    assert ygpt.calls[0]["json"]["modelUri"] == "gpt://b1gfolder/yandexgpt/latest"
+
+
+def test_handler_base64_body(ygpt):
     status, data, _ = _call(_event(b64=True))
     assert status == 200 and data["answer"] == "Ответ."
 
 
-def test_handler_refuses_advice_without_model(giga):
+def test_handler_refuses_advice_without_model(ygpt):
     status, data, _ = _call(_event(_body("Стоит ли продавать Сбер?")))
     assert status == 200
     assert data["answer"] == logic.REFUSAL and data["label"] == logic.LABEL
     assert data["facts_used"] == [] and data["unverified_numbers"] == []
-    assert giga.calls == [], "на запрос рекомендации GigaChat не вызывается"
+    assert ygpt.calls == [], "на запрос рекомендации YandexGPT не вызывается"
 
 
 @pytest.mark.parametrize("body, b64", [
     ("{битый", False), (_body(""), False), (_body("я" * 1001), False), (_body("?", [FACTS[0]] * 61), False),
     ("%%%не-base64%%%", True),
 ])
-def test_handler_400(giga, body, b64):
+def test_handler_400(ygpt, body, b64):
     ev = _event(body)
     if b64:
         ev["isBase64Encoded"] = True
     status, data, _ = _call(ev)
     assert status == 400 and data["error"]
-    assert giga.calls == []
+    assert ygpt.calls == []
 
 
-def test_handler_400_bad_utf8_in_base64(giga):
+def test_handler_400_bad_utf8_in_base64(ygpt):
     ev = _event(base64.b64encode(b"\xff\xfe{").decode())
     ev["isBase64Encoded"] = True
     status, data, _ = _call(ev)
     assert status == 400 and "JSON" in data["error"]
 
 
-def test_handler_429(giga, monkeypatch):
+def test_handler_429(ygpt, monkeypatch):
     monkeypatch.setenv("RATE_LIMIT_PER_MIN", "2")
     assert _call(_event(ip="1.1.1.1"))[0] == 200
     assert _call(_event(ip="1.1.1.1"))[0] == 200
@@ -324,74 +331,80 @@ def test_handler_429(giga, monkeypatch):
 
 @pytest.mark.parametrize("chat", [
     requests.ConnectionError("down"), FakeResp(500, {}), FakeResp(200, ValueError("not json")),
-    FakeResp(200, {"choices": []}), FakeResp(200, {"error": "x"}),
+    FakeResp(200, {"result": {"alternatives": []}}), FakeResp(200, {"error": "x"}),
+    FakeResp(200, {"result": {"alternatives": [{"status": "ALTERNATIVE_STATUS_FINAL"}]}}),
 ])
-def test_handler_502_chat(giga, chat):
-    giga.chat_responses = [chat]
+def test_handler_502_chat(ygpt, chat):
+    ygpt.responses = [chat]
     status, data, _ = _call(_event())
     assert status == 502 and "недоступен" in data["error"]
+    assert data["detail"].startswith("chat: ")
 
 
-def test_handler_502_oauth(giga):
-    giga.oauth = FakeResp(401, {"message": "bad key"})
+def test_handler_502_timeout_detail(ygpt):
+    ygpt.responses = [requests.ReadTimeout()]
     status, data, _ = _call(_event())
-    assert status == 502
-    assert data["detail"] == "oauth: 401"   # шаг и код — для диагностики без журналов; ключа в ответе нет
-    assert "bad key" not in json.dumps(data, ensure_ascii=False)
+    assert status == 502 and data["detail"] == "chat: ReadTimeout"
 
 
-def test_handler_502_no_key(giga, monkeypatch):
-    monkeypatch.delenv("GIGACHAT_AUTH_KEY")
-    assert _call(_event())[0] == 502
-    assert giga.calls == []
+def test_handler_502_no_context(ygpt):
+    status, data, _ = _call(_event(), context=None)
+    assert status == 502 and "Нет доступа к YandexGPT" in data["error"]
+    assert data["detail"].startswith("auth")
+    assert ygpt.calls == []
 
 
-def test_oauth_token_cached(giga):
-    assert _call(_event())[0] == 200
-    assert _call(_event())[0] == 200
-    assert giga.n_oauth == 1, "второй запрос — без OAuth"
-    oauth = [kw for url, kw in giga.calls if url == index.OAUTH_URL][0]
-    assert oauth["headers"]["Authorization"] == "Basic dGVzdDp0ZXN0"
-    assert oauth["data"] == {"scope": "GIGACHAT_API_PERS"}
-    rquid = oauth["headers"]["RqUID"]
-    import uuid
-    assert str(uuid.UUID(rquid)) == rquid
+def test_handler_502_context_without_token(ygpt):
+    status, data, _ = _call(_event(), context=FakeContext(token=None))
+    assert status == 502 and data["detail"].startswith("auth")
+    assert ygpt.calls == []
 
 
-def test_oauth_token_expired_refetched(giga):
-    assert _call(_event())[0] == 200
-    index._token["expires_at"] = time.time() + 30   # меньше минуты до истечения — берём новый
-    assert _call(_event())[0] == 200
-    assert giga.n_oauth == 2
-
-
-def test_chat_401_retries_with_new_token(giga):
-    giga.chat_responses = [FakeResp(401, {})]
+def test_handler_502_no_folder(ygpt, monkeypatch):
+    monkeypatch.delenv("YC_FOLDER_ID")
     status, data, _ = _call(_event())
-    assert status == 200 and data["answer"] == "Ответ."
-    assert giga.n_oauth == 2
-    assert [c["headers"]["Authorization"] for c in giga.chat_calls()] == ["Bearer tok1", "Bearer tok2"]
+    assert status == 502 and "Нет доступа к YandexGPT" in data["error"] and data["detail"].startswith("auth")
+    assert ygpt.calls == []
 
 
-def test_chat_401_twice_is_502(giga):
-    giga.chat_responses = [FakeResp(401, {}), FakeResp(401, {})]
-    assert _call(_event())[0] == 502
-    assert len(giga.chat_calls()) == 2
+@pytest.mark.parametrize("code", [401, 403])
+def test_handler_502_no_access(ygpt, code):
+    ygpt.responses = [FakeResp(code, {"error": "denied"})]
+    status, data, _ = _call(_event())
+    assert status == 502 and "Нет доступа" in data["error"]
+    assert data["detail"] == f"chat: {code}"
+    assert len(ygpt.calls) == 1, "без повторов"
 
 
-def test_verify_ca_bundle_path(giga, monkeypatch):
-    assert _call(_event())[0] == 200
-    assert {kw["verify"] for _, kw in giga.calls} == {True}, "без GIGACHAT_CA_BUNDLE — системные сертификаты"
-    giga.calls.clear()
-    index._token["value"] = None
-    monkeypatch.setenv("GIGACHAT_CA_BUNDLE", "russian_trusted_root_ca.pem")
-    assert _call(_event())[0] == 200
-    expected = str(FN / "russian_trusted_root_ca.pem")
-    assert [kw["verify"] for _, kw in giga.calls] == [expected, expected], "OAuth и чат — с сертификатом Минцифры"
-    assert all(kw.get("timeout") for _, kw in giga.calls), "запросы с таймаутом"
+def test_handler_502_rate_limit(ygpt, capsys):
+    ygpt.responses = [FakeResp(429, {})]
+    status, data, _ = _call(_event())
+    assert status == 502 and "Лимит запросов" in data["error"] and data["detail"] == "chat: 429"
+    log = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert log["upstream"] == "chat: 429" and log["status"] == 502
 
 
-def test_log_without_question_text(giga, capsys):
+def test_handler_content_filter_is_refusal(ygpt, capsys):
+    ygpt.responses = [_ok("Что-то про числа 99 %", status="ALTERNATIVE_STATUS_CONTENT_FILTER")]
+    status, data, _ = _call(_event())
+    assert status == 200
+    assert data["answer"] == logic.REFUSAL and data["label"] == logic.LABEL
+    assert data["facts_used"] == [] and data["unverified_numbers"] == []
+    log = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert log["status"] == 200 and log["refused"] is True
+
+
+def test_token_not_in_response_or_log(ygpt, capsys):
+    ygpt.responses = [FakeResp(500, {}), _ok()]
+    ctx = FakeContext("SECRET-IAM-TOKEN")
+    for _ in range(2):
+        _, _, r = _call(_event(), context=ctx)
+        assert "SECRET-IAM-TOKEN" not in r["body"]
+    out = capsys.readouterr().out
+    assert "SECRET-IAM-TOKEN" not in out and "b1gfolder" not in out
+
+
+def test_log_without_question_text(ygpt, capsys):
     secret_q = "Почему у Ивана Петровича просадка уникальнаястрока?"
     _call(_event(_body(secret_q), ip="203.0.113.7"))
     _call(_event(_body("Куда вложить уникальнаястрока2?"), ip="203.0.113.7"))
@@ -401,7 +414,7 @@ def test_log_without_question_text(giga, capsys):
     assert len(lines) == 3
     assert "уникальнаястрока" not in out and "Ивана" not in out
     assert "203.0.113.7" not in out
-    assert "Ответ." not in out
+    assert "Ответ." not in out and "iam1" not in out
     assert lines[0]["status"] == 200 and lines[0]["route"] == "/tools/backtest"
     assert lines[0]["question_len"] == len(secret_q) and lines[0]["facts"] == 3
     assert lines[1].get("refused") is True
@@ -466,11 +479,27 @@ def test_verify_numbers_round2():
     assert logic.verify_numbers("Минимум 250,5 ₽.", lo) == (["lo"], [])
 
 
-def test_timeouts_fit_function_limit():
-    assert index.TIMEOUT[1] + index.CHAT_TIMEOUT[1] <= 30   # OAuth + чат укладываются в таймаут функции (30 с)
+def test_timeouts_leave_headroom_in_function_limit():
+    assert sum(index.CHAT_TIMEOUT) <= 25   # таймаут функции 30 с: запас на запуск, разбор и ответ
 
 
-def test_handler_415(giga):
+def test_handler_502_token_not_a_dict(ygpt):
+    """context.token — не dict (объект/строка): аккуратный 502, а не необработанный AttributeError."""
+    class Ctx:
+        token = "строка, а не словарь"
+    status, data, _ = _call(_event(), context=Ctx())
+    assert status == 502 and data["detail"].startswith("auth")
+    assert ygpt.calls == []
+
+
+@pytest.mark.parametrize("status_text", ["ALTERNATIVE_STATUS_FINAL", "ALTERNATIVE_STATUS_TRUNCATED_FINAL"])
+def test_handler_502_empty_answer_text(ygpt, status_text):
+    ygpt.responses = [_ok(text="   ", status=status_text)]
+    status, data, _ = _call(_event())
+    assert status == 502 and data["detail"] == "chat: empty"
+
+
+def test_handler_415(ygpt):
     for headers in ({}, {"Content-Type": "text/plain"}, {"content-type": "application/x-www-form-urlencoded"}):
         ev = _event()
         ev["headers"] = headers
@@ -482,15 +511,7 @@ def test_handler_415(giga):
     ev = _event()
     ev["headers"] = {"content-type": "Application/JSON; charset=utf-8"}
     assert _call(ev)[0] == 200, "регистр имени и значения заголовка не важен"
-    assert len(giga.chat_calls()) == 1
-
-
-def test_handler_402_limit(giga, capsys):
-    giga.chat_responses = [FakeResp(402, {"message": "Payment Required"})]
-    status, data, _ = _call(_event())
-    assert status == 502 and "лимит" in data["error"].lower()
-    log = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
-    assert log["upstream"] == "chat: 402" and log["status"] == 502
+    assert len(ygpt.calls) == 1
 
 
 # ============================================================ третий круг: ребалансировка и модуль отрицательных фактов
@@ -519,32 +540,3 @@ DD22 = [{"id": "dd", "label": "Максимальная просадка", "valu
 ])
 def test_verify_numbers_negative_fact_round3(answer, expected):
     assert logic.verify_numbers(answer, DD22) == expected
-
-
-def test_diag_mode_reports_codes_and_timings_only(giga, monkeypatch):
-    """X-Diag: 1 — проверки канала до GigaChat; в ответе только коды/время, без токена."""
-    class R:
-        def __init__(self, code): self.status_code, self.content = code, b"{}"
-        def iter_content(self, n): return iter([b"data: {}"])
-        def close(self): pass
-    seen = []
-
-    def fake_request(method, url, **kw):
-        seen.append((method, url, kw.get("stream"), kw["timeout"]))
-        if kw.get("stream"):
-            raise index.requests.ReadTimeout()
-        return R(200)
-    monkeypatch.setattr(index.requests, "request", fake_request)
-    ev = _event()
-    ev["headers"]["X-Diag"] = "1"
-    status, data, r = _call(ev)
-    d = data["diag"]
-    assert status == 200 and d["oauth"].startswith("ok")
-    assert d["models"].startswith("200") and d["chat"].startswith("200") and d["chat_stream"].startswith("ReadTimeout")
-    assert [s[0] for s in seen] == ["GET", "POST", "POST"] and seen[0][1].endswith("/api/v1/models")
-    assert all(t == (5, 7) for *_, t in seen)
-    assert "tok1" not in r["body"]
-
-
-def test_diag_header_absent_runs_normal_flow(giga):
-    assert "diag" not in _call(_event())[1]

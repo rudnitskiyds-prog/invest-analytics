@@ -5,5 +5,5 @@ export const ISS_BASE = "https://iss.moex.com/iss";
 // Демо-режим (?demo=1): месячные фикстуры из репозитория, только при локальном запуске.
 export const DEMO_BASE = "../tests/fixtures/";
 
-// Ассистент GigaChat: Cloud Function за API Gateway на том же домене (web/CONTRACT.md).
+// Ассистент YandexGPT: Cloud Function за API Gateway на том же домене (web/CONTRACT.md).
 export const ASSISTANT_URL = "/api/assistant";
