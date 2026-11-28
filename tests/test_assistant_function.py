@@ -498,6 +498,16 @@ def test_verify_numbers_names_and_parameters_from_labels_are_not_flagged():
     assert logic.verify_numbers("Внесли 1 000 000 ₽.", nb)[1] == []
 
 
+def test_verify_numbers_ignores_numbers_from_the_question():
+    """Модель повторяет число из вопроса («потеряю 220 000 ₽?») — это число пользователя, а не выдумка."""
+    facts = [{"id": "dd", "label": "Просадка", "value": -0.22, "unit": "pct", "text": "−22 %", "source": ""}]
+    ans = "Просадка 22 % не означает потерю 220 000 ₽: всё зависит от суммы."
+    assert logic.verify_numbers(ans, facts, "Просадка 22 % — значит я потеряю 220 000 ₽?") == (["dd"], [])
+    # без вопроса (или другое число) — по-прежнему непроверенное
+    assert logic.verify_numbers(ans, facts)[1] == ["220 000 ₽"]
+    assert logic.verify_numbers("Это даст 330 000 ₽.", facts, "Просадка 22 % — значит я потеряю 220 000 ₽?")[1] == ["330 000 ₽"]
+
+
 def test_timeouts_leave_headroom_in_function_limit():
     assert sum(index.CHAT_TIMEOUT) <= 25   # таймаут функции 30 с: запас на запуск, разбор и ответ
 
