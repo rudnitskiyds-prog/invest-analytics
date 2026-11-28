@@ -6,7 +6,8 @@ import { DATA_BASE } from "./config.js";
 import { $, h, notice, put } from "./dom.js";
 import { engine } from "./engine.js";
 import { fmtDate, fmtNum, fmtPct, fmtRub } from "./format.js";
-import { assetBadge, loadLogos, nameFor } from "./logo.js";
+import { assetBadge, IDX_SLUG, loadLogos, nameFor } from "./logo.js";
+import { loadIndices, signedPct as idxPct, spark as idxSpark } from "./page-indices.js";
 import { go, href, symbolHref } from "./router.js";
 import { attachSearch, classLabel, POPULAR } from "./search.js";
 import { isDemo } from "./state.js";
@@ -49,7 +50,7 @@ export function init() {
       h("span", { class: "tile-text" }, s.text),
       h("span", { class: "tile-ui", id: `tile-${i + 1}` }, skel())))));
 
-  $("#home-popular").replaceChildren(...POPULAR.map((p) => h("li", {},
+  $("#home-popular").replaceChildren(...POPULAR.filter((p) => p.cls !== "index").map((p) => h("li", {},
     h("a", { class: "pop-card card", href: symbolHref(p.secid) },
       h("span", { class: "pop-top" }, assetBadge(p.secid, 40, p.cls),
         h("span", { class: "chip-cls badge" }, classLabel(p.cls))),
@@ -59,7 +60,35 @@ export function init() {
         h("span", { class: "pop-price" }, "—"),
         h("small", { class: "muted" }, "6 мес.: —"))))));
 
+  initIndexStrip();
   initCompare();
+}
+
+// ---------------------------------------------------------------- полоса «Индексы рынка» (indices.json)
+
+const STRIP = ["MCFTR", "IMOEX", "RGBITR", "CORP_CHAIN", "GOLD_CBR", "RUONIA"];
+
+function initIndexStrip() {
+  const list = h("ul", { class: "idx-strip", id: "home-indices" });
+  const sec = h("section", { class: "home-block", id: "home-idx", "aria-labelledby": "h-home-idx", hidden: true },
+    h("div", { class: "block-head" },
+      h("h3", { id: "h-home-idx", class: "block-title" }, "Индексы ", h("span", { class: "hl" }, "рынка")),
+      h("a", { class: "more", href: href("/indices") }, "Все индексы →")),
+    list);
+  $("#home-popular").closest("section")?.after(sec);
+  loadIndices().then((d) => {
+    const by = new Map((d?.items || []).map((i) => [i.key, i]));
+    const items = STRIP.map((k) => by.get(k)).filter(Boolean);
+    if (!items.length) return;
+    list.replaceChildren(...items.map((it) => h("li", { "data-idx": IDX_SLUG[it.class] || "eq" },
+      h("a", { class: "idx-mini idx-card card", href: symbolHref(it.key) },
+        h("span", { class: "idx-top" }, assetBadge(it.key, 28, { kind: "index" }),
+          h("span", { class: "idx-names" }, h("span", { class: "idx-name" }, it.short || it.name || it.key),
+            h("span", { class: "idx-sub muted" }, it.class || ""))),
+        idxSpark(it.series),
+        h("span", { class: "idx-ret" }, h("span", { class: "idx-ret-val" }, idxPct(it.ret_1y)), h("span", { class: "idx-ret-lbl muted" }, "за 1 год"))))));
+    sec.hidden = false;
+  });
 }
 
 const skel = () => h("span", { class: "skeleton" }, h("span"), h("span"));
@@ -159,6 +188,7 @@ async function showPrices() {
   ]);
   for (const p of POPULAR) {
     const box = $(`#pop-${CSS.escape(p.secid)}`);
+    if (!box) continue;   // индексы в блоке не показываются (полоса «Индексы рынка»)
     const r6 = stats?.items?.[p.secid]?.ret_6m;
     if (Number.isFinite(r6)) box.querySelector("small").replaceChildren("6 мес.: ", signed(r6));
     const q = prices?.[p.secid];

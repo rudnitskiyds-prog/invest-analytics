@@ -288,10 +288,10 @@ def shares(client: TInvestClient) -> list[dict]:
 
 
 def _brand(x: dict) -> dict:
-    """Логотип из Brand (instruments.proto): {"logo": logo_name, "logo_color": logo_base_color};
-    отсутствующих полей в результате нет."""
+    """Бренд из Brand (instruments.proto): {"logo": logo_name, "logo_color": logo_base_color, "brand": name};
+    отсутствующих полей в результате нет. У фондов бренд — управляющая компания."""
     b = _get(x, "brand") or {}
-    out = {"logo": _get(b, "logo_name"), "logo_color": _get(b, "logo_base_color")}
+    out = {"logo": _get(b, "logo_name"), "logo_color": _get(b, "logo_base_color"), "brand": _get(b, "name")}
     return {k: v for k, v in out.items() if v}
 
 
@@ -325,6 +325,19 @@ def etfs(client: TInvestClient) -> list[dict]:
             **_brand(x),
         })
     return out
+
+
+def bonds(client: TInvestClient) -> list[dict]:
+    """Облигации (метод Bonds, только чтение), только с логотипом эмитента: ticker (= SECID ISS), isin, name,
+    logo, logo_color, brand. Один инструмент на тикер."""
+    resp = client.call("Bonds", {"instrumentStatus": "INSTRUMENT_STATUS_BASE"})
+    out = []
+    for x in resp.get("instruments", []):
+        b = _brand(x)
+        if _get(x, "ticker") and b.get("logo"):
+            out.append({"ticker": _get(x, "ticker"), "isin": _get(x, "isin"), "name": _get(x, "name"),
+                        "liquidity_flag": bool(_get(x, "liquidity_flag", False)), **b})
+    return [{k: v for k, v in r.items() if k != "liquidity_flag"} for r in _one_per_ticker(out)]
 
 
 def dividends(client: TInvestClient, instrument_id: str, date_from: Any, date_to: Any,

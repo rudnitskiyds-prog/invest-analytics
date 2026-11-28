@@ -267,6 +267,13 @@ def tinvest_etfs(ctx: dict, spec: dict) -> tuple:
     return rows, len(rows)
 
 
+def tinvest_bonds(ctx: dict, spec: dict) -> tuple:
+    """Облигации с логотипом эмитента (T-Invest Bonds) для значков в скринере и поиске."""
+    rows = sorted(tinvest.bonds(_client(ctx)), key=lambda r: r["ticker"] or "")
+    _check("облигаций с логотипом", len(rows), spec["min_rows"])
+    return rows, len(rows)
+
+
 # поля выплаты, которые не сохраняем: close_price — котировка Мосбиржи (в git их не храним)
 DIVIDEND_DROP = ("close_price",)
 
@@ -343,6 +350,9 @@ SOURCES.update({
                        "collect": tinvest_shares, "min_rows": 150},
     "tinvest_etfs": {"kind": "tinvest", "title": "Фонды TQBR/TQTF (справочник T-Invest)",
                      "collect": tinvest_etfs, "min_rows": 50},
+    # default=False — только явно (--only tinvest_bonds), отдельным шагом workflow
+    "tinvest_bonds": {"kind": "tinvest", "default": False, "title": "Облигации с логотипом (справочник T-Invest)",
+                      "collect": tinvest_bonds, "min_rows": 100},
     "dividends": {"kind": "tinvest", "title": "Дивиденды (T-Invest GetDividends)",
                   "collect": tinvest_dividends, "min_rows": 50},
     "fundamentals": {"kind": "tinvest", "title": "Фундаментальные показатели (T-Invest)",
@@ -683,6 +693,43 @@ SOURCES["screener_bonds"] = {"kind": "bonds", "default": False,
                              "collect": screener_bonds, "min_rows": {"TQOB": 20, "TQCB": 300}}
 
 
+# ------------------------------------------------------------------ индексы (раздел /indices)
+INDICES_SOURCE = "ISS MOEX, Банк России (расчёт FinServ)"
+
+
+def _etf_names() -> dict[str, str]:
+    """Названия БПИФ по тикеру: rusetfs_funds.json, затем tinvest_etfs.json (нет файлов — тикеры без названий)."""
+    return {r["ticker"]: r["name"] for f in ("rusetfs_funds", "tinvest_etfs")
+            for r in _previous(f).get("data", []) if r.get("ticker") and r.get("name")}
+
+
+def indices(spec: dict) -> tuple:
+    """Карточки индексов каталога (core/analytics/indices.py) по живым рядам ISS / ЦБ без подмены демо-данными.
+    Индекс без данных — пропуск; источник — сбой, если собрано меньше min_rows."""
+    from core.analytics import indices as ix
+    from core.data.universe import load_series
+    body, skipped = ix.build(lambda k: load_series(k, START, fallback=False), _etf_names())
+    for k, why in skipped.items():
+        print(f"  пропуск индекса {k}: {why}", file=sys.stderr)
+    _check("индексов", len(body["items"]), spec["min_rows"])
+    return body, len(body["items"]), {"skipped": len(skipped), "skipped_keys": skipped}
+
+
+def collect_indices(name: str, spec: dict) -> dict:
+    """Атомарная запись indices.json; updated меняется только при изменении содержимого;
+    при сбое прежний файл не трогается."""
+    body, n, extra = spec["collect"](spec)
+    prev = _previous(name)
+    updated = prev.get("updated") if all(prev.get(k) == v for k, v in body.items()) and prev.get("updated") else _now()
+    _write(name, {"updated": updated, "source": INDICES_SOURCE, **body})
+    return {"ok": True, "rows": n, "last": body["as_of"], **extra}
+
+
+# default=False — только явно (--only indices), отдельным шагом workflow «Индексы»
+SOURCES["indices"] = {"kind": "indices", "default": False, "title": "Индексы (расчёт по ISS и ЦБ)",
+                      "collect": indices, "min_rows": 8}
+
+
 # ------------------------------------------------------------------ ряды ЦБ
 def collect(name: str, spec: dict) -> dict:
     s: pd.Series = spec["load"]()
@@ -725,7 +772,7 @@ def main(argv: list[str] | None = None) -> int:
     # ЦБ — первым, затем RusETFs, T-Invest — последним: долгий или упавший T-Invest
     # не должен помешать сохранить остальное (сортировка устойчивая — порядок внутри группы прежний)
     is_ti = lambda n: SOURCES[n].get("kind") == "tinvest"   # noqa: E731
-    order = {"rusetfs": 1, "tinvest": 2, "iss": 3, "portfolios": 4, "bonds": 5}
+    order = {"rusetfs": 1, "tinvest": 2, "iss": 3, "portfolios": 4, "bonds": 5, "indices": 6}
     names = sorted(names, key=lambda n: order.get(SOURCES[n].get("kind"), 0))
     failed = skipped = ti_tried = ti_failed = 0
     ctx: dict = {"budget_min": args.tinvest_budget}   # общий клиент T-Invest и список акций на прогон
@@ -742,6 +789,8 @@ def main(argv: list[str] | None = None) -> int:
                 res = collect_portfolios(name, spec)
             elif spec.get("kind") == "bonds":
                 res = collect_screener_bonds(name, spec)
+            elif spec.get("kind") == "indices":
+                res = collect_indices(name, spec)
             else:
                 res = collect(name, spec)
             print(f"OK   {name}: {res['rows']} строк, до {res['last']}")

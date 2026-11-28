@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import time
 from functools import lru_cache
 from typing import Optional
@@ -42,6 +43,19 @@ class ISSError(RuntimeError):
     pass
 
 
+def ca_verify():
+    """Значение verify для requests: файл из ISS_CA_BUNDLE, иначе из TINVEST_CA_BUNDLE (пакет certifi + сертификаты
+    Минцифры: iss.moex.com подписан УЦ Минцифры), иначе True (certifi). Читается при каждом запросе.
+    Проверка TLS не отключается; указанный, но отсутствующий файл — ошибка, а не молчаливый откат."""
+    for var in ("ISS_CA_BUNDLE", "TINVEST_CA_BUNDLE"):
+        p = os.environ.get(var, "").strip()
+        if p:
+            if not os.path.isfile(p):
+                raise ISSError(f"{var}: файл не найден ({p})")
+            return p
+    return True
+
+
 # --------------------------------------------------------------------- low level
 def get_json(path: str, params: Optional[dict] = None, ttl: Optional[float] = TTL_MARKET,
              retries: int = 3) -> dict:
@@ -56,7 +70,7 @@ def get_json(path: str, params: Optional[dict] = None, ttl: Optional[float] = TT
     last_err = None
     for attempt in range(retries):
         try:
-            r = _session.get(url, params=params, timeout=30)
+            r = _session.get(url, params=params, timeout=30, verify=ca_verify())
             r.raise_for_status()
             data = r.json()
             _cache.put(k, dumps(data))

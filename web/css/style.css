@@ -772,7 +772,7 @@ body {
 
 .home-block { margin-top: 88px; }
 .block-title { text-transform: uppercase; font-weight: 800; font-size: clamp(22px, 2.4vw, 32px); letter-spacing: -0.01em; }
-.block-head-c { display: grid; justify-items: center; text-align: center; margin-bottom: 28px; }
+.block-head-c { display: grid; justify-items: start; text-align: left; margin-bottom: 28px; }
 .block-sub { color: var(--text-muted); max-width: 640px; margin: 8px 0 0; }
 
 .pf-card { gap: 8px; }
@@ -892,3 +892,39 @@ body {
 @media (max-width: 900px) { .hero { grid-template-columns: minmax(0, 1fr); } }
 .hero-geo { right: 0; width: min(760px, 62%); }
 @media (max-width: 900px) { .hero-geo { width: 100%; } }
+
+/* ================================================================ Ровная вёрстка и единый фон */
+/* Параметры форм: равные колонки, поля по 44 px, подпись над полем одним стилем */
+.form-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; align-items: end; }
+.form-grid .field { gap: 6px; justify-content: flex-end; }
+.form-grid .field > label, .form-grid .field > .label { font-size: 13px; font-weight: 600; line-height: 1.3; min-height: 18px; }
+.form-grid input, .form-grid select { height: 44px; min-height: 44px; padding: 0 12px; }
+.form-grid .switch { min-height: 44px; }
+@media (max-width: 480px) { .form-grid { grid-template-columns: minmax(0, 1fr); } .form-grid .field > label { min-height: 0; } }
+
+/* Фон: свечения только на body; у героя нет своего фона и нижнего края */
+.hero::before { display: none; }
+body {
+  background:
+    radial-gradient(900px 520px at 88% -80px, rgb(10 186 181 / .16), transparent 70%),
+    radial-gradient(520px 340px at 72% 340px, rgb(10 186 181 / .10), transparent 70%),
+    radial-gradient(700px 480px at -10% 220px, rgb(239 228 210 / .75), transparent 70%),
+    radial-gradient(420px 300px at 20% 560px, rgb(232 131 122 / .08), transparent 70%),
+    var(--bg);
+  background-repeat: no-repeat;
+}
+.hero-geo {
+  right: calc(50% - 50vw); width: min(980px, 72vw); top: -72px; height: calc(100% + 200px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 40%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 40%, transparent 100%);
+}
+@media (max-width: 900px) { .hero-geo { width: 100vw; right: calc(50% - 50vw); opacity: .22; } }
+
+/* Заголовки и подзаголовки секций — по левому краю одной колонки */
+.block-head, .panel-head, .cta, .cta-strip, .prose, .block-sub, .lead { text-align: left; }
+.block-sub, .lead, .hero-lead { margin-left: 0; margin-right: 0; }
+
+/* Бэктест: 9 полей параметров — сетка 3×3 (без одинокого поля в последнем ряду); 2 колонки на планшете, 1 — на телефоне */
+#bt-form .form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 900px) { #bt-form .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { #bt-form .form-grid { grid-template-columns: minmax(0, 1fr); } }

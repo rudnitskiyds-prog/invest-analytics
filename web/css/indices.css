@@ -1,0 +1,77 @@
+/* Раздел «Индексы» (web/js/page-indices.js, web/CONTRACT.md). Цвета классов — токены --idx-*. */
+:root {
+  --idx-eq: #0ABAB5;     /* Акции — тиффани */
+  --idx-gov: #6B7F99;    /* Облигации гос. — серо-синий */
+  --idx-corp: #8E86B5;   /* Облигации корп. — лавандовый-серый */
+  --idx-gold: #E0A63A;   /* Золото — янтарь */
+  --idx-cash: #9AA1AC;   /* Денежный рынок — серый */
+}
+[data-idx="eq"] { --c: var(--idx-eq); }
+[data-idx="gov"] { --c: var(--idx-gov); }
+[data-idx="corp"] { --c: var(--idx-corp); }
+[data-idx="gold"] { --c: var(--idx-gold); }
+[data-idx="cash"] { --c: var(--idx-cash); }
+
+/* значок-корзина индекса (logo.js): цвет класса вместо логотипа */
+.asset-badge.is-basket { background: color-mix(in srgb, var(--c, var(--brand)) 18%, #fff); color: color-mix(in srgb, var(--c, var(--brand)) 70%, #0E1726); }
+.so-idx { justify-self: start; background: var(--brand-soft); color: var(--brand-strong); font-weight: 600; padding: 1px 9px; border-radius: 999px; }
+
+
+.scr-issuer { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+
+#indices-root { text-align: left; }
+#indices-root .lead { max-width: 70ch; color: var(--text-muted); margin: 0 0 6px; }
+.idx-meta { font-size: 13px; margin: 0; }
+.idx-sort { display: inline-flex; gap: 4px; padding: 4px; margin: 4px 0 22px; background: var(--surface-2); border-radius: 999px; }
+.idx-sort-btn { border: 0; background: transparent; font: inherit; font-size: 13.5px; font-weight: 600; color: var(--text-muted); padding: 7px 16px; border-radius: 999px; cursor: pointer; }
+.idx-sort-btn[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.idx-group { margin: 0 0 30px; }
+.idx-group-title { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 700; margin: 0 0 14px; text-align: left; }
+.idx-group-title i { width: 12px; height: 12px; border-radius: 50%; background: var(--c); }
+.idx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 16px; align-items: stretch; }
+.idx-card { align-self: stretch; margin: 0; min-width: 0; position: relative; display: flex; flex-direction: column; gap: 10px; padding: 18px; border-top: 3px solid var(--c); transition: border-color .15s, transform .15s; }
+.idx-card:hover { transform: translateY(-2px); }
+.idx-top { display: flex; align-items: center; gap: 12px; }
+.idx-names { min-width: 0; }
+.idx-name { margin: 0; font-size: 15.5px; font-weight: 700; line-height: 1.25; }
+.idx-link { color: var(--text); text-decoration: none; }
+.idx-link::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius); }   /* вся карточка — ссылка */
+.idx-link:focus-visible::after { outline: 2px solid var(--brand); outline-offset: 2px; }
+.idx-sub { font-size: 12px; }
+.idx-spark { width: 100%; height: 56px; display: block; }
+.idx-spark path { fill: none; stroke: var(--c); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.idx-ret { display: flex; align-items: baseline; gap: 8px; }
+.idx-ret-val { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; line-height: 1; }
+.idx-ret-lbl { font-size: 13px; }
+.idx-cagr { display: flex; flex-wrap: wrap; gap: 2px 14px; margin: 0; font-size: 12.5px; }
+.idx-risk { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0; padding-top: 10px; border-top: 1px solid var(--border); }
+.idx-risk dt small { font-size: 10.5px; }
+.idx-note { margin: 6px 0 0; font-size: 11.5px; line-height: 1.4; }
+.idx-risk dt { font-size: 11.5px; color: var(--text-muted); }
+.idx-risk dd { margin: 0; font-weight: 700; font-size: 14px; }
+.idx-desc { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text-muted); }
+.idx-repeat { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border); position: relative; z-index: 1; }
+.idx-repeat-lbl { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.idx-repeat li { min-width: 0; }
+.idx-repeat ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.idx-fund { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text); text-decoration: none; font-size: 13px; }
+.idx-fund:hover b { color: var(--brand-strong); }
+.idx-fund span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* главная: полоса «Индексы рынка» */
+.idx-strip { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(200px, 1fr); gap: 14px; list-style: none; margin: 0; padding: 0; overflow-x: auto; scroll-snap-type: x proximity; padding: 6px 2px 8px; margin: -6px -2px -8px; }
+.idx-strip li { scroll-snap-align: start; }
+.idx-mini { padding: 14px 16px; gap: 8px; height: 100%; }
+.idx-mini { text-decoration: none; color: var(--text); }
+.idx-mini .idx-name { display: block; font-size: 14px; font-weight: 700; }
+.idx-mini .idx-sub { display: block; }
+.idx-mini .idx-ret-val { font-size: 22px; }
+.idx-mini .idx-spark { height: 40px; }
+
+@media (max-width: 640px) {
+  .idx-grid { grid-template-columns: 1fr; gap: 12px; }
+  .idx-sort { display: flex; }
+  .idx-sort-btn { flex: 1; padding: 8px 6px; }
+  .idx-strip { grid-auto-columns: 72%; }
+}
+@media (prefers-reduced-motion: reduce) { .idx-card { transition: none; } .idx-card:hover { transform: none; } }

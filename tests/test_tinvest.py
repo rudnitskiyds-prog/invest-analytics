@@ -1356,3 +1356,111 @@ def test_warning_reason_distinguishes_tls_and_token():
     assert "status.json" in cd._ti_reason(other)
     cbr_tls = {"cbr_gold": {"ok": False, "error": "SSLError"}, **other}
     assert "status.json" in cd._ti_reason(cbr_tls)        # ошибки ЦБ не учитываются
+
+
+# ======================================================================= brand и облигации с логотипом
+def _brand(logo="sber", color="#21a038", name="Сбер"):
+    return {"logoName": f"{logo}.png", "logoBaseColor": color, "name": name}
+
+
+def test_shares_and_etfs_carry_brand():
+    sh = {"instruments": [{"ticker": "AAAA", "classCode": "TQBR", "uid": "u1", "brand": _brand("a", "#111111", "Компания А")},
+                          {"ticker": "BBBB", "classCode": "TQBR", "uid": "u2"}]}
+    et = copy.deepcopy(fixture("etfs.json"))
+    et["instruments"][0]["brand"] = _brand("vim", "#222222", "ВИМ Инвестиции")
+    c, _ = make_client(FakeSession(default=lambda m, b: ok(sh if m.endswith("Shares") else et)))
+    a, b = tinvest.shares(c)
+    assert (a["logo"], a["logo_color"], a["brand"]) == ("a.png", "#111111", "Компания А")
+    assert "logo" not in b and "brand" not in b                       # отсутствующих полей нет
+    f = {r["ticker"]: r for r in tinvest.etfs(c)}
+    assert f["FNDA"]["brand"] == "ВИМ Инвестиции" and f["FNDA"]["logo"] == "vim.png"
+    assert "brand" not in f["FNDB"]
+
+
+def _bonds_body():
+    return {"instruments": [
+        {"ticker": "RU1", "isin": "RU0001", "name": "Облигация 1", "uid": "b1", "liquidityFlag": False, "brand": _brand("x")},
+        {"ticker": "RU1", "isin": "RU0001", "name": "Облигация 1 (ликвидная)", "uid": "b1b", "liquidityFlag": True,
+         "brand": _brand("x2")},
+        {"ticker": "RU2", "isin": "RU0002", "name": "Без логотипа", "uid": "b2", "brand": {"name": "Эмитент без лого"}},
+        {"ticker": "RU3", "name": "Совсем без бренда", "uid": "b3"},
+        {"ticker": "RU4", "isin": "RU0004", "name": "С цветом", "uid": "b4", "brand": _brand("y", "#abcdef", "Эмитент Y")},
+        {"ticker": "", "name": "Без тикера", "brand": _brand("z")},
+    ]}
+
+
+def test_bonds_only_with_logo_one_per_ticker():
+    s = FakeSession(default=lambda m, b: ok(_bonds_body()))
+    c, _ = make_client(s)
+    rows = tinvest.bonds(c)
+    assert s.calls[0]["method"].endswith("/Bonds") and s.calls[0]["json"] == {"instrumentStatus": "INSTRUMENT_STATUS_BASE"}
+    assert [r["ticker"] for r in rows] == ["RU1", "RU4"]               # RU2, RU3 без logo отброшены, пустой тикер — тоже
+    assert rows[0] == {"ticker": "RU1", "isin": "RU0001", "name": "Облигация 1 (ликвидная)",
+                       "logo": "x2.png", "logo_color": "#21a038", "brand": "Сбер"}   # дубль схлопнут в пользу ликвидного
+    assert rows[1]["logo_color"] == "#abcdef" and rows[1]["brand"] == "Эмитент Y"
+    assert all("liquidity_flag" not in r for r in rows)
+
+
+def test_bonds_empty_answer():
+    c, _ = make_client(FakeSession(default=lambda m, b: ok({})))
+    assert tinvest.bonds(c) == []
+
+
+def _with_bonds(collector, n=120, body=None, fail=False):
+    api = collector["api"]
+
+    def f(method, b):
+        if method.split("/")[-1] == "Bonds":
+            if fail:
+                return FakeResp(503, {"code": 14, "message": "unavailable"})
+            return ok(body or {"instruments": [{"ticker": f"B{i:04d}", "isin": f"RU{i}", "name": f"Обл {i}", "uid": f"b{i}",
+                                                "brand": _brand(f"l{i}", "#123456", f"Эмитент {i}")} for i in range(n)]})
+        return api(method, b)
+    collector["api"] = f
+
+
+def test_collector_tinvest_bonds_happy(collector):
+    _with_bonds(collector)
+    assert cd.main(["--only", "tinvest_bonds"]) == 0
+    d = _read(collector["out"], "tinvest_bonds")
+    assert d["source"] == "T-Invest API" and len(d["data"]) == 120
+    assert d["data"][0] == {"ticker": "B0000", "isin": "RU0", "name": "Обл 0", "logo": "l0.png",
+                            "logo_color": "#123456", "brand": "Эмитент 0"}
+    assert [r["ticker"] for r in d["data"]] == sorted(r["ticker"] for r in d["data"])
+    assert _status(collector["out"])["tinvest_bonds"]["ok"]
+
+
+def test_collector_tinvest_bonds_threshold(collector):
+    _with_bonds(collector, n=100)
+    assert cd.main(["--only", "tinvest_bonds"]) == 0
+    _with_bonds(collector, n=99)
+    (collector["out"] / "tinvest_bonds.json").write_text('{"keep":1}')
+    assert cd.main(["--only", "tinvest_bonds"]) == 1
+    assert (collector["out"] / "tinvest_bonds.json").read_text() == '{"keep":1}'
+    st = _status(collector["out"])["tinvest_bonds"]
+    assert not st["ok"] and "слишком мало" in st["error"]
+
+
+def test_collector_tinvest_bonds_failure_keeps_old_file(collector):
+    _with_bonds(collector, fail=True)
+    old = '{"updated":"x","source":"T-Invest API","data":[{"ticker":"OLD","logo":"o.png"}]}'
+    (collector["out"] / "tinvest_bonds.json").write_text(old)
+    assert cd.main(["--only", "tinvest_bonds"]) == 1
+    assert (collector["out"] / "tinvest_bonds.json").read_text() == old
+
+
+def test_collector_tinvest_bonds_without_token_skipped(tmp_path, monkeypatch):
+    monkeypatch.setattr(cd, "OUT", tmp_path)
+    monkeypatch.delenv("TINVEST_TOKEN", raising=False)
+    monkeypatch.setattr(tinvest, "TInvestClient", lambda *a, **k: pytest.fail("без токена клиент не создаётся"))
+    assert cd.main(["--only", "tinvest_bonds"]) == 0
+    st = _status(tmp_path)["tinvest_bonds"]
+    assert st["ok"] is False and st["skipped"] is True and not (tmp_path / "tinvest_bonds.json").exists()
+
+
+def test_collector_default_run_has_no_bonds_request(collector):
+    seen = []
+    api = collector["api"]
+    collector["api"] = lambda m, b: seen.append(m.split("/")[-1]) or api(m, b)
+    cd.main(["--only", "tinvest_shares", "tinvest_etfs"])
+    assert "Bonds" not in seen

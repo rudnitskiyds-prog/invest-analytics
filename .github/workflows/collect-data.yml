@@ -37,8 +37,9 @@ jobs:
 
       - name: Сертификаты Минцифры для T-Invest API
         # invest-public-api.tbank.ru подписан Russian Trusted Root CA (Минцифры), которого нет в certifi.
-        # Набор certifi + сертификаты Минцифры подключается только клиенту T-Invest (TINVEST_CA_BUNDLE);
-        # ISS и ЦБ работают со стандартным набором. Проверка TLS не отключается.
+        # Набор certifi + сертификаты Минцифры подключается клиентам T-Invest (TINVEST_CA_BUNDLE) и ISS
+        # (ISS_CA_BUNDLE, тот же файл: iss.moex.com с ~21.11.2026 тоже подписан УЦ Минцифры); ЦБ и RusETFs
+        # работают со стандартным набором. Проверка TLS не отключается. Шаг идёт раньше всех шагов сбора.
         # Источник — официальный адрес из инструкции Госуслуг (gosuslugi.ru/crt).
         continue-on-error: true
         env:
@@ -69,6 +70,7 @@ jobs:
           done
           cat "$(python -c 'import certifi; print(certifi.where())')" "$d/root.pem" "$d/sub.pem" > "$d/bundle.pem"
           echo "TINVEST_CA_BUNDLE=$d/bundle.pem" >> "$GITHUB_ENV"
+          echo "ISS_CA_BUNDLE=$d/bundle.pem" >> "$GITHUB_ENV"
 
       - name: Сбор
         # ЦБ собирается первым, затем RusETFs (без токена), status.json пишется после каждого источника; T-Invest ограничен
@@ -104,6 +106,22 @@ jobs:
         if: success() || failure()
         timeout-minutes: 5
         run: python -m scripts.collect_data --only screener_bonds
+
+      - name: Облигации с логотипом
+        # логотипы эмитентов облигаций (public/data/tinvest_bonds.json): T-Invest Bonds, только чтение.
+        # Без токена пропускается; сбой не трогает прежний файл
+        if: success() || failure()
+        timeout-minutes: 5
+        env:
+          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
+        run: python -m scripts.collect_data --only tinvest_bonds
+
+      - name: Индексы
+        # раздел «Индексы» (public/data/indices.json): ряды ISS и ЦБ, метрики, БПИФ-аналоги.
+        # Названия фондов — из tinvest_etfs.json. Сбой не трогает прежний файл
+        if: success() || failure()
+        timeout-minutes: 10
+        run: python -m scripts.collect_data --only indices
 
       - name: Сохранить изменения
         if: always()          # уже записанные файлы (ЦБ, status.json) коммитим и при сбое/таймауте сбора и рейтингов

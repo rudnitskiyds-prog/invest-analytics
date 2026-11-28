@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import os
 from functools import lru_cache
 from typing import Callable, Optional
@@ -76,7 +77,10 @@ def host_available(url: str, ttl: float = 600) -> bool:
     if time.time() - t < ttl:
         return ok
     try:
-        ok = requests.get(url, timeout=6).status_code < 500
+        ok = requests.get(url, timeout=6, verify=iss.ca_verify()).status_code < 500
+    except iss.ISSError as e:      # плохой путь в ISS_CA_BUNDLE / TINVEST_CA_BUNDLE
+        logging.warning("Проверка доступности %s: %s", host, e)
+        ok = False
     except Exception:  # noqa: BLE001
         ok = False
     _HOST_STATE[host] = (time.time(), ok)
