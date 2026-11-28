@@ -85,16 +85,18 @@ export const nextFrame = () => new Promise((r) => requestAnimationFrame(() => se
 
 // ---------------------------------------------------------------- CSV
 
-export function downloadCsv(filename, rows) {
-  const text = rows.map((r) => r.map(csvCell).join(";")).join("\r\n");
-  const blob = new Blob(["﻿" + text], { type: "text/csv;charset=utf-8" });
-  const a = h("a", { href: URL.createObjectURL(blob), download: filename });
+/** Скачать текст как файл. URL отзываем с запасом: Firefox/Safari начинают чтение blob позже клика (JSON на ~14 МБ). */
+export function downloadBlob(name, text, type) {
+  const a = h("a", { href: URL.createObjectURL(new Blob([text], { type })), download: name });
   document.body.append(a);
   a.click();
-  setTimeout(() => {
-    URL.revokeObjectURL(a.href);
-    a.remove();
-  }, 0);
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+}
+
+export function downloadCsv(filename, rows) {
+  const text = rows.map((r) => r.map(csvCell).join(";")).join("\r\n");
+  downloadBlob(filename, "﻿" + text, "text/csv;charset=utf-8");
 }
 
 function csvCell(v) {

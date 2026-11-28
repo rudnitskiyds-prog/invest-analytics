@@ -20,7 +20,9 @@ export const ROUTES = [
   { re: /^\/screener\/(stocks|funds|bonds)$/, page: "screener", panel: "screener", nav: "screener", title: "Скринеры" },
   { re: /^\/my$/, page: "myportfolio", panel: "my", nav: "my", title: "Мой портфель" },
   { re: /^\/my\/rebalance$/, page: "rebalance", panel: "rebalance", nav: "my", title: "Ребалансировки" },
-  { re: /^\/indices$/, page: "indices", panel: "indices", nav: "indices", title: "Индексы" },
+  { re: /^\/screener\/indices$/, page: "indices", panel: "indices", nav: "screener", title: "Скринеры" },
+  { re: /^\/indices$/, redirect: "/screener/indices", page: "indices", panel: "indices", nav: "screener", title: "Индексы" },
+  { re: /^\/npf(?:\/([a-z]+))?(?:\/([^/]+))?$/, page: "npf", panel: "npf", nav: "npf", title: "Пенсионная индустрия" },
   { re: /^\/portfolios\/lazy$/, page: "portfolios", panel: "portfolios", nav: "portfolios", title: "Портфели" },
   { re: /^\/portfolio\/([^/]+)$/, page: "portfolios", panel: "portfolios", nav: "portfolios", title: "Портфель" },
 ];
@@ -58,7 +60,8 @@ export function match(path) {
       if (r.page === "symbol") params.ticker = m[1].trim().toUpperCase();
       if (r.page === "stub") params.kind = path.slice(1);
       if (r.page === "screener") params.kind = m[1];
-      if (r.page === "portfolios") params.slug = m[1] ? decodeURIComponent(m[1]) : null;
+      if (r.page === "npf") { params.section = m[1] || null; params.id = m[2] || null; }
+      if (r.page === "portfolios") params.slug = m[1] || null;
       return { ...r, params, title: typeof r.title === "function" ? r.title(m) : r.title };
     }
   }

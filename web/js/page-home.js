@@ -73,7 +73,7 @@ function initIndexStrip() {
   const sec = h("section", { class: "home-block", id: "home-idx", "aria-labelledby": "h-home-idx", hidden: true },
     h("div", { class: "block-head" },
       h("h3", { id: "h-home-idx", class: "block-title" }, "Индексы ", h("span", { class: "hl" }, "рынка")),
-      h("a", { class: "more", href: href("/indices") }, "Все индексы →")),
+      h("a", { class: "more", href: href("/screener/indices") }, "Все индексы →")),
     list);
   $("#home-popular").closest("section")?.after(sec);
   loadIndices().then((d) => {

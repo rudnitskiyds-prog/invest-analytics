@@ -3,7 +3,7 @@
 
 import { fact, registerFacts } from "./assistant.js";
 import { colorOf, lineChart, renderChart, baseOptions, themeColors } from "./charts.js";
-import { $, errorNotice, h, notice, put, tableWrap } from "./dom.js";
+import { $, downloadBlob, errorNotice, h, notice, put, tableWrap } from "./dom.js";
 import { engine, requireEngine, UserError } from "./engine.js";
 import { globals, FREQ_LABELS } from "./fields.js";
 import { fmtDate, fmtNum, fmtPct, fmtRub, parseNum } from "./format.js";
@@ -75,13 +75,6 @@ export async function valuate(tx, extra = []) {
   const { rows, cash } = engine.ledger.valuation(tx, quotes);
   const missing = rows.filter((r) => !Number.isFinite(r.value) && r.qty > 1e-9).map((r) => r.secid).sort();
   return { held, quotes, rows, cash, missing };
-}
-
-export function downloadBlob(name, text, type) {
-  const a = h("a", { href: URL.createObjectURL(new Blob([text], { type })), download: name });
-  document.body.append(a);
-  a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
 }
 
 /** Последняя известная цифра выровнять на даты dates (протяжка вперёд). */

@@ -51,10 +51,14 @@ def _cards(page):
 
 # ================================================================ #/indices
 def test_indices_page_groups_and_cards(demo):
-    page = _open(demo, "#/indices")
+    page = _open(demo, "#/screener/indices")
     page.wait_for_selector("#indices-root .idx-card", timeout=TIMEOUT)
     assert demo.visible_panel() == ["panel-indices"]
-    assert page.locator("a[data-nav=indices][aria-current=page]").count() == 1
+    assert page.locator("a[data-nav=indices]").count() == 0, "пункта «Индексы» в верхнем меню больше нет"
+    assert page.locator("#nav-sub-btn[aria-current=page]").count() == 1
+    assert page.locator("#nav-screeners a[href='#/screener/indices']").inner_text() == "Индексы"
+    tabs = page.evaluate("() => [...document.querySelectorAll('#indices-root .scr-tab')].map((a) => [a.textContent, a.getAttribute('aria-current')])")
+    assert tabs == [["Акции", None], ["Фонды", None], ["Облигации", None], ["Индексы", "page"]], tabs
     assert page.locator("#indices-root h2").inner_text() == "Индексы"
     assert INDICES["as_of"][:4] in page.locator("#indices-root .idx-meta").inner_text() or "Данные на" in page.locator("#indices-root .idx-meta").inner_text()
     groups = page.evaluate("() => [...document.querySelectorAll('#indices-root .idx-group')].map((g) => g.getAttribute('aria-label'))")
@@ -78,8 +82,16 @@ def test_indices_page_groups_and_cards(demo):
     demo.check_clean()
 
 
-def test_indices_card_opens_symbol(demo):
+def test_old_indices_route_redirects(demo):
     page = _open(demo, "#/indices")
+    page.wait_for_selector("#indices-root .idx-card", timeout=TIMEOUT)
+    assert page.evaluate("() => location.hash") == "#/screener/indices"
+    assert demo.visible_panel() == ["panel-indices"]
+    demo.check_clean()
+
+
+def test_indices_card_opens_symbol(demo):
+    page = _open(demo, "#/screener/indices")
     page.wait_for_selector("#indices-root .idx-card", timeout=TIMEOUT)
     key = ITEMS[0]["key"]
     page.locator(f"#indices-root a.idx-link[href='#/symbol/{quote(key, safe='')}']").click()
@@ -89,7 +101,7 @@ def test_indices_card_opens_symbol(demo):
 
 
 def test_indices_sort_toggle_changes_order(demo):
-    page = _open(demo, "#/indices")
+    page = _open(demo, "#/screener/indices")
     page.wait_for_selector("#indices-root .idx-card", timeout=TIMEOUT)
     keys = lambda: [unquote(c["href"].removeprefix("#/symbol/")) for c in _cards(page)]  # noqa: E731
     pressed = lambda: page.evaluate("() => document.querySelector('.idx-sort-btn[aria-pressed=true]').textContent")  # noqa: E731
@@ -114,7 +126,7 @@ def test_indices_sort_toggle_changes_order(demo):
 
 def test_indices_empty_state_when_file_missing(demo):
     _json_route(demo.page, "indices", None, status=404)
-    page = _open(demo, "#/indices")
+    page = _open(demo, "#/screener/indices")
     page.wait_for_selector("#indices-root .notice", timeout=TIMEOUT)
     assert page.locator("#indices-root .idx-card").count() == 0
     assert "Данных по индексам пока нет" in page.locator("#indices-root").inner_text()
@@ -124,7 +136,7 @@ def test_indices_empty_state_when_file_missing(demo):
 
 def test_indices_empty_items_gives_empty_state(demo):
     _json_route(demo.page, "indices", {"updated": "x", "source": "s", "as_of": "2025-12-31", "items": []})
-    page = _open(demo, "#/indices")
+    page = _open(demo, "#/screener/indices")
     page.wait_for_selector("#indices-root .notice", timeout=TIMEOUT)
     demo.check_clean()
 
@@ -133,7 +145,7 @@ def test_indices_item_with_nulls_renders_dashes(demo):
     it = {**ITEMS[0], "ret_1y": None, "cagr_5y": None, "cagr_10y": None, "max_drawdown": None, "volatility_1y": None,
           "etf": [], "series": [["2025-01-31", 100]]}
     _json_route(demo.page, "indices", {**INDICES, "items": [it]})
-    page = _open(demo, "#/indices")
+    page = _open(demo, "#/screener/indices")
     page.wait_for_selector("#indices-root .idx-card", timeout=TIMEOUT)
     text = page.locator("#indices-root .idx-card").inner_text()
     assert "—" in text and "NaN" not in text and "undefined" not in text and "null" not in text
@@ -153,11 +165,11 @@ def test_home_indices_strip(demo):
     assert page.locator("#home-indices svg.idx-spark").count() == n
     assert page.locator("#home-indices .idx-top img").count() == 0
     more = page.locator("#home-idx a.more")
-    assert more.inner_text().startswith("Все индексы") and more.get_attribute("href") == "#/indices"
+    assert more.inner_text().startswith("Все индексы") and more.get_attribute("href") == "#/screener/indices"
     # полоса — после «Популярных бумаг»
     assert page.evaluate("() => document.querySelector('#home-popular').closest('section').nextElementSibling.id") == "home-idx"
     more.click()
-    page.wait_for_function("() => location.hash === '#/indices' && !document.querySelector('#panel-indices').hidden", timeout=TIMEOUT)
+    page.wait_for_function("() => location.hash === '#/screener/indices' && !document.querySelector('#panel-indices').hidden", timeout=TIMEOUT)
     assert demo.visible_panel() == ["panel-indices"]
     demo.check_clean()
 
@@ -386,7 +398,7 @@ def test_home_headings_left_aligned(browser, server, width):
 def test_indices_no_horizontal_scroll_375(browser, server):
     s = _layout(browser, server, 375)
     try:
-        s.goto("?demo=1", "#/indices")
+        s.goto("?demo=1", "#/screener/indices")
         s.page.wait_for_selector("#indices-root .idx-card", timeout=TIMEOUT)
         assert s.page.evaluate("() => document.documentElement.scrollWidth <= document.documentElement.clientWidth"), \
             s.page.evaluate("() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]")
@@ -400,7 +412,7 @@ def test_indices_no_horizontal_scroll_375(browser, server):
 
 
 def test_indices_card_labels_and_notes(demo):
-    page = _open(demo, "#/indices")
+    page = _open(demo, "#/screener/indices")
     page.wait_for_selector("#indices-root .idx-card", timeout=TIMEOUT)
     assert page.locator("#indices-root").inner_text().count("Как повторить") == 0
     assert page.locator(".idx-repeat-lbl").first.inner_text() == "Похожие БПИФ"
@@ -413,7 +425,7 @@ def test_indices_card_labels_and_notes(demo):
 
 
 def test_indices_sort_button_keeps_focus(demo):
-    page = _open(demo, "#/indices")
+    page = _open(demo, "#/screener/indices")
     page.wait_for_selector("#indices-root .idx-card", timeout=TIMEOUT)
     btn = page.get_by_role("button", name="По доходности за год")
     btn.focus()

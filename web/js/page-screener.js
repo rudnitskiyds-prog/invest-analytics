@@ -11,6 +11,11 @@ import { href, parseHash, setQuery, symbolHref } from "./router.js";
 import { filterRows, loadScreener, sortRows } from "../lib/screener.js";
 
 const KINDS = { stocks: "Акции", funds: "Фонды", bonds: "Облигации" };
+const TABS = { ...KINDS, indices: "Индексы" };
+
+/** Переключатель вкладок скринеров (общий для таблиц и страницы индексов). */
+export const screenerTabs = (kind) => h("nav", { class: "scr-tabs", "aria-label": "Вид бумаг" }, Object.entries(TABS).map(([k, label]) =>
+  h("a", { href: href(`/screener/${k}`), class: "scr-tab", "aria-current": k === kind ? "page" : null }, label)));
 const PAGE_SIZE = 50;
 
 /** Ключ колонки → термин глоссария (подсказка «?»), если ключ не совпадает с термином. */
@@ -146,8 +151,7 @@ async function render(kind) {
   put(root,
     h("div", { class: "panel-head" },
       h("h2", {}, "Скринеры"),
-      h("nav", { class: "scr-tabs", "aria-label": "Вид бумаг" }, Object.entries(KINDS).map(([k, label]) =>
-        h("a", { href: href(`/screener/${k}`), class: "scr-tab", "aria-current": k === kind ? "page" : null }, label)))),
+      screenerTabs(kind)),
     body);
   let data;
   try {
