@@ -143,6 +143,6 @@ def handler(event, context):
         return done(200, {"answer": REFUSAL, "facts_used": [], "unverified_numbers": [], "label": LABEL},
                     refused=True, content_filter=True)
 
-    facts_used, unverified = verify_numbers(answer, screen["facts"])
+    facts_used, unverified = verify_numbers(answer, screen["facts"], question)
     return done(200, {"answer": answer, "facts_used": facts_used, "unverified_numbers": unverified, "label": LABEL},
                 answer_len=len(answer), unverified=len(unverified))

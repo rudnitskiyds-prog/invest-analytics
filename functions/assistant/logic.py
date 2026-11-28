@@ -200,11 +200,13 @@ def _in_labels(raw: str, labels: str) -> bool:
     return bool(re.search(r"(?<![\d.,])" + re.escape(raw) + r"(?!\d)", labels))
 
 
-def verify_numbers(answer: str, facts: list) -> tuple:
+def verify_numbers(answer: str, facts: list, question: str = "") -> tuple:
     """-> (facts_used, unverified_numbers). Допуск — половина последнего разряда числа в ответе.
+    Числа из вопроса пользователя (модель их повторяет: «потеряю 220 000 ₽?») не выдумка и не подсвечиваются.
     Предложения с пометкой «условно» (иллюстративные примеры по промпту) не сверяются."""
     cands = [(f.get("id", ""), _candidates(f)) for f in facts]
     labels = re.sub(_SPACES, " ", "\n".join(str(f.get("label", "")) for f in facts))
+    asked = [v for _, v, _, _ in extract_numbers(question)]
     used, unverified = [], []
     for sentence in _SENTENCE.split(_LEGAL.sub(" ", answer or "")):  # «ст. 6.1» до разбиения на предложения
         if "условн" in sentence.lower():
@@ -218,7 +220,7 @@ def verify_numbers(answer: str, facts: list) -> tuple:
                     if any(abs(value - c) <= tol or (fall and c < 0 and abs(value + c) <= tol) for c in vals)]
             if hits:
                 used.extend(h for h in hits if h and h not in used)
-            elif _in_labels(raw, labels):
+            elif _in_labels(raw, labels) or any(abs(value - a) <= tol for a in asked):
                 continue
             elif raw not in unverified:
                 unverified.append(raw)
