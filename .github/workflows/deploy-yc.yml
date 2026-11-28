@@ -123,35 +123,10 @@ jobs:
             s3 sync "$d" "s3://$YC_BUCKET/$d" --delete --size-only --cache-control "$short"
           done
 
-      - name: Сертификат НУЦ Минцифры для GigaChat
-        if: steps.cfg.outputs.enabled == 'true'
-        # те же официальные адреса и отпечатки, что в collect-data.yml (сверить: gosuslugi.ru/crt).
-        # Без сертификата ассистент не подключится к GigaChat — при несовпадении выкладка падает.
-        env:
-          RU_ROOT_SHA256: "D26D2D0231B7C39F92CC738512BA54103519E4405D68B5BD703E9788CA8ECF31"
-          RU_SUB_SHA256: "BBBDE2103E790B999EC62BD03CF625A5A2E7C316E10AFE6A490EEDEAD8B3FD9B"
-        run: |
-          set -euo pipefail
-          d="$RUNNER_TEMP/ru-ca"; mkdir -p "$d"
-          get() {   # $1 — имя, $2 — URL, $3 — ожидаемый отпечаток; файл может быть PEM или DER
-            curl -fsS -m 30 --retry 2 -o "$d/$1.raw" "$2"
-            openssl x509 -in "$d/$1.raw" -out "$d/$1.pem" 2>/dev/null \
-              || openssl x509 -inform DER -in "$d/$1.raw" -out "$d/$1.pem"
-            fp=$(openssl x509 -in "$d/$1.pem" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d :)
-            [ "$fp" = "$3" ] || { echo "::error::Отпечаток сертификата $1 ($fp) не совпадает с закреплённым"; exit 1; }
-          }
-          get root https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt "$RU_ROOT_SHA256"
-          get sub  https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt  "$RU_SUB_SHA256"
-          openssl verify -CAfile "$d/root.pem" "$d/root.pem" "$d/sub.pem"
-          # у файлов Минцифры окончания строк CRLF и нет перевода строки в конце: простой cat склеивает
-          # «END CERTIFICATE-----» с «-----BEGIN» и пакет не читается (все запросы к GigaChat падали на TLS)
-          for f in root sub; do tr -d '\r' < "$d/$f.pem"; echo; done > functions/assistant/russian_trusted_root_ca.pem
-          [ "$(grep -c '^-----BEGIN CERTIFICATE-----$' functions/assistant/russian_trusted_root_ca.pem)" = 2 ] \
-            || { echo "::error::Пакет сертификатов Минцифры собран неверно"; exit 1; }
-          openssl verify -CAfile functions/assistant/russian_trusted_root_ca.pem "$d/sub.pem"
-
       - name: Cloud Functions
         if: steps.cfg.outputs.enabled == 'true'
+        env:
+          YC_FOLDER_ID: ${{ secrets.YC_FOLDER_ID }}
         run: |
           set -euo pipefail
           fid() {   # id функции по имени; создаёт, если её ещё нет
@@ -169,8 +144,7 @@ jobs:
           ASSISTANT_FUNCTION_ID=$(fid assistant)
           AUTH_FUNCTION_ID=$(fid auth)
           deploy assistant \
-            --environment GIGACHAT_CA_BUNDLE=russian_trusted_root_ca.pem \
-            --secret "environment-variable=GIGACHAT_AUTH_KEY,id=$YC_LOCKBOX_SECRET_ID,key=GIGACHAT_AUTH_KEY"
+            --environment "YC_FOLDER_ID=${YC_FOLDER_ID},YANDEX_MODEL=yandexgpt"
           deploy auth \
             --secret "environment-variable=SITE_USERS,id=$YC_LOCKBOX_SECRET_ID,key=SITE_USERS"
           echo "ASSISTANT_FUNCTION_ID=$ASSISTANT_FUNCTION_ID" >> "$GITHUB_ENV"

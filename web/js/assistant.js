@@ -1,5 +1,5 @@
 // Ассистент «Спросить ИИ»: плавающая кнопка и диалог. Ответ даёт Cloud Function `assistant` (web/CONTRACT.md,
-// раздел «Ассистент GigaChat…»). Числа модель берёт только из фактов экрана — их отдают страницы через registerFacts:
+// раздел «Ассистент: YandexGPT…»). Числа модель берёт только из фактов экрана — их отдают страницы через registerFacts:
 // уже посчитанные интерфейсом значения, без пересчёта.
 
 import { ASSISTANT_URL } from "./config.js";
@@ -76,7 +76,7 @@ export function initAssistant() {
   const examples = h("div", { class: "ai-examples", role: "group", "aria-label": "Примеры вопросов" });
   const form = h("form", { class: "ai-form" },
     h("label", { for: "ai-q" }, "Ваш вопрос"), field,
-    h("p", { id: "ai-pd", class: "hint ai-pd" }, "Не вводите личные данные: паспорт, телефон, номера счетов — вопрос передаётся в GigaChat."),
+    h("p", { id: "ai-pd", class: "hint ai-pd" }, "Не вводите личные данные: паспорт, телефон, номера счетов — вопрос и показанные на экране цифры передаются в YandexGPT (Yandex Cloud)."),
     h("div", { class: "ai-row" }, count, send));
   const dlg = h("dialog", { class: "ai-dialog", "aria-labelledby": "ai-title", "aria-describedby": "ai-disc" },
     h("div", { class: "ai-head" },

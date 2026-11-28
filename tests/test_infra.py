@@ -148,7 +148,7 @@ SECRET_PATTERNS = [
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"),            # токен GitHub
     re.compile(r"\b[0-9a-f]{64}\b"),                        # sha256 (например, хэш пароля в SITE_USERS)
     re.compile(r"(?i)(auth_key|password|secret|token|api_key)\s*[:=]\s*[\"'][A-Za-z0-9+/=_-]{16,}[\"']"),
-    re.compile(r"(?i)Basic [A-Za-z0-9+/]{20,}={0,2}"),      # готовый ключ GigaChat / логин:пароль в base64
+    re.compile(r"(?i)Basic [A-Za-z0-9+/]{20,}={0,2}"),      # готовый ключ доступа / логин:пароль в base64
 ]
 # закреплённые отпечатки публичных сертификатов Минцифры — не секрет
 ALLOWED = {"D26D2D0231B7C39F92CC738512BA54103519E4405D68B5BD703E9788CA8ECF31",
@@ -220,18 +220,19 @@ def test_setup_sh_site_users_accepted_by_auth(monkeypatch):
     assert auth.check_basic(hdr) == "ivan"
 
 
-def test_deploy_ca_bundle_survives_crlf_files_without_final_newline(tmp_path):
-    """Файлы Минцифры — CRLF и без перевода строки в конце; склейка не должна слеплять сертификаты."""
-    wf = (ROOT / ".github" / "workflows" / "deploy-yc.yml").read_text(encoding="utf-8")
-    line = re.search(r"^\s*(for f in root sub; do .*? > (\S+))$", wf, re.M)
-    assert line, "в workflow нет склейки сертификатов"
-    for name in ("root", "sub"):
-        (tmp_path / f"{name}.pem").write_bytes(
-            b"-----BEGIN CERTIFICATE-----\r\nQUJD\r\n-----END CERTIFICATE-----")  # без \n в конце
-    cmd = line.group(1).replace("$d", str(tmp_path)).replace(line.group(2), str(tmp_path / "out.pem"))
-    subprocess.run(["bash", "-c", cmd], check=True)
-    out = (tmp_path / "out.pem").read_text()
-    assert "\r" not in out
-    assert out.count("\n-----BEGIN CERTIFICATE-----\n") == 1 and out.startswith("-----BEGIN CERTIFICATE-----\n")
-    ok = {"-----BEGIN CERTIFICATE-----", "-----END CERTIFICATE-----", "QUJD", ""}
-    assert set(out.split("\n")) <= ok, out  # каждая метка на своей строке, ничего не слиплось
+def test_deploy_assistant_uses_yandexgpt_env_no_gigachat():
+    wf = WORKFLOW.read_text(encoding="utf-8")
+    assert not re.search(r"(?i)gigachat|минцифр|russian_trusted|ca_bundle", wf)
+    m = re.search(r"^\s*deploy assistant \\\n(.*)$", wf, re.M)
+    assert m, "нет вызова deploy assistant"
+    assert "YC_FOLDER_ID=${YC_FOLDER_ID}" in m.group(1) and "YANDEX_MODEL=" in m.group(1)
+    assert "--secret" not in m.group(1), "у assistant больше нет секретов Lockbox"
+    assert "--execution-timeout 30s" in wf
+
+
+def test_setup_sh_yandexgpt_role_no_gigachat_key():
+    text = (ROOT / "infra" / "setup.sh").read_text(encoding="utf-8")
+    assert not re.search(r"(?i)gigachat", text)
+    assert re.search(r'^folder ai\.languageModels\.user "\$RUNTIME_ID"', text, re.M)
+    readme = (ROOT / "infra" / "README.md").read_text(encoding="utf-8")
+    assert "ai.languageModels.user" in readme and "ia-runtime" in readme

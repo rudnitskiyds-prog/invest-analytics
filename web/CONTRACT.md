@@ -400,7 +400,9 @@ public_data.symbol_stats() -> dict | None                     # public/data/symb
   `ttm_value, ttm_yield, by_year, by_month, growth_streak, payouts_per_year, upcoming`), только акции.
 * `ranking.next_weekday` — публичное имя (`_next_weekday` оставлен алиасом).
 
-## Ассистент GigaChat и выкладка в Yandex Cloud (ветка `feature/yc-gigachat`)
+## Ассистент и выкладка в Yandex Cloud (исторически — GigaChat; теперь YandexGPT, см. ниже) (ветка `feature/yc-gigachat`)
+
+> ⚠ Разделы про GigaChat (OAuth, сертификат Минцифры, `GIGACHAT_*`) устарели — вызов модели описан в разделе «Ассистент: YandexGPT вместо GigaChat» в конце файла.
 
 Архитектура (вариант A): всё в Yandex Cloud, сайт закрыт логином и паролем.
 
@@ -605,3 +607,26 @@ public_data.symbol_stats() -> dict | None                     # public/data/symb
 * Коэффициенты эффективности не отображаются — исправить (данные `report.metrics` / `benchmark_metrics`).
 * Блок «Просадки»: аккуратные KPI-плашки в одну сетку (глубина, дата, длительность, восстановление), без наездов.
 * Графики роста и просадок — линия без заливки.
+
+## Ассистент: YandexGPT вместо GigaChat (ветка `feature/yandexgpt`)
+
+Причина: из Yandex Cloud сервер чата GigaChat не отвечает ни на какие запросы (проверено `X-Diag`: OAuth работает, models/chat/chat_stream — ReadTimeout), с компьютера владельца — отвечает за ~1 с. YandexGPT живёт внутри того же облака.
+
+Контракт `POST /api/assistant` (запрос/ответ, фильтр рекомендаций, сверка чисел, лимиты, журнал без персональных данных) **не меняется** — меняется только вызов модели в `functions/assistant/`.
+
+### Вызов модели (зона `backend`)
+* `POST https://llm.api.cloud.yandex.net/foundationModels/v1/completion`, заголовки: `Authorization: Bearer <IAM-токен>`, `x-folder-id: <folder_id>`, `Content-Type: application/json`.
+* Тело: `{"modelUri": "gpt://<folder_id>/<модель>/latest", "completionOptions": {"stream": false, "temperature": 0.2, "maxTokens": "500"}, "messages": [{"role": "system", "text": …}, {"role": "user", "text": …}]}`.
+  Модель — env `YANDEX_MODEL` (по умолчанию `yandexgpt`; `yandexgpt-lite` — дешевле и быстрее).
+* Ответ: `result.alternatives[0].message.text`; статус альтернативы `ALTERNATIVE_STATUS_FINAL` (при `CONTENT_FILTER` — вежливое сообщение, 502 не нужен: ответ 200 с отказом `REFUSAL`).
+* IAM-токен — из `context.token["access_token"]` (у функции есть сервисный аккаунт `ia-runtime`; `handler(event, context)` уже получает context). Ни ключа модели, ни OAuth, ни сертификата Минцифры больше нет.
+* `folder_id` — env `YC_FOLDER_ID` (идентификатор, не секрет), задаётся при выкладке.
+* Роль `ai.languageModels.user` у `ia-runtime` на каталог.
+* Ошибки: 401/403 от API → 502 «Нет доступа к YandexGPT (роль сервисного аккаунта)»; 429 → 502 «Лимит запросов YandexGPT, попробуйте позже»; прочее → общий 502. `detail` в ответе 502 (шаг и код) остаётся.
+* Формат сообщений: `build_messages` отдаёт `[{"role","text"}]` (system + один user: факты экрана и вопрос — как сейчас).
+* `LABEL` = «Ответ ИИ (YandexGPT). Не является индивидуальной инвестиционной рекомендацией.»
+* Удалить: OAuth, кэш токена Сбера, `GIGACHAT_*`, `verify=` с CA-пакетом, режим `X-Diag` (диагностика больше не нужна).
+
+### Выкладка (зона `api`) и `infra/` (зона `backend`)
+* Из `deploy-yc.yml` убрать шаг сертификата Минцифры и `--environment GIGACHAT_CA_BUNDLE`, `--secret GIGACHAT_AUTH_KEY`; добавить `--environment YC_FOLDER_ID=$YC_FOLDER_ID,YANDEX_MODEL=yandexgpt` для `assistant`. Таймаут функции остаётся 30 с.
+* `setup.sh`/`README`: больше не спрашивать ключ GigaChat; роль `ai.languageModels.user` для `ia-runtime` на каталог; секрет Lockbox содержит только `SITE_USERS` (ключ `GIGACHAT_AUTH_KEY` в существующем секрете остаётся неиспользованным — его можно удалить в консоли).

@@ -31,7 +31,7 @@ paths:
 
   /api/assistant:
     post:
-      summary: Ассистент GigaChat
+      summary: Ассистент YandexGPT
       security:
         - siteAuth: []
       x-yc-apigateway-integration:

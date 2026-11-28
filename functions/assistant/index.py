@@ -1,9 +1,8 @@
-"""Cloud Function `assistant`: POST /api/assistant через API Gateway -> GigaChat. Контракт — web/CONTRACT.md."""
+"""Cloud Function `assistant`: POST /api/assistant через API Gateway -> YandexGPT. Контракт — web/CONTRACT.md."""
 import base64
 import json
 import os
 import time
-import uuid
 from collections import defaultdict, deque
 from pathlib import Path
 
@@ -12,10 +11,8 @@ import requests
 from logic import (FALLBACK_SYSTEM_PROMPT, LABEL, REFUSAL, BadRequest, build_messages,
                    is_advice_request, parse_request, verify_numbers)
 
-OAUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
-CHAT_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
-TIMEOUT = (5, 8)        # OAuth: подключение, чтение
-CHAT_TIMEOUT = (5, 22)  # чат: GigaChat отвечает дольше 12 с (проверено прямым вызовом); токен обычно в кэше, итого < 30 с функции
+CHAT_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+CHAT_TIMEOUT = (3, 20)  # подключение, чтение; таймаут функции — 30 с, лимит шлюза ~35 с: нужен запас на запуск и разбор
 MAX_TOKENS = 500
 
 
@@ -30,12 +27,11 @@ def _load_prompt() -> str:
 SYSTEM_PROMPT = _load_prompt()
 
 # Состояние экземпляра функции (живёт между вызовами одного экземпляра).
-_token = {"value": None, "expires_at": 0.0}  # expires_at — секунды
 _hits = defaultdict(deque)
 
 
 class Upstream(Exception):
-    """GigaChat недоступен или ответил ошибкой; текст — для журнала («chat: 402»), status — HTTP-код GigaChat."""
+    """YandexGPT недоступен или ответил ошибкой; текст — для журнала («chat: 429»), status — HTTP-код ответа."""
 
     def __init__(self, stage: str, reason, status: int = 0):
         super().__init__(f"{stage}: {reason}")
@@ -43,15 +39,9 @@ class Upstream(Exception):
 
 
 def _reason(e: Exception):
-    """HTTP-код ответа GigaChat, если он есть, иначе имя исключения."""
+    """HTTP-код ответа YandexGPT, если он есть, иначе имя исключения."""
     code = getattr(getattr(e, "response", None), "status_code", None)
     return (code, code) if code else (type(e).__name__, 0)
-
-
-def _verify():
-    # Относительный путь (как кладёт workflow) — от папки функции, а не от текущего каталога.
-    ca = os.environ.get("GIGACHAT_CA_BUNDLE")
-    return str(Path(__file__).parent / ca) if ca else True
 
 
 def _response(status: int, payload: dict) -> dict:
@@ -76,80 +66,36 @@ def _rate_limited(ip: str, now: float) -> bool:
     return False
 
 
-def _get_token() -> str:
-    if _token["value"] and time.time() < _token["expires_at"] - 60:
-        return _token["value"]
-    key = os.environ.get("GIGACHAT_AUTH_KEY")
-    if not key:
-        raise Upstream("oauth", "GIGACHAT_AUTH_KEY не задан")
+def _chat(messages: list, context):
+    """-> текст ответа или None, если сработал фильтр содержимого."""
+    tok = getattr(context, "token", None)
+    token = tok.get("access_token") if isinstance(tok, dict) else None
+    folder = os.environ.get("YC_FOLDER_ID")
+    if not token:
+        raise Upstream("auth", "нет IAM-токена в context (сервисный аккаунт функции)", 403)
+    if not folder:
+        raise Upstream("auth", "YC_FOLDER_ID не задан", 403)
+    payload = {"modelUri": f"gpt://{folder}/{os.environ.get('YANDEX_MODEL', 'yandexgpt')}/latest",
+               "completionOptions": {"stream": False, "temperature": 0.2, "maxTokens": str(MAX_TOKENS)},
+               "messages": messages}
     try:
-        r = requests.post(
-            OAUTH_URL,
-            headers={"Authorization": f"Basic {key}", "RqUID": str(uuid.uuid4()),
-                     "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
-            data={"scope": os.environ.get("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")},
-            timeout=TIMEOUT, verify=_verify(),
-        )
+        r = requests.post(CHAT_URL, json=payload, timeout=CHAT_TIMEOUT,
+                          headers={"Authorization": f"Bearer {token}", "x-folder-id": folder})
         r.raise_for_status()
-        data = r.json()
-        _token["value"] = data["access_token"]
-        _token["expires_at"] = data["expires_at"] / 1000  # GigaChat отдаёт миллисекунды
-    except (requests.RequestException, ValueError, KeyError) as e:
-        raise Upstream("oauth", *_reason(e)) from None
-    return _token["value"]
-
-
-def _chat(messages: list) -> str:
-    payload = {"model": os.environ.get("GIGACHAT_MODEL", "GigaChat"), "messages": messages,
-               "max_tokens": MAX_TOKENS, "temperature": 0.2}
-    for attempt in range(2):
-        token = _get_token()  # Upstream("oauth", …) уходит наверх как есть
-        try:
-            r = requests.post(CHAT_URL, json=payload, timeout=CHAT_TIMEOUT, verify=_verify(),
-                              headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
-            if r.status_code == 401 and attempt == 0:  # токен отозван раньше срока — берём новый
-                _token["value"] = None
-                continue
-            r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"].strip()
-        except (requests.RequestException, ValueError, KeyError, IndexError, AttributeError) as e:
-            raise Upstream("chat", *_reason(e)) from None
-    raise Upstream("chat", 401, 401)
+        alt = r.json()["result"]["alternatives"][0]
+        if "CONTENT_FILTER" in str(alt.get("status", "")):
+            return None
+        text = alt["message"]["text"].strip()
+        if not text:  # пустой ответ (например, обрезан без текста) — не отдаём пользователю как успех
+            raise Upstream("chat", "empty")
+        return text
+    except (requests.RequestException, ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
+        raise Upstream("chat", *_reason(e)) from None
 
 
 def _log(**fields):
     # Только маршрут, длины, код и время — без текста вопроса, IP и ответа.
     print(json.dumps(fields, ensure_ascii=False))
-
-
-def _diag() -> dict:
-    """Проверки канала до GigaChat из облака: только коды и время, без ключей и текста ответов.
-    ponytail: временный режим для диагностики ReadTimeout; убрать, когда причина найдена."""
-    out = {}
-    t = time.time()
-    try:
-        token = _get_token()
-        out["oauth"] = f"ok {time.time() - t:.1f}s"
-    except Upstream as e:
-        return {"oauth": f"{e} {time.time() - t:.1f}s"}
-    hdr = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    tiny = {"model": os.environ.get("GIGACHAT_MODEL", "GigaChat"),
-            "messages": [{"role": "user", "content": "Ответь одним словом: да"}], "max_tokens": 5}
-    probes = [
-        ("models", "GET", CHAT_URL.rsplit("/chat/", 1)[0] + "/models", None, False),
-        ("chat", "POST", CHAT_URL, tiny, False),
-        ("chat_stream", "POST", CHAT_URL, {**tiny, "stream": True}, True),
-    ]
-    for name, method, url, body, stream in probes:
-        t = time.time()
-        try:
-            r = requests.request(method, url, json=body, headers=hdr, timeout=(5, 7), verify=_verify(), stream=stream)
-            first = next(r.iter_content(64), b"") if stream else r.content[:0]
-            out[name] = f"{r.status_code} {time.time() - t:.1f}s" + (f" first_bytes={len(first)}" if stream else "")
-            r.close()
-        except requests.RequestException as e:
-            out[name] = f"{type(e).__name__} {time.time() - t:.1f}s"
-    return out
 
 
 def handler(event, context):
@@ -164,8 +110,6 @@ def handler(event, context):
     ip = ((event.get("requestContext") or {}).get("identity") or {}).get("sourceIp") or "unknown"
     if _rate_limited(ip, started):
         return done(429, {"error": "Слишком много вопросов подряд. Подождите минуту и попробуйте снова."})
-    if {k.lower(): v for k, v in (event.get("headers") or {}).items()}.get("x-diag") == "1":
-        return done(200, {"diag": _diag()}, diag=True)
 
     ctype = next((v for k, v in (event.get("headers") or {}).items() if k.lower() == "content-type"), "")
     if not str(ctype).lower().startswith("application/json"):
@@ -188,12 +132,16 @@ def handler(event, context):
                     refused=True)
 
     try:
-        answer = _chat(build_messages(SYSTEM_PROMPT, question, screen))
+        answer = _chat(build_messages(SYSTEM_PROMPT, question, screen), context)
     except Upstream as e:
-        text = ("Бесплатный лимит GigaChat исчерпан. Попробуйте позже." if e.status == 402
-                else "Ассистент временно недоступен: GigaChat не отвечает. Попробуйте позже.")
-        # detail — шаг и код/имя ошибки («oauth: 401», «chat: SSLError»), без секретов: нужен, пока нет журналов
+        text = ("Нет доступа к YandexGPT (роль сервисного аккаунта)." if e.status in (401, 403)
+                else "Лимит запросов YandexGPT, попробуйте позже." if e.status == 429
+                else "Ассистент временно недоступен: YandexGPT не отвечает. Попробуйте позже.")
+        # detail — шаг и код/имя ошибки («auth: …», «chat: 429», «chat: ReadTimeout»), без секретов
         return done(502, {"error": text, "detail": str(e)}, upstream=str(e))
+    if answer is None:  # CONTENT_FILTER
+        return done(200, {"answer": REFUSAL, "facts_used": [], "unverified_numbers": [], "label": LABEL},
+                    refused=True, content_filter=True)
 
     facts_used, unverified = verify_numbers(answer, screen["facts"])
     return done(200, {"answer": answer, "facts_used": facts_used, "unverified_numbers": unverified, "label": LABEL},

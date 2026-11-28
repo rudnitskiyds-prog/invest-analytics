@@ -1,5 +1,5 @@
 """Чистые функции ассистента (без сети): валидация запроса, фильтр рекомендаций, сборка сообщений,
-извлечение и сверка чисел ответа с фактами экрана. Тестируются без GigaChat."""
+извлечение и сверка чисел ответа с фактами экрана. Тестируются без сети."""
 import json
 import re
 
@@ -7,7 +7,7 @@ MAX_QUESTION = 1000
 MAX_FACTS = 60
 MAX_FIELD = 300
 
-LABEL = "Ответ ИИ (GigaChat). Не является индивидуальной инвестиционной рекомендацией."
+LABEL = "Ответ ИИ (YandexGPT). Не является индивидуальной инвестиционной рекомендацией."
 
 REFUSAL = (
     "Я не даю индивидуальных инвестиционных рекомендаций: не подсказываю, что купить, продать "
@@ -108,7 +108,6 @@ def parse_request(body) -> tuple:
 
 def build_messages(system_prompt: str, question: str, screen: dict) -> list:
     """Системный промпт и одно сообщение пользователя: факты экрана (строка JSON), затем вопрос.
-    Два сообщения user подряд GigaChat обрабатывал ~17 с вместо ~1 с — поэтому одно.
     Источники перечисляются один раз (`sources`), у факта — индекс источника: экономия токенов."""
     sources, facts = [], []
     for f in screen["facts"]:
@@ -125,8 +124,8 @@ def build_messages(system_prompt: str, question: str, screen: dict) -> list:
         + json.dumps({"sources": sources, "facts": facts}, ensure_ascii=False)
     )
     return [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"{facts_msg}\n\nВопрос: {question}"},
+        {"role": "system", "text": system_prompt},
+        {"role": "user", "text": f"{facts_msg}\n\nВопрос: {question}"},
     ]
 
 

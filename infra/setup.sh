@@ -7,7 +7,6 @@
 #   RUNTIME_SA_NAME     аккаунт функций и шлюза (по умолчанию ia-runtime)
 #   SECRET_NAME         секрет Lockbox (по умолчанию invest-analytics)
 #   GATEWAY_NAME        API Gateway (по умолчанию invest-analytics)
-#   GIGACHAT_AUTH_KEY   ключ авторизации GigaChat — если не задан, спросим (ввод скрыт)
 #   SITE_USERS          готовая строка логин:соль:хэш,... — если не задана, спросим логин и пароль (ввод скрыт)
 # Ключи и пароли аргументами командной строки не принимаются и в аргументы процессов не попадают.
 set -euo pipefail
@@ -72,10 +71,6 @@ fi
 
 # --- секрет Lockbox ------------------------------------------------------------------------
 read_secrets() {
-  if [ -z "${GIGACHAT_AUTH_KEY:-}" ]; then
-    read -r -s -p "    Ключ авторизации GigaChat (Authorization key, ввод скрыт): " GIGACHAT_AUTH_KEY; echo
-  fi
-  [ -n "$GIGACHAT_AUTH_KEY" ] || die "пустой ключ GigaChat"
   if [ -z "${SITE_USERS:-}" ]; then
     local login pw pw2
     read -r -p "    Логин для входа на сайт: " login
@@ -95,13 +90,13 @@ read_secrets() {
 
 write_payload() {   # JSON во временный файл (права 600); значения передаём через окружение python
   ( umask 077
-    GK="$GIGACHAT_AUTH_KEY" SU="$SITE_USERS" python3 -c 'import json,os;print(json.dumps([{"key":"GIGACHAT_AUTH_KEY","text_value":os.environ["GK"]},{"key":"SITE_USERS","text_value":os.environ["SU"]}]))' > "$TMP/payload.json" )
+    SU="$SITE_USERS" python3 -c 'import json,os;print(json.dumps([{"key":"SITE_USERS","text_value":os.environ["SU"]}]))' > "$TMP/payload.json" )
 }
 
 manual_secret() {
   rm -f "$TMP/payload.json"
   die "yc не принял секрет из файла. Создайте секрет вручную в консоли (README, шаг 6: Lockbox → «Создать секрет»,
-       имя $SECRET_NAME, ключи GIGACHAT_AUTH_KEY и SITE_USERS) и запустите скрипт ещё раз — он подхватит секрет."
+       имя $SECRET_NAME, ключ SITE_USERS) и запустите скрипт ещё раз — он подхватит секрет."
 }
 
 say "Секрет Lockbox $SECRET_NAME"
@@ -112,7 +107,7 @@ if [ -z "$SECRET_ID" ]; then
   SECRET_ID=$(yc lockbox secret create --name "$SECRET_NAME" --payload - --format json < "$TMP/payload.json" | json_id) \
     || manual_secret
   ok "создан: $SECRET_ID"
-elif ask_yes "Секрет уже есть ($SECRET_ID). Заменить ключ GigaChat и пользователей новой версией?"; then
+elif ask_yes "Секрет уже есть ($SECRET_ID). Заменить пользователей новой версией?"; then
   read_secrets; write_payload
   yc lockbox secret add-version --id "$SECRET_ID" --payload - < "$TMP/payload.json" >/dev/null || manual_secret
   ok "добавлена новая версия (функции подхватят её при следующей выкладке)"
@@ -120,7 +115,7 @@ else
   ok "оставлен как есть"
 fi
 rm -f "$TMP/payload.json"
-unset GIGACHAT_AUTH_KEY SITE_USERS
+unset SITE_USERS
 
 # --- API Gateway ---------------------------------------------------------------------------
 say "API Gateway $GATEWAY_NAME"
@@ -181,6 +176,7 @@ say "Роли $RUNTIME_SA_NAME (функции и шлюз)"
 grant "lockbox secret" "$SECRET_ID" lockbox.payloadViewer "$RUNTIME_ID" "$RUNTIME_SA_NAME (секрет)" \
   || die "не удалось назначить lockbox.payloadViewer"
 folder functions.functionInvoker "$RUNTIME_ID" "$RUNTIME_SA_NAME"  # функции создаёт workflow — уровень ресурса недоступен
+folder ai.languageModels.user "$RUNTIME_ID" "$RUNTIME_SA_NAME"    # ассистент вызывает YandexGPT с IAM-токеном аккаунта
 
 say "Доступ к бакету (ACL бакета вместо ролей на каталог)"
 # --grants заменяет весь ACL: выкладка — полный доступ, рабочий аккаунт — только чтение.
