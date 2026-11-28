@@ -116,6 +116,13 @@ jobs:
           TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
         run: python -m scripts.collect_data --only tinvest_bonds
 
+      - name: Логотипы УК
+        # public/data/uk_logos.json: логотип УК фондов и логотип эмитента для облигаций без него.
+        # Читает уже собранные файлы (RusETFs, T-Invest, скринер); сбой не трогает прежний файл
+        if: success() || failure()
+        timeout-minutes: 2
+        run: python -m scripts.collect_data --only uk_logos
+
       - name: Индексы
         # раздел «Индексы» (public/data/indices.json): ряды ISS и ЦБ, метрики, БПИФ-аналоги.
         # Названия фондов — из tinvest_etfs.json. Сбой не трогает прежний файл

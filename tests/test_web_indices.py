@@ -246,23 +246,76 @@ def test_screener_bonds_issuer_logo(demo):
     demo.check_clean()
 
 
-def test_screener_funds_management_company_logo(demo):
-    page = demo.page
-    _cdn(page)
+def _uk_json(page, funds, uk, bonds_issuer=None):
+    _json_route(page, "uk_logos", {"updated": "x", "source": "t", "funds": funds, "uk": uk,
+                                   "bonds_issuer": bonds_issuer or {}})
+
+
+def _uk(logo=None, color=None, file=None):
+    return {"logo": logo, "logo_color": color, "source": "table" if logo else None, "group": False, "file": file}
+
+
+def _funds_routes(page):
+    seen = _cdn(page)
+    # иконки продуктов в tinvest_etfs РАЗНЫЕ — для фондов они не используются, только логотип УК
     _json_route(page, "tinvest_etfs", {"updated": "x", "source": "T-Invest API", "data": [
-        {"ticker": "ZZFUND", "name": "Фонд с УК", "logo": "vim.png", "logo_color": "#0a0a0a", "brand": "ВИМ Инвестиции"},
-        {"ticker": "ZZNOLG", "name": "Фонд без бренда"}]})
+        {"ticker": "ZZFUND", "name": "Фонд 1", "logo": "product1.png", "logo_color": "#0a0a0a", "brand": "Продукт 1"},
+        {"ticker": "ZZFUN2", "name": "Фонд 2", "logo": "product2.png", "logo_color": "#0b0b0b", "brand": "Продукт 2"},
+        {"ticker": "ZZNOLG", "name": "Фонд без лого УК", "logo": "product3.png", "brand": "Продукт 3"}]})
     _json_route(page, "rusetfs_funds", {"updated": "x", "source": "RusETFs", "data": [
-        {"ticker": "ZZFUND", "name": "Фонд с УК", "issuer": "ВИМ Инвестиции", "asset_class": "Акции", "commission_pct": 1.0},
-        {"ticker": "ZZNOLG", "name": "Фонд без бренда", "issuer": "Безымянная УК", "asset_class": "Акции", "commission_pct": 1.0}]})
+        {"ticker": t, "name": n, "issuer": u, "asset_class": "Акции", "commission_pct": 1.0}
+        for t, n, u in (("ZZFUND", "Фонд 1", "Тест УК"), ("ZZFUN2", "Фонд 2", "Тест УК"), ("ZZNOLG", "Фонд без лого УК", "Безлогова Компания"))]})
+    _uk_json(page, {"ZZFUND": "Тест УК", "ZZFUN2": "Тест УК", "ZZNOLG": "Безлогова Компания"},
+             {"Тест УК": _uk("ukone.png", "#123456"), "Безлогова Компания": _uk()})
+    return seen
+
+
+def test_screener_funds_logo_is_management_company_logo(demo):
+    page = demo.page
+    seen = _funds_routes(page)
     _open(demo, "#/screener/funds")
     _scr(page, "funds", "ZZ")
-    assert "Управляющая компания" in page.locator("#screener-root thead").inner_text()
     rows = {r["text"].split()[0]: r for r in page.evaluate(BADGE_JS, "#screener-root tbody tr")}
-    a, b = rows["ZZFUND"], rows["ZZNOLG"]
-    assert a["issuerImg"] == CDN + "vimx160.png" and "ВИМ Инвестиции" in a["issuerText"], a
-    assert b["issuerImg"] is None and b["issuerInitials"] == "ZZ" and "Безымянная УК" in b["issuerText"], b
+    a, a2, b = rows["ZZFUND"], rows["ZZFUN2"], rows["ZZNOLG"]
+    assert a["img"] == a2["img"] == CDN + "ukonex160.png", (a, a2)       # у фондов одной УК один логотип
+    assert a["issuerImg"] == a2["issuerImg"] == CDN + "ukonex160.png"
+    assert a["title"] == "Тест УК" and "Тест УК" in a["issuerText"], a
+    # УК без логотипа — монограмма УК («БК»), а не иконка продукта
+    assert b["img"] is None and b["initials"] == "БК" and b["title"] == "Безлогова Компания", b
+    assert b["issuerImg"] is None and b["issuerInitials"] == "БК", b
+    assert not [u for u in seen if "product" in u], f"иконки продуктов фондов не должны запрашиваться: {seen}"
     demo.check_clean()
+
+
+def test_uk_file_has_priority_over_cdn_logo(demo):
+    """CONTRACT C: приоритет file -> CDN logo -> монограмма (uk[УК].file — путь относительно web/)."""
+    page = demo.page
+    _funds_routes(page)
+    _uk_json(page, {"ZZFUND": "Тест УК", "ZZFUN2": "Тест УК", "ZZNOLG": "Безлогова Компания"},
+             {"Тест УК": _uk("ukone.png", "#123456", file="img/uk/test-uk.png"),
+              "Безлогова Компания": _uk(file="img/uk/bezlogova-kompaniya.svg")})
+    served = []
+    page.route("**/web/img/uk/*", lambda r: (served.append(r.request.url), r.fulfill(status=200, content_type="image/png", body=PNG))[1])
+    _open(demo, "#/screener/funds")
+    _scr(page, "funds", "ZZ")
+    rows = {r["text"].split()[0]: r for r in page.evaluate(BADGE_JS, "#screener-root tbody tr")}
+    assert (rows["ZZFUND"]["img"] or "").endswith("img/uk/test-uk.png"), rows["ZZFUND"]
+    assert (rows["ZZNOLG"]["img"] or "").endswith("img/uk/bezlogova-kompaniya.svg"), rows["ZZNOLG"]
+
+
+def test_uk_file_from_json_must_be_local_logo_path(demo):
+    """uk_logos.json: file вне img/uk/*.svg|png (чужой URL) в src не попадает — откат к CDN-логотипу или монограмме."""
+    page = demo.page
+    _funds_routes(page)
+    _uk_json(page, {"ZZFUND": "Тест УК", "ZZFUN2": "Тест УК", "ZZNOLG": "Безлогова Компания"},
+             {"Тест УК": _uk("ukone.png", "#123456", file="https://evil/x"),
+              "Безлогова Компания": _uk(file="//evil/x.png")})
+    _open(demo, "#/screener/funds")
+    _scr(page, "funds", "ZZ")
+    rows = {r["text"].split()[0]: r for r in page.evaluate(BADGE_JS, "#screener-root tbody tr")}
+    assert rows["ZZFUND"]["img"] == CDN + "ukonex160.png", rows["ZZFUND"]
+    assert rows["ZZNOLG"]["img"] is None and rows["ZZNOLG"]["initials"] == "БК", rows["ZZNOLG"]
+    assert not page.evaluate("() => [...document.images].some((i) => i.src.includes('evil'))")
 
 
 # ================================================================ вёрстка
@@ -409,6 +462,27 @@ def test_bond_logo_joined_by_isin(demo):
     _open(demo, "#/screener/bonds")
     page.wait_for_selector("#screener-root tbody tr", timeout=TIMEOUT)
     assert page.locator("#screener-root tbody tr img").first.get_attribute("src") == f"{CDN}byisinx160.png"
+    demo.check_clean()
+
+
+def test_bond_logo_falls_back_to_issuer_from_uk_logos_and_tinvest_wins(demo):
+    """Облигация: tinvest_bonds, затем uk_logos.bonds_issuer, иначе значок-купон."""
+    page = demo.page
+    _cdn(page)
+    _json_route(page, "screener_bonds", {"updated": "x", "data": [
+        {"secid": "RUZZ001", "name": "Эмитент 1-01", "board": "TQCB", "yield": 0.15, "price_pct": 99},
+        {"secid": "RUZZ002", "name": "Эмитент 1-02", "board": "TQCB", "yield": 0.15, "price_pct": 99},
+        {"secid": "RUZZ003", "name": "Другой 1-01", "board": "TQCB", "yield": 0.15, "price_pct": 99}]})
+    _json_route(page, "tinvest_bonds", {"updated": "x", "source": "T-Invest API", "data": [
+        {"ticker": "RUZZ001", "isin": "RU1", "name": "Эмитент 1-01", "logo": "own.png", "brand": "Эмитент"}]})
+    _uk_json(page, {}, {}, {"RUZZ001": {"logo": "issuer.png", "logo_color": "#010203"},
+                            "RUZZ002": {"logo": "issuer.png", "logo_color": "#010203"}})
+    _open(demo, "#/screener/bonds")
+    page.wait_for_selector("#screener-root tbody tr", timeout=TIMEOUT)
+    rows = {r["text"].split()[0]: r for r in page.evaluate(BADGE_JS, "#screener-root tbody tr")}
+    assert rows["RUZZ001"]["img"] == CDN + "ownx160.png", rows["RUZZ001"]       # tinvest_bonds приоритетнее
+    assert rows["RUZZ002"]["img"] == CDN + "issuerx160.png", rows["RUZZ002"]    # запасной — bonds_issuer
+    assert rows["RUZZ003"]["img"] is None and rows["RUZZ003"]["badge"], rows["RUZZ003"]
     demo.check_clean()
 
 

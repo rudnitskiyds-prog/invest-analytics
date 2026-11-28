@@ -32,6 +32,9 @@ sync_api = pytest.importorskip("playwright.sync_api", reason="playwright не у
 IDLE = "() => !document.body.classList.contains('is-busy')"
 TIMEOUT = 60_000
 BAD_TEXT = re.compile(r"\b(NaN|undefined|null|Infinity)\b")
+CDN_HOST = "invest-brands.cdn-tinkoff.ru"
+PNG_1X1 = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+                        "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082")
 
 
 class _QuietHandler(SimpleHTTPRequestHandler):
@@ -93,6 +96,9 @@ class Session:
                         r.fulfill(status=404, content_type="text/plain", body="not found")
                 else:
                     r.continue_()
+            elif urlparse(url).hostname == CDN_HOST:
+                # логотипы Т-Банка (в репозитории настоящие logo): заглушка 1x1, сети нет; тест может переопределить route
+                r.fulfill(status=200, content_type="image/png", body=PNG_1X1)
             elif live and urlparse(url).hostname == "iss.moex.com":
                 self.iss_calls.append(url)
                 res = iss_fake.respond(url)
@@ -451,6 +457,8 @@ def test_legacy_links_redirect(demo, query, expected_hash, panel):
 def test_legacy_backtest_params_survive(demo):
     demo.goto("?demo=1&from=2015-01-01&till=2020-12-31")
     assert demo.hash() == "#/tools/backtest"
+    # IDLE наступает до init() страниц (движок грузит ещё ledger/rebalance/quotes): ждём заполнения формы
+    demo.page.wait_for_function("() => document.querySelector('#bt-from').value", timeout=TIMEOUT)
     assert demo.page.locator("#bt-from").input_value() == "2015-01-01"
     assert demo.page.locator("#bt-till").input_value() == "2020-12-31"
     demo.check_clean()
@@ -928,7 +936,8 @@ def test_screener_funds(demo):
 
 
 def test_screener_bonds_without_file(demo):
-    """screener_bonds.json ещё нет (сборщик не запускался): понятное пустое состояние, без ошибок (404 разрешён)."""
+    """screener_bonds.json нет (в репозитории он теперь есть — подменяем на 404): понятное пустое состояние, без ошибок (404 разрешён)."""
+    demo.page.route("**/public/data/screener_bonds.json", lambda r: r.fulfill(status=404, content_type="text/plain", body="not found"))
     demo.goto("?demo=1", "#/screener/bonds")
     page = demo.page
     page.wait_for_selector("#screener-root .scr-body .notice, #screener-root .scr-body [role=status], #screener-root tbody tr",
@@ -997,13 +1006,16 @@ def _sber_badge(page):
 
 
 def test_logo_initials_without_data(demo):
+    # справочников логотипов «нет» (в репозитории они настоящие): 404 → кружок с буквами тикера
+    for name in ("tinvest_shares", "tinvest_etfs", "tinvest_bonds", "uk_logos"):
+        demo.page.route(f"**/public/data/{name}.json", lambda r: r.fulfill(status=404, content_type="text/plain", body="not found"))
     demo.goto("?demo=1")
     badge = _sber_badge(demo.page)
     demo.page.wait_for_function("() => document.querySelector(\"#home-popular a[href='#/symbol/SBER'] .asset-badge\")?.dataset.initials",
                                 timeout=TIMEOUT)
     assert badge.get_attribute("data-initials") == "SB"
     assert badge.locator("img").count() == 0
-    demo.check_clean()
+    demo.check_clean(allow=(r"Failed to load resource.*404",))
 
 
 def test_logo_image_from_cdn(demo):

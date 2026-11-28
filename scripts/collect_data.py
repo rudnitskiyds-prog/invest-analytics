@@ -730,6 +730,36 @@ SOURCES["indices"] = {"kind": "indices", "default": False, "title": "Индек�
                       "collect": indices, "min_rows": 8}
 
 
+# ------------------------------------------------------------------ логотипы УК и облигаций эмитента
+def uk_logos(spec: dict) -> tuple:
+    """Логотипы УК и облигаций (core/analytics/uk_logos.py) по уже собранным файлам public/data.
+    Нет RusETFs или справочника T-Invest — сбой источника, прежний файл не трогается."""
+    from core.analytics import uk_logos as ul
+    rows = {f: _previous(f).get("data", []) for f in
+            ("rusetfs_funds", "tinvest_etfs", "tinvest_shares", "tinvest_bonds", "screener_bonds")}
+    for f in ("rusetfs_funds", "tinvest_etfs", "tinvest_shares"):
+        _check(f"строк {f}", len(rows[f]), spec["min_rows"])
+    body = ul.build(rows["rusetfs_funds"], rows["tinvest_etfs"], rows["tinvest_shares"],
+                    rows["tinvest_bonds"], rows["screener_bonds"], web_dir=ROOT / "web")
+    return body, len(body["uk"]), {"with_logo": sum(1 for v in body["uk"].values() if v["logo"]),
+                                   "bonds_issuer": len(body["bonds_issuer"])}
+
+
+def collect_uk_logos(name: str, spec: dict) -> dict:
+    """Атомарная запись uk_logos.json; updated меняется только при изменении содержимого."""
+    body, n, extra = spec["collect"](spec)
+    prev = _previous(name)
+    updated = prev.get("updated") if all(prev.get(k) == v for k, v in body.items()) and prev.get("updated") else _now()
+    from core.analytics.uk_logos import SOURCE
+    _write(name, {"updated": updated, "source": SOURCE, **body})
+    return {"ok": True, "rows": n, "last": updated[:10], **extra}
+
+
+# default=False — только явно (--only uk_logos), после tinvest_bonds
+SOURCES["uk_logos"] = {"kind": "uk_logos", "default": False, "title": "Логотипы УК и облигаций",
+                       "collect": uk_logos, "min_rows": 20}
+
+
 # ------------------------------------------------------------------ ряды ЦБ
 def collect(name: str, spec: dict) -> dict:
     s: pd.Series = spec["load"]()
@@ -772,7 +802,7 @@ def main(argv: list[str] | None = None) -> int:
     # ЦБ — первым, затем RusETFs, T-Invest — последним: долгий или упавший T-Invest
     # не должен помешать сохранить остальное (сортировка устойчивая — порядок внутри группы прежний)
     is_ti = lambda n: SOURCES[n].get("kind") == "tinvest"   # noqa: E731
-    order = {"rusetfs": 1, "tinvest": 2, "iss": 3, "portfolios": 4, "bonds": 5, "indices": 6}
+    order = {"rusetfs": 1, "tinvest": 2, "iss": 3, "portfolios": 4, "bonds": 5, "indices": 6, "uk_logos": 7}
     names = sorted(names, key=lambda n: order.get(SOURCES[n].get("kind"), 0))
     failed = skipped = ti_tried = ti_failed = 0
     ctx: dict = {"budget_min": args.tinvest_budget}   # общий клиент T-Invest и список акций на прогон
@@ -791,6 +821,8 @@ def main(argv: list[str] | None = None) -> int:
                 res = collect_screener_bonds(name, spec)
             elif spec.get("kind") == "indices":
                 res = collect_indices(name, spec)
+            elif spec.get("kind") == "uk_logos":
+                res = collect_uk_logos(name, spec)
             else:
                 res = collect(name, spec)
             print(f"OK   {name}: {res['rows']} строк, до {res['last']}")

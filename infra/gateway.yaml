@@ -1,5 +1,5 @@
 # Спецификация Yandex API Gateway. Подстановки (делает workflow выкладки через envsubst):
-# BUCKET, ASSISTANT_FUNCTION_ID, AUTH_FUNCTION_ID, SA_ID — см. infra/README.md.
+# BUCKET, ASSISTANT_FUNCTION_ID, AUTH_FUNCTION_ID, ISS_PROXY_FUNCTION_ID, SA_ID — см. infra/README.md.
 # Схема входа: «/» без авторизатора вызывает функцию auth, она отвечает 401 + WWW-Authenticate (браузер
 # показывает окно логина) или, если логин верный, 302 на /web/index.html. Все остальные маршруты закрыты авторизатором.
 openapi: 3.0.0
@@ -37,6 +37,40 @@ paths:
       x-yc-apigateway-integration:
         type: cloud_functions
         function_id: ${ASSISTANT_FUNCTION_ID}
+        tag: "$latest"
+        service_account_id: ${SA_ID}
+
+  /iss/{path+}:
+    get:
+      summary: Прокси ISS Мосбиржи (функция iss-proxy)
+      security:
+        - siteAuth: []
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: ${ISS_PROXY_FUNCTION_ID}
+        tag: "$latest"
+        service_account_id: ${SA_ID}
+
+  /cbr/{path+}:
+    get:
+      summary: Прокси сайта ЦБ РФ (функция iss-proxy)
+      security:
+        - siteAuth: []
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: ${ISS_PROXY_FUNCTION_ID}
         tag: "$latest"
         service_account_id: ${SA_ID}
 

@@ -1,0 +1,61 @@
+/* «Мой портфель» и «Ребалансировки» (web/js/page-myportfolio.js, page-rebalance.js). Только токены из tokens.css. */
+
+.my-bar .my-row { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-end; }
+.my-bar .field { min-width: 220px; }
+.pf-create { display: flex; gap: 10px; align-items: flex-end; margin-left: auto; flex-wrap: wrap; }
+.pf-create .field { min-width: 200px; }
+.my-bar select, .my-bar input[type="text"], .tx-form input, .tx-form select, .rb-opts input[type="text"], .rb-rule input, .rb-rule select { height: 44px; }
+.my-bar .btn, .pf-create .btn { min-height: 44px; }
+#pf-err:empty { display: none; }
+#pf-err { margin-top: 10px; }
+.my-body, .rb-rest, .my-tabs-wrap, .my-pane, .my-body > * { min-width: 0; }
+.my-body, .rb-rest { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-top: 16px; }
+.my-body > *, .rb-rest > * { margin: 0; }
+.panel .notice + .notice, #my-root > .notice, #rebalance-root > .notice { margin-top: 10px; }
+.my-empty { margin-top: 16px; }
+#my-root > .card, #rebalance-root > .card { margin-top: 16px; }
+
+.my-details > summary { cursor: pointer; font-weight: 700; font-size: 16px; list-style: none; display: flex; align-items: center; gap: 8px; min-height: 32px; }
+.my-details > summary::-webkit-details-marker { display: none; }
+.my-details > summary::before { content: "▸"; color: var(--brand-strong); transition: transform .15s; }
+.my-details[open] > summary::before { transform: rotate(90deg); }
+.tx-form { margin-top: 14px; display: grid; gap: 10px; }
+.data-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px 32px; margin-top: 14px; }
+.data-col { display: grid; gap: 10px; align-content: start; }
+.data-col h4 { margin: 0; font-size: 15px; }
+.data-col .hint { margin: 0; }
+input[type="file"] { font: inherit; font-size: 13px; max-width: 100%; }
+
+.my-tabs-wrap { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+.my-tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
+.my-tab { font: inherit; font-weight: 600; background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 10px 14px; min-height: 44px; color: var(--text-muted); cursor: pointer; }
+.my-tab:hover { color: var(--text); }
+.my-tab[aria-selected="true"] { color: var(--brand-strong); border-bottom-color: var(--brand); }
+.my-pane { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+.my-pane > .card, .my-pane > * { margin: 0; }
+.kpis { margin-top: 16px; }
+
+.my-table th, .my-table td { padding: 8px 6px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+.my-table thead th { font-size: 12px; font-weight: 700; color: var(--text-muted); white-space: normal; vertical-align: bottom; }
+.my-table th[scope="row"] { font-weight: 500; }
+.my-table td.num, .my-table th.num { text-align: right; white-space: nowrap; }
+.my-table tr.is-out td, .my-table tr.is-out th { background: var(--warn-bg); }
+.sec-cell { display: inline-flex; align-items: center; gap: 10px; }
+.sec-name { display: block; font-size: 12px; color: var(--text-muted); font-weight: 400; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-list { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 8px; }
+.pick { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; min-height: 32px; cursor: pointer; }
+
+.rb-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px 32px; align-items: start; }
+.rb-rule { display: grid; gap: 12px; align-content: start; }
+.rb-rule .hint { margin: 0; }
+.rb-edit input { height: 40px; min-width: 90px; }
+.rb-edit td.num input { text-align: right; max-width: 110px; }
+.rb-opts { margin-bottom: 12px; align-items: end; }
+.rb-opts .field { max-width: 240px; }
+@media (max-width: 760px) {
+  .rb-grid { grid-template-columns: minmax(0, 1fr); }
+  .pf-create { margin-left: 0; width: 100%; }
+  .my-bar .field, .pf-create .field { min-width: 0; flex: 1 1 100%; }
+  .my-tab { padding: 10px; font-size: 13px; }
+  .my-table th, .my-table td { padding: 8px 6px; }
+}
