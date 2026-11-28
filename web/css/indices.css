@@ -67,6 +67,13 @@
 .idx-mini .idx-sub { display: block; }
 .idx-mini .idx-ret-val { font-size: 22px; }
 .idx-mini .idx-spark { height: 40px; }
+/* как в «Готовых стратегиях» (.pf-name { min-height: 2 строки }): шапка карточки фиксированной высоты — график и «% за 1 год»
+   у всех плашек на одном уровне, независимо от длины названия */
+.idx-mini { display: flex; flex-direction: column; }
+.idx-mini .idx-top { align-items: flex-start; height: 62px; overflow: hidden; }
+.idx-mini .idx-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; line-height: 1.25; }
+.idx-mini .idx-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.idx-mini .idx-ret { margin-top: auto; }
 
 @media (max-width: 640px) {
   .idx-grid { grid-template-columns: 1fr; gap: 12px; }
