@@ -3,10 +3,10 @@
 
 import { fact, registerFacts } from "./assistant.js";
 import { baseOptions, colorOf, renderChart, themeColors } from "./charts.js";
-import { $, errorNotice, h, notice, put, tableWrap } from "./dom.js";
+import { $, downloadBlob, errorNotice, h, notice, put, tableWrap } from "./dom.js";
 import { engine, requireEngine, UserError } from "./engine.js";
 import { fmtDate, fmtNum, fmtPct, fmtRub, parseNum } from "./format.js";
-import { downloadBlob, focusMsg, missingText, portfolioSelect, selectedId, storageNote, valuate } from "./page-myportfolio.js";
+import { focusMsg, missingText, portfolioSelect, selectedId, storageNote, valuate } from "./page-myportfolio.js";
 import { store } from "./portfolio-store.js";
 import { href } from "./router.js";
 

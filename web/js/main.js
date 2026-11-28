@@ -6,6 +6,7 @@ import { $, $$, h, notice } from "./dom.js";
 import { catalogList, engine, entries, loadEngine } from "./engine.js";
 import * as home from "./page-home.js";
 import * as indices from "./page-indices.js";
+import * as npf from "./page-npf.js";
 import * as myportfolio from "./page-myportfolio.js";
 import * as rebalance from "./page-rebalance.js";
 import * as portfolios from "./page-portfolios.js";
@@ -22,7 +23,7 @@ import * as frontier from "./tab-frontier.js";
 import * as method from "./tab-method.js";
 import * as security from "./tab-security.js";
 
-const PAGES = { home, tools, backtest, frontier, security, method, symbol, stub, screener, portfolios, indices, myportfolio, rebalance };
+const PAGES = { home, tools, backtest, frontier, security, method, symbol, stub, screener, portfolios, indices, npf, myportfolio, rebalance };
 const BENCH_KEYS = ["MCFTR", "IMOEX", "MEBCTR", "RGBITR", "RUONIA", "GOLD_CBR"];
 let ready = false;
 let active = null;     // текущий маршрут
@@ -34,6 +35,11 @@ function activePage() {
 }
 
 function show(route) {
+  if (route.redirect) {   // совместимые старые адреса (#/indices → #/screener/indices)
+    history.replaceState(null, "", `${location.pathname}${location.search}#${route.redirect}`);
+    return show(R.current());
+  }
+  if (active && active.page !== route.page) activePage().onHide?.();   // остановить таймеры ушедшей страницы
   active = route;
   for (const p of $$(".panel")) p.hidden = p.id !== `panel-${route.panel}`;
   for (const a of $$("[data-nav]")) {
@@ -45,7 +51,7 @@ function show(route) {
     else a.removeAttribute("aria-current");
   }
   $("#tool-nav").hidden = !route.tool;
-  const scr = { stocks: "Акции", funds: "Фонды", bonds: "Облигации" }[location.hash.split("/")[2]];
+  const scr = { stocks: "Акции", funds: "Фонды", bonds: "Облигации", indices: "Индексы" }[location.hash.split("/")[2]];
   if (scr) $("#scr-crumb").textContent = scr;
   // общие параметры: на инструментах — все, на странице бумаги — только безрисковая ставка
   $("#params-bar").hidden = !route.paramsScope;
@@ -62,7 +68,8 @@ function show(route) {
   if (!firstRoute) {
     // переход внутри сайта: наверх и фокус на заголовок страницы (для экранных дикторов)
     window.scrollTo({ top: 0 });
-    const head = $(`#panel-${route.panel} :is(h1, h2)`);
+    // у вкладочных страниц (НПФ) — на панель активной вкладки, она называется по вкладке
+    const head = $(`#panel-${route.panel} #npf-pane`) || $(`#panel-${route.panel} :is(h1, h2)`);
     if (head) {
       head.setAttribute("tabindex", "-1");
       head.focus({ preventScroll: true });
@@ -128,6 +135,9 @@ function setupChrome() {
     }
   });
 }
+
+// модальность ввода: рамка фокуса на программно сфокусированной панели — только при работе с клавиатуры
+for (const [ev, v] of [["pointerdown", "mouse"], ["keydown", "key"]]) document.addEventListener(ev, () => { document.documentElement.dataset.input = v; }, true);
 
 async function start() {
   R.migrateLegacy();

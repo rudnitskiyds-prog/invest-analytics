@@ -4,6 +4,7 @@ import { DATA_BASE } from "./config.js";
 import { $, h, notice, put } from "./dom.js";
 import { fmtDate, fmtPct } from "./format.js";
 import { assetBadge, IDX_SLUG } from "./logo.js";
+import { screenerTabs } from "./page-screener.js";
 import { symbolHref } from "./router.js";
 
 const NS = "http://www.w3.org/2000/svg";
@@ -104,6 +105,7 @@ function render(root, data) {
   put(root,
     h("div", { class: "panel-head" },
       h("h2", {}, "Индексы"),
+      screenerTabs("indices"),
       h("p", { class: "lead" }, "Индекс — это корзина бумаг, а не одна бумага: он показывает, как ведёт себя рынок целиком. Купить индекс напрямую нельзя, но похожие на него фонды (БПИФ) есть."),
       h("p", { class: "idx-meta muted" }, `Данные на ${fmtDate(data.as_of)} · источник: ${data.source || "—"}`)),
     h("div", { class: "idx-sort", role: "group", "aria-label": "Сортировка" }, btns), body);
@@ -112,10 +114,10 @@ function render(root, data) {
 export function init() {}
 export async function onShow() {
   const root = $("#indices-root");
-  if (!root.children.length) put(root, h("div", { class: "panel-head" }, h("h2", {}, "Индексы")), h("p", { class: "muted", role: "status" }, "Загружаем индексы…"));
+  if (!root.children.length) put(root, h("div", { class: "panel-head" }, h("h2", {}, "Индексы"), screenerTabs("indices")), h("p", { class: "muted", role: "status" }, "Загружаем индексы…"));
   const data = await loadIndices();
   if (!data) {
-    put(root, h("div", { class: "panel-head" }, h("h2", {}, "Индексы")),
+    put(root, h("div", { class: "panel-head" }, h("h2", {}, "Индексы"), screenerTabs("indices")),
       notice("info", "Данных по индексам пока нет: файл indices.json собирается ночью из выгрузок Мосбиржи и ЦБ. Загляните завтра."));
     return;
   }
