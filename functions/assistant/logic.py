@@ -193,10 +193,18 @@ _FALL = re.compile(r"просад|пада|упал|снизил|снижени|
 _SENTENCE = re.compile(r"(?<=[.!?…])\s+|\n+")
 
 
+def _in_labels(raw: str, labels: str) -> bool:
+    """Число стоит в подписи показателя дословно, вместе с единицей («60/40», «10 000 ₽/мес»): это название или
+    параметр экрана, а не расчётная величина. «52 %» при подписи «минимум за 52 недели» так не подтверждается."""
+    raw = re.sub(_SPACES, " ", raw)
+    return bool(re.search(r"(?<![\d.,])" + re.escape(raw) + r"(?!\d)", labels))
+
+
 def verify_numbers(answer: str, facts: list) -> tuple:
     """-> (facts_used, unverified_numbers). Допуск — половина последнего разряда числа в ответе.
     Предложения с пометкой «условно» (иллюстративные примеры по промпту) не сверяются."""
     cands = [(f.get("id", ""), _candidates(f)) for f in facts]
+    labels = re.sub(_SPACES, " ", "\n".join(str(f.get("label", "")) for f in facts))
     used, unverified = [], []
     for sentence in _SENTENCE.split(_LEGAL.sub(" ", answer or "")):  # «ст. 6.1» до разбиения на предложения
         if "условн" in sentence.lower():
@@ -210,6 +218,8 @@ def verify_numbers(answer: str, facts: list) -> tuple:
                     if any(abs(value - c) <= tol or (fall and c < 0 and abs(value + c) <= tol) for c in vals)]
             if hits:
                 used.extend(h for h in hits if h and h not in used)
+            elif _in_labels(raw, labels):
+                continue
             elif raw not in unverified:
                 unverified.append(raw)
     return used, unverified
