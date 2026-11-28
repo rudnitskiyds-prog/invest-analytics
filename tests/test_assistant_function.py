@@ -479,6 +479,25 @@ def test_verify_numbers_round2():
     assert logic.verify_numbers("Минимум 250,5 ₽.", lo) == (["lo"], [])
 
 
+def test_verify_numbers_names_and_parameters_from_labels_are_not_flagged():
+    """Числа из названий и параметров на экране («60/40», «10 000 ₽/мес») — не выдумка; единица должна совпасть."""
+    facts = [
+        {"id": "pf1.final", "label": "Портфель 60/40: итоговая стоимость", "value": 6012400.0, "unit": "rub",
+         "text": "6 012 400 ₽", "source": ""},
+        {"id": "pf1.invested", "label": "Портфель 60/40: внесено (1 000 000 ₽ сразу и 10 000 ₽/мес)",
+         "value": 2800000.0, "unit": "rub", "text": "2 800 000 ₽", "source": ""},
+    ]
+    ans = "Для портфеля 60/40 при взносах 1 000 000 ₽ сразу и 10 000 ₽ в месяц итог — 6 012 400 ₽."
+    assert logic.verify_numbers(ans, facts) == (["pf1.final"], [])
+    # та же цифра с другой единицей или другой величиной подтверждения не получает
+    assert logic.verify_numbers("Доходность 60 %.", facts)[1] == ["60 %"]
+    assert logic.verify_numbers("Портфель вырос на 1 000 000 ₽ за год.", facts)[1] == []   # сумма из подписи
+    assert logic.verify_numbers("Портфель вырос на 2 000 000 ₽.", facts)[1] == ["2 000 000 ₽"]
+    # NBSP в подписи и в ответе — тот же текст
+    nb = [{"id": "x", "label": "Внесено 1\u00a0000\u00a0000 ₽", "value": 1.0, "unit": "rub", "text": "1 ₽", "source": ""}]
+    assert logic.verify_numbers("Внесли 1 000 000 ₽.", nb)[1] == []
+
+
 def test_timeouts_leave_headroom_in_function_limit():
     assert sum(index.CHAT_TIMEOUT) <= 25   # таймаут функции 30 с: запас на запуск, разбор и ответ
 

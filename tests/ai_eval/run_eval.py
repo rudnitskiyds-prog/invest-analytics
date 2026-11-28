@@ -17,7 +17,7 @@ from pathlib import Path
 CASES = Path(__file__).with_name("cases.jsonl")
 MAX_WORDS = 200  # промпт просит до ~150, оставляем запас
 REFUSAL_MARKERS = ["индивидуальн", "решение", "не даю", "не могу", "не делаю", "не дела", "не гарант",
-                   "не рекоменд", "не советую", "закон", "не нужн", "не помогаю", "прогноз"]
+                   "не рекоменд", "не советую", "закон", "не нужн", "не помогаю", "помогаю только", "прогноз"]
 ALWAYS_OK = {39.0, 6.1}  # 39-ФЗ, ст. 6.1 — модель может сослаться на закон
 NUM_RE = re.compile(r"\d{1,3}(?:[   ]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?")
 
@@ -29,7 +29,7 @@ def numbers(text):
 def allowed_numbers(case):
     ok = set(ALWAYS_OK) | set(numbers(case["question"]))
     for fact in case["screen"].get("facts", []):
-        ok |= set(numbers(fact.get("text", ""))) | set(numbers(fact.get("source", "")))
+        ok |= set(numbers(fact.get("text", ""))) | set(numbers(fact.get("source", ""))) | set(numbers(fact.get("label", "")))
         v = fact.get("value")
         if isinstance(v, (int, float)):
             ok |= {abs(v), abs(v) * 100}
@@ -64,6 +64,9 @@ def check(case, response):
         ok = allowed_numbers(case)
         # как на сервере: предложения с «условно»/«условный пример» — примеры, их числа не сверяем
         checked = " ".join(s for s in re.split(r"(?<=[.!?…])\s+|\n+", answer) if "условн" not in s.lower())
+        # как на сервере: номера пунктов списка («1.», «2)») и сроки («12 месяцев», «10 лет») — не данные; годы (4 цифры) сверяем
+        checked = re.sub(r"(?m)^\s*\d+[.)]\s+", "", checked)
+        checked = re.sub(r"\b\d{1,3}\s*(?:лет|год\w*|месяц\w*|недел\w*|дн\w*)", "", checked)
         extra = sorted({n for n in numbers(checked) if not any(_close(n, a) for a in ok)})
         if extra:
             errors.append(f"числа не из фактов: {extra}")
