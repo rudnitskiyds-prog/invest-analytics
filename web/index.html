@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="css/tokens.css">
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/screens.css">
+  <link rel="stylesheet" href="css/indices.css">
   <script src="vendor/chart.umd.min.js" defer></script>
   <script type="module" src="js/main.js"></script>
 </head>
@@ -42,6 +43,7 @@
           </ul>
         </li>
         <li><a href="#/portfolios/lazy" data-nav="portfolios">Портфели</a></li>
+        <li><a href="#/indices" data-nav="indices">Индексы</a></li>
         <li class="has-sub">
           <button type="button" class="nav-sub-btn" id="nav-sub-btn" data-nav="screener" aria-expanded="false" aria-controls="nav-screeners">
             Скринеры <svg class="chev" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -236,6 +238,7 @@
 <section class="panel" id="panel-screener" hidden>
   <nav class="crumbs" aria-label="Навигационная цепочка"><a href="#/">Главная</a> <span aria-hidden="true">›</span> <a href="#/screener/stocks">Скринеры</a> <span aria-hidden="true">›</span> <span id="scr-crumb" aria-current="page">Акции</span></nav>
 <div id="screener-root"></div></section>
+<section class="panel" id="panel-indices" hidden><div id="indices-root"></div></section>
 <section class="panel" id="panel-portfolios" hidden><div id="portfolios-root"></div></section>
 
 <section class="panel" id="panel-stub" aria-labelledby="stub-title" hidden>

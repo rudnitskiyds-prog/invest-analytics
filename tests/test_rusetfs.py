@@ -613,7 +613,7 @@ def test_collector_default_order_includes_rusetfs_before_tinvest(monkeypatch, tm
                         {"ok": True, "rows": 1, "last": "x"})
     assert cd.main([]) == 0
     cbr = [k for k, v in cd.SOURCES.items() if v.get("kind") is None]
-    ti = [k for k, v in cd.SOURCES.items() if v.get("kind") == "tinvest"]
+    ti = [k for k, v in cd.SOURCES.items() if v.get("kind") == "tinvest" and v.get("default", True)]
     assert events == cbr + ["rusetfs_funds"] + ti
 
 

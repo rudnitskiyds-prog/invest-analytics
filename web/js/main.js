@@ -5,6 +5,7 @@ import { applyChartDefaults, registerEntities } from "./charts.js";
 import { $, $$, h, notice } from "./dom.js";
 import { catalogList, engine, entries, loadEngine } from "./engine.js";
 import * as home from "./page-home.js";
+import * as indices from "./page-indices.js";
 import * as portfolios from "./page-portfolios.js";
 import * as screener from "./page-screener.js";
 import * as stub from "./page-stub.js";
@@ -19,7 +20,7 @@ import * as frontier from "./tab-frontier.js";
 import * as method from "./tab-method.js";
 import * as security from "./tab-security.js";
 
-const PAGES = { home, tools, backtest, frontier, security, method, symbol, stub, screener, portfolios };
+const PAGES = { home, tools, backtest, frontier, security, method, symbol, stub, screener, portfolios, indices };
 const BENCH_KEYS = ["MCFTR", "IMOEX", "MEBCTR", "RGBITR", "RUONIA", "GOLD_CBR"];
 let ready = false;
 let active = null;     // текущий маршрут

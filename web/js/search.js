@@ -91,7 +91,7 @@ export function attachSearch(input, { onPick, limit = 8 } = {}) {
       assetBadge(r.secid, 28, r.cls),
       h("span", { class: "so-key" }, r.secid),
       h("span", { class: "so-name" }, r.shortName || r.name || ""),
-      h("span", { class: "so-cls" }, classLabel(r.cls) + (r.isTraded === false ? " · не торгуется" : "")))),
+      h("span", { class: r.cls === "index" ? "so-cls so-idx" : "so-cls" }, classLabel(r.cls) + (r.isTraded === false ? " · не торгуется" : "")))),
       note ? h("li", { class: "search-note", role: "presentation" }, note) : null,
     );
     const open = rows.length > 0 || !!note;

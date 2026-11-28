@@ -188,7 +188,7 @@ def test_demo_home(demo):
     # 2–7 блоки по порядку (8 — подвал)
     order = page.evaluate("""() => [...document.querySelectorAll('#panel-home > .hero, #panel-home > .home-block')]
         .map((e) => e.classList.contains('hero') ? 'hero' : (e.querySelector('[id^=home-], .cta-links') || e).id || 'cta')""")
-    assert order == ["hero", "home-portfolios", "home-steps", "home-corr", "home-compare", "home-popular", "cta"], order
+    assert order == ["hero", "home-portfolios", "home-steps", "home-corr", "home-compare", "home-popular", "home-indices", "cta"], order
     assert page.locator("footer").count() >= 1, "нет подвала"
     page.wait_for_selector("#home-portfolios a.pf-card[href^='#/portfolio/']", timeout=TIMEOUT)
     assert page.locator("#home-steps > li > a.tile").count() == 5
@@ -416,7 +416,8 @@ def test_demo_tools_catalog_and_stubs(demo):
     page.wait_for_function("() => document.querySelector('#stub-title').textContent === 'Страница не найдена'", timeout=TIMEOUT)
     assert demo.visible_panel() == ["panel-stub"]
     assert _current(page, "data-nav") == []
-    demo.check_clean(allow=(r"404.*screener_bonds\.json",))   # файла скринера облигаций ещё нет
+    # файла скринера облигаций в репозитории ещё нет (отдельный шаг workflow); разрешён только 404 на него
+    demo.check_clean(allow=(r"404.*screener_bonds\.json",))
 
 
 def test_demo_symbol_page_explains_live_only(demo):

@@ -5,54 +5,82 @@ import { DATA_BASE } from "./config.js";
 import { h } from "./dom.js";
 
 const CDN = "https://invest-brands.cdn-tinkoff.ru/";
-const FILES = ["tinvest_shares.json", "tinvest_etfs.json"];
-const INDEXES = new Set(["IMOEX", "MCFTR", "MOEXBC", "RTSI", "RGBI", "RGBITR", "RUCBITR", "RUCBTRNS", "MEBCTR", "RUONIA",
+const FILES = { share: "tinvest_shares.json", fund: "tinvest_etfs.json", bond: "tinvest_bonds.json" };
+const INDEXES = new Set(["IMOEX", "MCFTR", "MOEXBC", "RTSI", "RGBI", "RGBITR", "RUCBITR", "RUCBTRNS", "MEBCTR", "RUONIA", "CORP_CHAIN", "GOLD_CBR", "GLDRUB_TOM", "IRDIVTR", "MEEUTR",
   "RUGBITR1Y", "RUGBITR5+", "RUGBITR10Y", "MOEXOG", "MOEXFN", "MOEXMM", "MOEXCN", "MOEXEU", "MOEXCH", "MOEXTN", "MOEXIT"]);
 
-// Иконки классов без логотипа: индекс — столбики, облигация — купон «%», металл — слиток
+// Иконки классов без логотипа: облигация — купон «%», металл — слиток, индекс — корзина (бумаги внутри)
 const ICONS = {
-  index: "M6 17V11M10.5 17V7M15 17v-4M19 17V9",
+  index: "M4 10h16l-1.6 9H5.6zM8 10l3-5M16 10l-3-5M10 13.5v2.5M14 13.5v2.5",
   bond: "M8 16 16 8M8.5 9.5a1 1 0 1 0 0-.01M15.5 15.5a1 1 0 1 0 0-.01",
   metal: "M5 16h14l-2.5-6h-9zM9.5 10l1-3h3l1 3",
 };
 
-const brands = new Map();   // SECID → {logo, color}
-let loaded = null;
+/** Класс индекса из indices.json → слот цвета (--idx-* в indices.css). */
+export const IDX_SLUG = { "Акции": "eq", "Облигации гос.": "gov", "Облигации корп.": "corp", "Золото": "gold", "Денежный рынок": "cash" };
 
-/** Загрузить справочник один раз; ошибки сети не мешают — останутся кружки с буквами. */
-export function loadLogos() {
-  loaded ||= Promise.all(FILES.map(async (f) => {
-    try {
-      const r = await fetch(DATA_BASE + f);
-      return r.ok ? (await r.json())?.data || [] : [];
-    } catch {
-      return [];
-    }
-  })).then((lists) => {
-    for (const row of lists.flat()) {
-      if (row?.ticker) brands.set(String(row.ticker).toUpperCase(), { logo: row.logo || null, color: row.logo_color || null, name: row.name || null });
-    }
-    return brands;
-  });
-  return loaded;
+const brands = { share: new Map(), fund: new Map(), bond: new Map() };   // SECID → {logo, color, name, brand}
+const idxClass = new Map();                                              // key → класс индекса
+const loads = {};
+
+async function readRows(file) {
+  try {
+    const r = await fetch(DATA_BASE + file);
+    const j = r.ok ? await r.json() : null;
+    return j?.data || j?.items || [];
+  } catch {
+    return [];
+  }
 }
 
-/** Название бумаги из справочника T-Invest (после loadLogos) или null. */
-export const nameFor = (secid) => brands.get(String(secid || "").toUpperCase())?.name || null;
+function loadKind(kind) {
+  loads[kind] ||= readRows(FILES[kind]).then((rows) => {
+    for (const row of rows) {
+      if (!row?.ticker) continue;
+      const rec = { logo: row.logo || null, color: row.logo_color || null, name: row.name || null, brand: row.brand || null };
+      brands[kind].set(String(row.ticker).toUpperCase(), rec);
+      if (kind === "bond" && row.isin) brands[kind].set(String(row.isin).toUpperCase(), rec);   // запасной ключ: ISIN, если SECID не нашёлся
+    }
+    return brands[kind];
+  });
+  return loads[kind];
+}
 
-/** {url|null, color|null, initials} — синхронно, по уже загруженному справочнику. */
-export function logoFor(secid) {
+/** Загрузить справочник один раз (акции и фонды; облигации — только при bonds=true). Ошибки сети не мешают — останутся кружки с буквами. */
+export const loadLogos = (bonds = false) => Promise.all([loadKind("share"), loadKind("fund"), bonds && loadKind("bond")]).then(() => brands);
+
+function loadIndexClasses() {
+  loads.index ||= readRows("indices.json").then((rows) => rows.forEach((r) => r?.key && idxClass.set(String(r.key).toUpperCase(), r.class)));
+  return loads.index;
+}
+
+const find = (key, kind) => {
+  const order = kind ? [kind] : ["share", "fund", "bond"];
+  for (const k of order) if (brands[k]?.has(key)) return { kind: k, ...brands[k].get(key) };
+  return null;
+};
+
+/** Название бумаги из справочника T-Invest (после loadLogos) или null. */
+export const nameFor = (secid) => find(String(secid || "").toUpperCase())?.name || null;
+
+/**
+ * {url|null, color|null, initials, title|null} — синхронно, по уже загруженным справочникам.
+ * Акция/облигация — логотип эмитента, фонд — логотип УК (brand), индекс — без логотипа.
+ */
+export function logoFor(secid, kind = null) {
   const key = String(secid || "").toUpperCase();
-  const b = brands.get(key);
+  const b = kind === "index" ? null : find(key, kind);
   const name = b?.logo ? String(b.logo).replace(/\.png$/i, "") : "";
   return {
     url: name ? `${CDN}${encodeURIComponent(name)}x160.png` : null,
     color: b?.color && /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : null,
     initials: key.replace(/[^A-ZА-Я0-9]/g, "").slice(0, 2) || "?",
+    title: b ? (b.kind === "fund" ? b.brand : b.brand || b.name) || null : null,
   };
 }
 
 function guessClass(key) {
+  if (idxClass.has(key)) return "index";   // данные indices.json важнее ручного списка
   if (INDEXES.has(key)) return "index";
   if (/^(SU\d|RU000)/.test(key)) return "bond";
   if (/^(GOLD_CBR|GLDRUB|SLVRUB|PLT|PLD)/.test(key)) return "metal";
@@ -72,14 +100,24 @@ function textOn(hex) {
 }
 
 function fill(el, key, cls) {
-  const { url, color, initials } = logoFor(key);
-  const icon = !brands.has(key) && ICONS[cls || guessClass(key)];
+  const { url, color, initials, title } = logoFor(key, cls === "share" || cls === "fund" || cls === "bond" || cls === "index" ? cls : null);
+  const kind = cls || guessClass(key);
+  const icon = (kind === "index" || !url) && ICONS[kind];
+  if (title) el.title = title;
+  else el.removeAttribute("title");
   el.replaceChildren();
   el.removeAttribute("data-initials");
+  el.classList.remove("is-icon", "is-basket");
+  delete el.dataset.idx;
   el.style.background = "";
   el.style.color = "";
   if (icon) {
     el.classList.add("is-icon");
+    if (kind === "index") {
+      el.classList.add("is-basket");
+      const slug = IDX_SLUG[idxClass.get(key)];
+      if (slug) el.dataset.idx = slug;
+    }
     el.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${icon}"/></svg>`;
     return;
   }
@@ -94,11 +132,19 @@ function fill(el, key, cls) {
   el.append(img);
 }
 
-/** Круглый значок бумаги. size — px; cls — класс бумаги, если известен (index | bond | metal | share | fund). */
-export function assetBadge(secid, size = 24, cls = null) {
+/** Круглый значок бумаги. size — px; kind — вид бумаги: строка или {kind} (share | fund | bond | index | metal). */
+export function assetBadge(secid, size = 24, opts = null) {
   const key = String(secid || "").toUpperCase();
+  const cls = (typeof opts === "string" ? opts : opts?.kind) || null;
   const el = h("span", { class: "asset-badge", "aria-hidden": "true", "data-size": size, style: { width: `${size}px`, height: `${size}px`, fontSize: `${Math.round(size * 0.38)}px` } });
   fill(el, key, cls);
-  if (!brands.has(key)) loadLogos().then(() => { if (brands.has(key)) fill(el, key, cls); });
+  const kind = cls || guessClass(key);
+  const typed = cls === "share" || cls === "fund" || cls === "bond";
+  const pending = kind === "index" ? loadIndexClasses().then(() => idxClass.has(key))
+    : loadLogos(kind === "bond").then(async () => {
+      if (!typed && !find(key)) await loadIndexClasses();   // неизвестная бумага: вдруг это индекс из indices.json
+      return find(key, typed ? cls : null) || idxClass.has(key);
+    });
+  pending.then((ok) => { if (ok) fill(el, key, cls); });
   return el;
 }

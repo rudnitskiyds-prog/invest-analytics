@@ -129,6 +129,8 @@ export function rerender() {
   if (st?.data) renderResults();
 }
 
+const BADGE_KIND = { stocks: "share", funds: "fund", bonds: "bond" };
+
 function load(kind) {
   if (!cache.has(kind)) {
     const p = loadScreener(kind, { base: DATA_BASE });
@@ -149,7 +151,7 @@ async function render(kind) {
     body);
   let data;
   try {
-    [data] = await Promise.all([load(kind), loadLogos()]);
+    [data] = await Promise.all([load(kind), loadLogos(kind === "bonds")]);
   } catch (e) {
     if (my !== seq) return;
     console.warn(e);
@@ -339,9 +341,11 @@ function renderResults() {
       onclick: (e) => { if (!e.target.closest("a, button")) location.hash = symbolHref(r.secid); },
     }, cols.map((c, i) => (i === 0
       ? h("th", { scope: "row", class: "scr-first" },
-        h("a", { href: symbolHref(r.secid), class: "scr-ticker" }, assetBadge(r.secid, 24), h("span", {}, r[c.key] ?? r.secid)))
+        h("a", { href: symbolHref(r.secid), class: "scr-ticker" }, assetBadge(r.secid, 24, BADGE_KIND[st.kind]), h("span", {}, r[c.key] ?? r.secid)))
       : h("td", { class: [c.type !== "text" ? "num" : "", c.type === "pct" && /cagr|ret|yield|ytd/.test(c.key) ? signClass(r[c.key]) : ""].filter(Boolean).join(" ") || null },
-        fmtCell(c.type, r[c.key]))))))))));
+        c.key === "issuer" && r.issuer
+          ? h("span", { class: "scr-issuer" }, assetBadge(r.secid, 20, "fund"), h("span", {}, r.issuer))   // логотип УК — бренд ETF
+          : fmtCell(c.type, r[c.key]))))))))));
   put(st.els.pager, pages > 1 ? [
     h("button", { type: "button", class: "btn btn-sm", disabled: page <= 1, onclick: () => setQ({ page: page - 1 }, { keepPage: true }) }, "← Назад"),
     h("span", { class: "muted" }, `Страница ${page} из ${pages}`),
