@@ -1,78 +1,104 @@
 {
  "cbr_gold": {
   "ok": true,
-  "rows": 4676,
-  "last": "2026-11-27",
-  "checked": "2026-11-27T12:06:43+00:00"
+  "rows": 4677,
+  "last": "2026-11-28",
+  "checked": "2026-11-28T09:37:27+00:00"
  },
  "ruonia_rate": {
   "ok": true,
   "rows": 4160,
   "last": "2026-11-26",
-  "checked": "2026-11-27T12:06:43+00:00"
+  "checked": "2026-11-28T09:37:28+00:00"
  },
  "ruonia_index": {
   "ok": true,
   "rows": 4160,
   "last": "2026-11-26",
-  "checked": "2026-11-27T12:06:43+00:00"
+  "checked": "2026-11-28T09:37:28+00:00"
  },
  "key_rate": {
   "ok": true,
   "rows": 3310,
   "last": "2026-11-27",
-  "checked": "2026-11-27T12:06:44+00:00"
+  "checked": "2026-11-28T09:37:28+00:00"
  },
  "tinvest_shares": {
   "ok": true,
   "rows": 254,
-  "last": "2026-11-27",
-  "checked": "2026-11-27T12:06:58+00:00"
+  "last": "2026-11-28",
+  "checked": "2026-11-28T09:37:47+00:00"
  },
  "tinvest_etfs": {
   "ok": true,
   "rows": 63,
-  "last": "2026-11-27",
-  "checked": "2026-11-27T12:06:58+00:00"
+  "last": "2026-11-28",
+  "checked": "2026-11-28T09:37:47+00:00"
  },
  "dividends": {
   "ok": true,
   "rows": 200,
-  "last": "2026-11-27",
-  "checked": "2026-11-27T12:08:44+00:00"
+  "last": "2026-11-28",
+  "checked": "2026-11-28T09:39:29+00:00"
  },
  "fundamentals": {
   "ok": true,
   "rows": 252,
-  "last": "2026-11-27",
-  "checked": "2026-11-27T12:08:45+00:00"
+  "last": "2026-11-28",
+  "checked": "2026-11-28T09:39:31+00:00"
  },
  "rusetfs_funds": {
   "ok": true,
   "rows": 214,
-  "last": "2026-11-27",
+  "last": "2026-11-28",
   "with_commission": 214,
-  "checked": "2026-11-27T12:06:56+00:00"
+  "checked": "2026-11-28T09:37:45+00:00"
  },
  "symbol_stats": {
-  "ok": false,
-  "error": "ISSError: ISS недоступен: https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json {'iss.meta': 'off', 'securities.columns': 'SECID,SHORTNAME,SECNAME,ISIN,LOTSIZE,ISSUESIZE,PREVPRICE,LISTLEVEL,SECTYPE,CURRENCYID', 'marketdata.columns': 'SECID,LAST,LASTTOPREVPRICE,VALTODAY_RUR,ISSUECAPITALIZATION,UPDATETIME'} (HTTPSConnectionPool(host='iss.moex.com', port=443): Max retries exceeded with url: /iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&securi",
-  "where": "iss.py:67 get_json <- iss.py:498 _board_table <- iss.py:518 shares",
-  "checked": "2026-11-27T12:08:56+00:00",
-  "last": "2026-10-31"
+  "ok": true,
+  "rows": 270,
+  "last": "2026-10-31",
+  "shares": 225,
+  "funds": 45,
+  "short_history": 242,
+  "failed": 0,
+  "total_return": true,
+  "checked": "2026-11-28T09:42:11+00:00"
  },
  "risk_free": {
-  "ok": false,
-  "error": "ISSError: ISS недоступен: https://iss.moex.com/iss/history/engines/stock/markets/index/securities/RUGBITR1Y.json {'iss.meta': 'off', 'from': '2000-01-01', 'till': '2026-11-27', 'history.columns': 'TRADEDATE,YIELD', 'start': 0} (HTTPSConnectionPool(host='iss.moex.com', port=443): Max retries exceeded with url: /iss/history/engines/stock/markets/index/securities/RUGBITR1Y.json?iss.meta=off&from=2000-01-01&till=2026-11-27&history.columns=TRADEDATE%2CYIELD&start=0 (Caused by SSLError(SSLCertVerifica",
-  "where": "iss.py:67 get_json <- iss.py:80 _paged <- iss.py:295 index_history",
-  "checked": "2026-11-27T12:06:54+00:00",
-  "last": "2026-11-20"
+  "ok": true,
+  "rows": 5968,
+  "last": "2026-11-27",
+  "checked": "2026-11-28T09:37:43+00:00"
  },
  "portfolios": {
-  "ok": false,
-  "error": "ValueError: слишком мало портфелей: 0 < 10 — ответ похож на ошибку",
-  "where": "collect_data.py:220 _check <- collect_data.py:564 portfolios <- collect_data.py:572 collect_portfolios",
-  "checked": "2026-11-27T12:08:58+00:00",
-  "last": "2026-11-20"
+  "ok": true,
+  "rows": 18,
+  "last": "2026-11-27",
+  "skipped": 0,
+  "stale": 0,
+  "checked": "2026-11-28T09:44:55+00:00"
+ },
+ "screener_bonds": {
+  "ok": true,
+  "rows": 2692,
+  "last": "2026-11-28",
+  "TQOB": 60,
+  "TQCB": 2632,
+  "checked": "2026-11-28T09:44:59+00:00"
+ },
+ "tinvest_bonds": {
+  "ok": true,
+  "rows": 1612,
+  "last": "2026-11-28",
+  "checked": "2026-11-28T09:45:02+00:00"
+ },
+ "indices": {
+  "ok": true,
+  "rows": 14,
+  "last": "2026-11-28",
+  "skipped": 0,
+  "skipped_keys": {},
+  "checked": "2026-11-28T09:47:02+00:00"
  }
 }
