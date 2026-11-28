@@ -24,22 +24,33 @@
 
 :root {
   --font: "Montserrat", system-ui, sans-serif;
-  --bg: #F6F7F9;
+  /* палитра «Главная v2» (CONTRACT, раздел «Главная v2»): тиффани, нежно-красный, бежевый, серые */
+  --gray-1: #F4F5F7;
+  --gray-2: #E6E8EC;
+  --gray-3: #9AA1AC;
+  --gray-4: #5B6676;
+  --rose: #E8837A;
+  --rose-soft: #FBEAE8;
+  --sand: #EFE4D2;
+  --sand-strong: #6F5636;
+  --bg: #F7F8FA;
   --surface: #FFFFFF;
-  --surface-2: #F1F3F6;
-  --border: #E3E7ED;
-  --border-strong: #CBD2DC;
+  --surface-2: var(--gray-1);
+  --border: var(--gray-2);
+  --border-strong: #CDD2DA;
   --text: #0E1726;
-  --text-muted: #5B6676;
-  --brand: #0F766E;
-  --brand-strong: #0B5D57;
-  --brand-soft: #E6F4F2;
-  --accent: #F59E0B;
-  --pos: #15803D;
-  --neg: #DC2626;
-  --chart-grid: #E8ECF1;
-  --radius: 14px;
-  --radius-sm: 8px;
-  --shadow: 0 1px 2px rgb(14 23 38 / .06), 0 4px 16px rgb(14 23 38 / .06);
+  --text-muted: var(--gray-4);
+  --brand: #0ABAB5;
+  --brand-strong: #067470;
+  --brand-soft: #E3F7F6;
+  --accent: var(--rose);
+  --pos: #138A7A;   /* линии и заливки */
+  --neg: #D8574C;
+  --pos-text: #0F7A6C;   /* текст: контраст AA */
+  --neg-text: #B5443A;
+  --chart-grid: #ECEEF1;
+  --radius: 16px;
+  --radius-sm: 10px;
+  --shadow: 0 1px 2px rgb(14 23 38 / .04), 0 8px 24px -8px rgb(14 23 38 / .08);
   color-scheme: light;
 }

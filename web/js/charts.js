@@ -4,8 +4,10 @@
 import { fmtDate, fmtMonth, fmtNum, fmtPct, fmtRub } from "./format.js";
 
 // Светлая тема FinServ: первый цвет — фирменный (--brand), дальше — различимые по тону и яркости.
-const PALETTE = ["#0F766E", "#2563EB", "#F59E0B", "#DB2777", "#7C3AED", "#EA580C", "#0891B2", "#65A30D"];
-const BENCH = "#8A94A3";
+const PALETTE = ["#0ABAB5", "#2563EB", "#F59E0B", "#DB2777", "#7C3AED", "#EA580C", "#0891B2", "#65A30D"];
+const BENCH = "#9AA1AC";   // --gray-3: бенчмарк — серый пунктир
+// на узких экранах подписи оси X не должны налезать: не больше 4
+const xTickLimit = (n) => (window.innerWidth < 600 ? 4 : n);
 
 // Последовательная шкала (облако портфелей по Шарпу): от светлого к фирменному тёмному
 const SEQ = ["#CCEBE7", "#99D5CE", "#5EB8AE", "#2A9A8E", "#0F766E", "#0B5D57", "#073F3B"];
@@ -181,8 +183,9 @@ export function lineChart(canvas, { series, yTitle, yFormat = "num", log = false
         ticks: {
           color: t.muted,
           autoSkip: true,
-          maxTicksLimit: 8,
+          maxTicksLimit: xTickLimit(8),
           maxRotation: 0,
+          minRotation: 0,
           callback(v) {
             const d = this.getLabelForValue(v);
             return xDays ? fmtDate(d).slice(0, 5) : fmtMonth(d);
@@ -236,7 +239,7 @@ export function barChart(canvas, { labels, values, name, yTitle, xTitle = "", yF
         title: axisTitle(xTitle, t),
         grid: { display: false },
         border: { color: t.grid },
-        ticks: { color: t.muted, autoSkip: true, maxTicksLimit: 14, maxRotation: 0 },
+        ticks: { color: t.muted, autoSkip: true, maxTicksLimit: xTickLimit(14), maxRotation: 0, minRotation: 0 },
       },
       y: {
         title: axisTitle(yTitle, t),
@@ -275,8 +278,8 @@ function mix(c1, c2, t) {
 
 /** Цвет ячейки тепловой карты доходностей: бирюзовый — рост, красный — снижение; lim — модуль крайнего значения. */
 export function heatStyle(v, lim) {
-  const NEG = "#DC2626";
-  const POS = "#0F766E";
+  const NEG = "#D8574C";
+  const POS = "#0ABAB5";
   const MID = "#F1F3F6";
   const t = Math.min(1, Math.abs(v) / (lim || 1));
   return { background: mix(MID, v < 0 ? NEG : POS, t), color: t > 0.55 ? "#ffffff" : "var(--text)" };
